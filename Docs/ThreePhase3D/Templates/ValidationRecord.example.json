@@ -1,0 +1,47 @@
+{
+  "schema_version": "1.0",
+  "template": true,
+  "validation_id": "V29",
+  "requirement_ids": [
+    "R020",
+    "R021",
+    "R024"
+  ],
+  "status": "PENDING",
+  "run_id": null,
+  "git_commit_sha": null,
+  "reference": {
+    "source_ids": [
+      "M03",
+      "M05"
+    ],
+    "version": null,
+    "locator": null,
+    "dataset_sha256": null
+  },
+  "configuration_sha256": null,
+  "metrics": [
+    {
+      "name": "water_mass_relative_residual",
+      "unit": "1",
+      "definition": "Maximum absolute full-water inventory residual divided by initial water mass",
+      "actual": null,
+      "maximum_allowed": 0.0001,
+      "pass": null
+    },
+    {
+      "name": "volume_constraint_step_error",
+      "unit": "1",
+      "definition": "dt_s times max absolute divergence-minus-physical-source",
+      "actual": null,
+      "maximum_allowed": 0.00001,
+      "pass": null
+    }
+  ],
+  "grid_sequence": [],
+  "timestep_sequence": [],
+  "plots": [],
+  "evidence_hashes": {},
+  "reviewer_decision": "PENDING",
+  "limitations": []
+}

@@ -1,0 +1,64 @@
+{
+  "schema_version": "1.0",
+  "template": true,
+  "run_id": null,
+  "status": "PENDING",
+  "provenance": {
+    "git_commit_sha": null,
+    "dirty_tree": null,
+    "patch_sha256": null,
+    "executable_sha256": null,
+    "unity_version": "2022.3.46f1",
+    "scene_guid": null,
+    "scenario_sha256": null
+  },
+  "hardware": {
+    "os": null,
+    "gpu": null,
+    "vram_bytes": null,
+    "driver": null,
+    "graphics_api": null
+  },
+  "materials": {
+    "table_sha256": null,
+    "source_versions": {},
+    "enthalpy_reference": null,
+    "entropy_reference": null,
+    "validity_domain": null
+  },
+  "physics": {
+    "geometry_sha256": null,
+    "initial_inventory": null,
+    "ambient_temperature_K": null,
+    "ambient_pressure_Pa": null,
+    "ambient_relative_humidity": null,
+    "absorbed_burner_power_W": null,
+    "burner_profile_sha256": null,
+    "gravity_m_per_s2": null,
+    "boundary_conditions": null,
+    "seed_protocol": null
+  },
+  "numerics": {
+    "grid_dimensions": null,
+    "cell_size_m": null,
+    "refinement": null,
+    "pressure_tolerance": null,
+    "nonlinear_tolerance": null,
+    "timestep_policy": null,
+    "precision": null,
+    "random_seeds": null
+  },
+  "execution": {
+    "requested_duration_s": null,
+    "simulated_duration_s": null,
+    "wall_duration_s": null,
+    "diagnostic_interval_s": null,
+    "failure_flags": [],
+    "rejected_steps": null
+  },
+  "energy_convention": null,
+  "approximation_flags": [],
+  "unresolved_scales": [],
+  "reference_dataset_sha256": null,
+  "output_hashes": {}
+}

@@ -1,0 +1,32 @@
+// Physics-ID: PC-LG-INTERFACE-FLUX
+// Implements: R020 R021 R023
+// Model: Specification.md sections 6.3 6.4 and 6.5
+// Sources: M02 M03 D01 D06 D07
+// Source-Locators: PENDING full pinned paper equation and table extraction
+// Inputs-SI: T_l_K [K], T_g_K [K], p_abs_Pa [Pa],
+//            Y_v [1], reconstructed_area_m2 [m2], dt_s [s]
+// Outputs-SI: mass_flux_kg_per_m2_s [kg/(m2 s)],
+//             interface_temperature_K [K],
+//             transferred_mass_kg [kg], transferred_enthalpy_J [J]
+// State-Ownership: candidate interface flux buffer only;
+//                  accepted phase inventories are updated by the paired exchange pass
+// Conservation: liquid donor mass equals vapour receiver mass;
+//               enthalpy reference is shared; latent energy counted once;
+//               pressure source uses the same accepted mass flux
+// Discretisation: PENDING selected one-sided gradients and nonlinear solve;
+//                 no code is supplied by this template
+// Validity: local-equilibrium interface in the documented low Mach regime;
+//           explicit treatment required as gas approaches pure vapour
+// Validation: V27 V28 V29
+// Evidence: PENDING
+// Status: SPECIFIED
+// Limitations: algorithm source extraction and actual implementation not complete.
+//
+// Outcome record format to use only after a real run:
+// Outcome: <run-id>; case <Vxx>; code <full-SHA>; inputs <configuration-hash>;
+//          metric <name and definition>; actual <measured value with unit>;
+//          threshold <predeclared criterion>; status <PASS or FAIL>;
+//          evidence <relative immutable result path and file hash>.
+//
+// Do not replace PENDING with a fabricated successful value.
+// A reviewer must check code, coupled callers, bindings and run evidence.
