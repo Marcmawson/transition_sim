@@ -6,8 +6,9 @@ namespace PhaseTransition.Physics
     /// A spatial SI enthalpy grid for a small beaker sample. Each occupied cell has its own
     /// enthalpy and phase fractions, so locally melted water can warm while ice remains
     /// elsewhere, and local boiling can begin while most of the sample remains liquid.
-    /// Liquid cells use a 2-D incompressible flow approximation that advects sensible heat.
-    /// Vapour flow, solid motion, and conservative phase-mass transport are not yet included.
+    /// Liquid cells use a 2-D incompressible flow approximation; liquid mass and enthalpy move
+    /// between cells. Vapour bubbles use a separate buoyant-rise closure and vent at the top.
+    /// Ice remains stationary, and the bubble motion is not a gas Navier-Stokes solution.
     /// </summary>
     public sealed class BeakerEnergyLedger : MonoBehaviour
     {
@@ -26,6 +27,11 @@ namespace PhaseTransition.Physics
         [Min(0f)] public float heaterPowerW = 500f;
         public bool heaterEnabled = true;
         [Min(0f)] public float altitudeM = 0f;
+        [Min(0.005f)] public float heaterFootprintWidthM = 0.05f;
+
+        [Header("Vapour bubble model (SI)")]
+        [Min(0.0005f)] public float vapourBubbleDiameterM = 0.005f;
+        [Min(0.1f)] public float vapourBubbleDragCoefficient = 1.0f;
 
         public struct CellState
         {
@@ -48,6 +54,8 @@ namespace PhaseTransition.Physics
         public double WaterLevelM { get; private set; }
         public double TotalSampleMassKg { get; private set; }
         public double MaximumLiquidSpeedMS { get; private set; }
+        public double MaximumBubbleRiseSpeedMS { get; private set; }
+        public double VentedVapourMassKg { get; private set; }
 
         private const double IceDensityKgPerM3 = 917.0;
         private const double LiquidDensityKgPerM3 = 998.2;
@@ -60,6 +68,8 @@ namespace PhaseTransition.Physics
         private double[,] cellEnthalpyJPerKg;
         private WaterThermodynamicsSI.EquilibriumState[,] cellThermo;
         private double[,] energyChangeJ;
+        private double[,] massChangeKg;
+        private int[] bottomContactRows;
         private LiquidConvection2D liquidFlow;
         private double[,] liquidFractionBuffer;
         private double[,] temperatureBuffer;
@@ -115,6 +125,8 @@ namespace PhaseTransition.Physics
             cellEnthalpyJPerKg = new double[gridWidth, gridHeight];
             cellThermo = new WaterThermodynamicsSI.EquilibriumState[gridWidth, gridHeight];
             energyChangeJ = new double[gridWidth, gridHeight];
+            massChangeKg = new double[gridWidth, gridHeight];
+            bottomContactRows = new int[gridWidth];
             liquidFractionBuffer = new double[gridWidth, gridHeight];
             temperatureBuffer = new double[gridWidth, gridHeight];
             liquidFlow = new LiquidConvection2D(gridWidth, gridHeight);
@@ -144,6 +156,9 @@ namespace PhaseTransition.Physics
             AmbientPressurePa = WaterThermodynamicsSI.AmbientPressureAtAltitudePa(altitudeM);
             initialized = true;
             liquidFlow.Reset();
+            VentedVapourMassKg = 0.0;
+            MaximumLiquidSpeedMS = 0.0;
+            MaximumBubbleRiseSpeedMS = 0.0;
             RebuildCellStatesAndTotals();
         }
 
@@ -183,6 +198,7 @@ namespace PhaseTransition.Physics
                 }
 
             System.Array.Clear(energyChangeJ, 0, energyChangeJ.Length);
+            System.Array.Clear(massChangeKg, 0, massChangeKg.Length);
             double cellVolume = dx * dy * beakerDepthM;
 
             // Pairwise finite-volume Fourier fluxes; every internal face is counted once.
@@ -194,28 +210,63 @@ namespace PhaseTransition.Physics
                     if (y + 1 < gridHeight) TransferHeat(x, y, x, y + 1, dx * beakerDepthM, dy, dt, cellVolume);
                 }
 
-            // Heater power is treated as fully absorbed and spread evenly over the wet base.
-            // A metal base plate and burner-to-glass losses are not included yet.
+            // Apply the selected input over a normalized Gaussian burner footprint at the
+            // lowest occupied cells. Metal-base spreading and burner-to-beaker losses are absent.
             if (heaterEnabled && heaterPowerW > 0f)
             {
-                double wetBaseMass = 0.0;
-                for (int x = 0; x < gridWidth; x++) wetBaseMass += cellMassKg[x, 0];
-                if (wetBaseMass > 0.0)
+                double footprintSigma = System.Math.Max(0.001, heaterFootprintWidthM / 2.355);
+                double weightSum = 0.0;
+                for (int x = 0; x < gridWidth; x++)
+                {
+                    bottomContactRows[x] = -1;
+                    for (int y = 0; y < gridHeight; y++)
+                        if (cellMassKg[x, y] > 0.0)
+                        {
+                            bottomContactRows[x] = y;
+                            double xCentre = (x + 0.5) * dx;
+                            double offset = xCentre - 0.5 * beakerWidthM;
+                            weightSum += System.Math.Exp(-0.5 * offset * offset /
+                                (footprintSigma * footprintSigma));
+                            break;
+                        }
+                }
+                if (weightSum > 0.0)
                     for (int x = 0; x < gridWidth; x++)
-                        if (cellMassKg[x, 0] > 0.0)
-                            energyChangeJ[x, 0] += heaterPowerW * dt * cellMassKg[x, 0] / wetBaseMass;
+                        if (bottomContactRows[x] >= 0)
+                        {
+                            int y = bottomContactRows[x];
+                            double xCentre = (x + 0.5) * dx;
+                            double offset = xCentre - 0.5 * beakerWidthM;
+                            double weight = System.Math.Exp(-0.5 * offset * offset /
+                                (footprintSigma * footprintSigma));
+                            energyChangeJ[x, y] += heaterPowerW * dt * weight / weightSum;
+                        }
             }
 
-            AdvectLiquidSensibleHeat(dt, dx, dy);
+            AdvectLiquidMassAndEnthalpy(dt, dx, dy);
 
             for (int y = 0; y < gridHeight; y++)
                 for (int x = 0; x < gridWidth; x++)
-                    if (cellMassKg[x, y] > 0.0)
-                        cellEnthalpyJPerKg[x, y] += energyChangeJ[x, y] / cellMassKg[x, y];
+                {
+                    double oldMass = cellMassKg[x, y];
+                    double newMass = oldMass + massChangeKg[x, y];
+                    if (newMass <= 1e-12)
+                    {
+                        cellMassKg[x, y] = 0.0;
+                        cellEnthalpyJPerKg[x, y] = 0.0;
+                        continue;
+                    }
+
+                    double totalEnergyJ = oldMass * cellEnthalpyJPerKg[x, y] + energyChangeJ[x, y];
+                    cellMassKg[x, y] = newMass;
+                    cellEnthalpyJPerKg[x, y] = totalEnergyJ / newMass;
+                }
+            RebuildCellStatesAndTotals();
+            AdvectRisingVapour(dt, dy);
             RebuildCellStatesAndTotals();
         }
 
-        private void AdvectLiquidSensibleHeat(double dt, double dx, double dy)
+        private void AdvectLiquidMassAndEnthalpy(double dt, double dx, double dy)
         {
             const double liquidDensity = 998.2;
             const double liquidHeatCapacity = 4181.3;
@@ -241,6 +292,8 @@ namespace PhaseTransition.Physics
                             double donorTemperature = signedMassFlux >= 0.0
                                 ? temperatureBuffer[x, y] : temperatureBuffer[x + 1, y];
                             double energyFlux = signedMassFlux * liquidHeatCapacity * donorTemperature;
+                            massChangeKg[x, y] -= signedMassFlux;
+                            massChangeKg[x + 1, y] += signedMassFlux;
                             energyChangeJ[x, y] -= energyFlux;
                             energyChangeJ[x + 1, y] += energyFlux;
                         }
@@ -262,11 +315,95 @@ namespace PhaseTransition.Physics
                             double donorTemperature = signedMassFlux >= 0.0
                                 ? temperatureBuffer[x, y] : temperatureBuffer[x, y + 1];
                             double energyFlux = signedMassFlux * liquidHeatCapacity * donorTemperature;
+                            massChangeKg[x, y] -= signedMassFlux;
+                            massChangeKg[x, y + 1] += signedMassFlux;
                             energyChangeJ[x, y] -= energyFlux;
                             energyChangeJ[x, y + 1] += energyFlux;
                         }
                     }
                 }
+        }
+
+        private void AdvectRisingVapour(double dt, double dy)
+        {
+            // Coarse bubble terminal-rise closure from quadratic drag. It is separate from
+            // the liquid Navier-Stokes field and is a model approximation.
+            const double gasConstant = 8.314462618;
+            const double molarMass = 0.01801528;
+            System.Array.Clear(energyChangeJ, 0, energyChangeJ.Length);
+            System.Array.Clear(massChangeKg, 0, massChangeKg.Length);
+
+            double movedFraction = 0.0;
+            MaximumBubbleRiseSpeedMS = 0.0;
+            for (int y = 0; y < gridHeight; y++)
+                for (int x = 0; x < gridWidth; x++)
+                {
+                    var state = cellThermo[x, y];
+                    if (cellMassKg[x, y] <= 0.0 || state.vapourMassFraction <= 0.0) continue;
+
+                    double gasTemperatureK = System.Math.Max(273.15, state.temperatureC + 273.15);
+                    double gasDensity = state.systemPressurePa * molarMass / (gasConstant * gasTemperatureK);
+                    double diameterM = System.Math.Max(0.0005, vapourBubbleDiameterM);
+                    double dragCoefficient = System.Math.Max(0.1, vapourBubbleDragCoefficient);
+                    double velocityMS = System.Math.Sqrt(System.Math.Max(0.0,
+                        4.0 * WaterThermodynamicsSI.StandardGravity * diameterM *
+                        (LiquidDensityKgPerM3 - gasDensity) /
+                        (3.0 * dragCoefficient * LiquidDensityKgPerM3)));
+                    if (velocityMS > MaximumBubbleRiseSpeedMS) MaximumBubbleRiseSpeedMS = velocityMS;
+                    movedFraction = System.Math.Min(1.0, velocityMS * dt / dy);
+                    if (movedFraction <= 0.0) continue;
+
+                    double vapourMass = cellMassKg[x, y] * state.vapourMassFraction * movedFraction;
+                    double vapourEnthalpy = VapourSpecificEnthalpy(x, y, state);
+                    double vapourEnergyJ = vapourMass * vapourEnthalpy;
+                    massChangeKg[x, y] -= vapourMass;
+                    energyChangeJ[x, y] -= vapourEnergyJ;
+
+                    if (y + 1 < gridHeight)
+                    {
+                        massChangeKg[x, y + 1] += vapourMass;
+                        energyChangeJ[x, y + 1] += vapourEnergyJ;
+                    }
+                    else
+                    {
+                        VentedVapourMassKg += vapourMass;
+                    }
+                }
+
+            for (int y = 0; y < gridHeight; y++)
+                for (int x = 0; x < gridWidth; x++)
+                {
+                    double oldMass = cellMassKg[x, y];
+                    double newMass = oldMass + massChangeKg[x, y];
+                    if (newMass <= 1e-12)
+                    {
+                        cellMassKg[x, y] = 0.0;
+                        cellEnthalpyJPerKg[x, y] = 0.0;
+                        continue;
+                    }
+
+                    double totalEnergyJ = oldMass * cellEnthalpyJPerKg[x, y] + energyChangeJ[x, y];
+                    cellMassKg[x, y] = newMass;
+                    cellEnthalpyJPerKg[x, y] = totalEnergyJ / newMass;
+                }
+        }
+
+        private double VapourSpecificEnthalpy(int x, int y,
+            WaterThermodynamicsSI.EquilibriumState state)
+        {
+            double vapourFraction = state.vapourMassFraction;
+            if (vapourFraction <= 1e-12) return 0.0;
+            double knownPhaseEnthalpy = 0.0;
+            if (state.iceMassFraction > 0.0)
+            {
+                double iceTemperatureK = System.Math.Max(170.0,
+                    System.Math.Min(273.15, state.temperatureC + 273.15));
+                knownPhaseEnthalpy += state.iceMassFraction *
+                    WaterThermodynamicsSI.IceSpecificEnthalpyJPerKg(iceTemperatureK);
+            }
+            if (state.liquidMassFraction > 0.0)
+                knownPhaseEnthalpy += state.liquidMassFraction * 4181.3 * state.temperatureC;
+            return (cellEnthalpyJPerKg[x, y] - knownPhaseEnthalpy) / vapourFraction;
         }
 
         private void TransferHeat(int ax, int ay, int bx, int by,

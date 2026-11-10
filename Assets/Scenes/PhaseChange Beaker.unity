@@ -264,6 +264,9 @@ MonoBehaviour:
   heaterPowerW: 500
   heaterEnabled: 1
   altitudeM: 0
+  heaterFootprintWidthM: 0.05
+  vapourBubbleDiameterM: 0.005
+  vapourBubbleDragCoefficient: 1
 --- !u!114 &2003
 MonoBehaviour:
   m_ObjectHideFlags: 0

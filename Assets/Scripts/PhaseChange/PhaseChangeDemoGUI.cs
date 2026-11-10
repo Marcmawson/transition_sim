@@ -67,7 +67,10 @@ namespace PhaseTransition.Physics
             ledger.heaterEnabled = GUILayout.Toggle(ledger.heaterEnabled, "Heater on");
             GUILayout.Label($"Heater power: {ledger.heaterPowerW:0} W");
             ledger.heaterPowerW = GUILayout.HorizontalSlider(ledger.heaterPowerW, 0f, 1500f);
-            GUILayout.Label($"Sample mass: {ledger.sampleMassKg:0.00} kg  |  grid: {ledger.GridWidth} x {ledger.GridHeight}");
+            GUILayout.Label($"Burner footprint: {ledger.heaterFootprintWidthM * 100f:0} cm");
+            ledger.heaterFootprintWidthM = GUILayout.HorizontalSlider(ledger.heaterFootprintWidthM, 0.01f, 0.10f);
+            GUILayout.Label($"Water remaining: {ledger.TotalSampleMassKg:0.000} kg  |  vented: {ledger.VentedVapourMassKg:0.000} kg");
+            GUILayout.Label($"Grid: {ledger.GridWidth} x {ledger.GridHeight}");
             GUILayout.Label($"Altitude: {ledger.altitudeM:0} m  |  ambient pressure: {ledger.AmbientPressurePa / 1000.0:0.00} kPa");
             ledger.altitudeM = GUILayout.HorizontalSlider(ledger.altitudeM, 0f, 3000f);
             GUILayout.Space(8f);
@@ -75,10 +78,12 @@ namespace PhaseTransition.Physics
             GUILayout.Label($"Ice: {ledger.IceMassFraction:P1}   liquid: {ledger.LiquidMassFraction:P1}   vapour: {ledger.VapourMassFraction:P1}");
             GUILayout.Label($"Specific enthalpy: {ledger.SpecificEnthalpyJPerKg / 1000.0:0.0} kJ/kg");
             GUILayout.Label($"Peak liquid speed: {ledger.MaximumLiquidSpeedMS:0.000} m/s");
+            GUILayout.Label($"Bubble rise estimate: {ledger.MaximumBubbleRiseSpeedMS:0.000} m/s  |  diameter: {ledger.vapourBubbleDiameterM * 1000f:0.0} mm");
+            ledger.vapourBubbleDiameterM = GUILayout.HorizontalSlider(ledger.vapourBubbleDiameterM, 0.001f, 0.010f);
             showFlowVectors = GUILayout.Toggle(showFlowVectors, "Show liquid flow direction");
             if (GUILayout.Button("Reset to ice at -50 deg C")) ledger.ResetSample();
             GUILayout.Space(5f);
-            GUILayout.Label("Liquid uses a 2-D incompressible flow approximation with buoyancy and temperature-dependent viscosity. Flow carries liquid sensible heat. Solid movement, vapour flow, beaker heat capacity and 16 C ambient heat exchange are not included yet.", noteStyle);
+            GUILayout.Label("Liquid mass and heat move with a 2-D incompressible flow approximation. Vapour bubbles rise and vent using a buoyant-drag approximation. Gas Navier-Stokes, moving ice, beaker heat capacity and 16 C ambient heat exchange are not included yet.", noteStyle);
         }
 
         private void DrawLatticeControls()
