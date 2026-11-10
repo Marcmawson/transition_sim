@@ -18,16 +18,23 @@ namespace PhysicsSim.ThreePhase3D.Verification
     }
     [DataContract] public sealed class MaterialReport
     {
-        [DataMember] public string schema="S02-CPU-1", utc, source_base="260f9a4a376b4eb81a3e188a944eb573eb75e1cd";
+        [DataMember] public string schema="S02-CPU-2", utc, source_base="82f9329d58cd6c744b216817a2861c9bbb1f7a85";
         [DataMember] public bool gpu_executed=false, complete_stage=false;
-        [DataMember] public string[] open_items={"Ice conductivity outside corrected slow-frozen -40 to -5 C model", "Humid-mixture transport MAT010", "Hot/steam-rich water-air diffusion beyond dilute near-STP scope", "Near-saturation gas chemical equilibrium/fugacity", "GPU execution and interpolation error validation"};
+        [DataMember] public string[] open_items={"Ice conductivity outside corrected slow-frozen -40 to -5 C model", "Steam-rich mixture transport beyond Y=0.10: historical-model disagreement with modern references", "Hot/steam-rich water-air diffusion beyond dilute near-STP scope", "Ice-contact gas equilibrium and independent G11 fugacity cross-check", "Expanded pressure/ice/gas GPU tables"};
         [DataMember] public MaterialComparison[] comparisons;
+        [DataMember] public MaterialModelObservation[] model_observations;
     }
-    public sealed class MaterialChecks
+    [DataContract] public sealed class MaterialModelObservation
+    {
+        [DataMember] public string case_id,quantity,unit,source;
+        [DataMember] public double expected,actual,relative_difference_percent;
+    }
+    public sealed partial class MaterialChecks
     {
         private readonly List<MaterialComparison> rows=new List<MaterialComparison>();
         private readonly Water95 water=new Water95();
         private readonly List<WaterTableData> tables=new List<WaterTableData>();
+        private readonly List<MaterialModelObservation> observations=new List<MaterialModelObservation>();
         private void Compare(string id,string q,string unit,string source,double actual,double expected,double tolerance)
         {
             double error=Math.Abs(actual-expected);
@@ -139,12 +146,13 @@ namespace PhysicsSim.ThreePhase3D.Verification
             Reject("gas-composition",()=>gas.Evaluate(300,101325,1.1));
             Reject("condensing-gas",()=>gas.Evaluate(300,101325,.1));
             Reject("missing-ice-k",()=>ice.ConductivityWmK(250));
-            Reject("missing-gas-mu",()=>gas.ViscosityPaS(300,101325,.01));
+            Reject("gas-transport-high-pressure",()=>gas.ViscosityPaS(300,200000,.01));
             Reject("hot-gas-diffusion",()=>gas.BinaryDiffusivityM2s(400,101325,.01));
             Reject("steam-rich-diffusion",()=>gas.BinaryDiffusivityM2s(360,101325,.1));
             Reject("missing-duran-cp",()=>new DuranDataGap().CpJkgK(300));
+            GasCompletionChecks();
             if(rows.All(r=>r.passed))TableChecks();
-            return new MaterialReport {utc=DateTime.UtcNow.ToString("o"),comparisons=rows.ToArray()};
+            return new MaterialReport {utc=DateTime.UtcNow.ToString("o"),comparisons=rows.ToArray(),model_observations=observations.ToArray()};
         }
         public static double TableTolerance(int property,double expected)
         {
@@ -186,7 +194,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
             foreach(var r in report.comparisons)csv.AppendLine(string.Join(",",new[]{r.case_id,r.quantity,r.unit,r.source,r.expected.ToString("R",CultureInfo.InvariantCulture),r.actual.ToString("R",CultureInfo.InvariantCulture),r.absolute_error.ToString("R",CultureInfo.InvariantCulture),r.tolerance.ToString("R",CultureInfo.InvariantCulture),r.passed.ToString()}));
             File.WriteAllText(Path.Combine(output,"comparisons.csv"),csv.ToString(),new UTF8Encoding(false));
             var sources=Directory.GetFiles(Path.Combine(projectRoot,"Assets/Scripts/ThreePhase3D/Materials"),"*.cs").Concat(new[]{
-                "Assets/Scripts/ThreePhase3D/Verification/MaterialChecks.cs","Assets/Scripts/ThreePhase3D/Editor/MaterialVerificationMenu.cs",
+                "Assets/Scripts/ThreePhase3D/Verification/MaterialChecks.cs","Assets/Scripts/ThreePhase3D/Verification/MaterialGasChecks.cs","Assets/Scripts/ThreePhase3D/Editor/MaterialVerificationMenu.cs",
                 "Assets/Resources/ThreePhase3D/WaterPropertyLookup.compute","Tools/ThreePhase3D/MaterialMain.cs","Tools/ThreePhase3D/RunMaterialChecks.ps1"
             }.Select(p=>Path.Combine(projectRoot,p))).OrderBy(p=>p,StringComparer.Ordinal);
             File.WriteAllText(Path.Combine(output,"source-hashes.txt"),"# SHA-256 with source CRLF normalised to LF; not a signed attestation\n"+string.Join("\n",sources.Select(p=>PhysicsSim.ThreePhase3D.Diagnostics.ProvenanceCapture.SourceHash(p)+"  "+p.Substring(projectRoot.Length+1).Replace('\\','/')))+"\n");
@@ -194,6 +202,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
             File.WriteAllText(Path.Combine(output,"files.sha256"),string.Join("\n",Directory.GetFiles(output,"*",SearchOption.AllDirectories).OrderBy(p=>p,StringComparer.Ordinal).Select(p=>RecordJson.FileHash(p)+"  "+p.Substring(output.Length+1).Replace('\\','/')))+"\n");
             int failed=report.comparisons.Count(r=>!r.passed);
             Console.WriteLine("S02 CPU comparisons: "+report.comparisons.Length+"; failures: "+failed+"; GPU executed: false; stage complete: false.");
+            Console.WriteLine("Additional model observations: "+report.model_observations.Length+"; these are not counted as passing numerical comparisons. Production mixture transport is limited to Y<=0.10 or pure vapour.");
             foreach(var r in report.comparisons.Where(r=>!r.passed))Console.WriteLine("FAIL "+r.case_id+" "+r.quantity+": actual="+r.actual.ToString("R")+" expected="+r.expected.ToString("R")+" tolerance="+r.tolerance);
             Console.WriteLine(output);
             if(failed>0)throw new InvalidOperationException("Material checks failed; retained output: "+output);
