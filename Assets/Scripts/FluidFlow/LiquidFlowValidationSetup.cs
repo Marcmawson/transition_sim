@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 namespace PhaseTransition.FluidFlow
@@ -31,19 +32,13 @@ namespace PhaseTransition.FluidFlow
         [Range(1, 16)] public int maxSubstepsPerFrame = 8;
         [Range(10, 100)] public int pressureIterations = 40;
 
-        [Header("Velocity damping curve")]
-        [Tooltip("Speed in m/s (x) mapped to additional velocity decay rate in 1/s (y). Zero preserves the solver's existing viscosity and numerical damping only.")]
-        public AnimationCurve velocityDampingRatePerSecond = new AnimationCurve(
-            new Keyframe(0f, 0f), new Keyframe(5f, 0f));
-        [Min(0.1f)] public float dampingCurveMaxSpeedMPerS = 5f;
-
         private const float Gravity = 9.80665f;
         private const int Threads = 8;
-        private const int DampingCurveSamples = 64;
+        private const int EnergyHistoryCapacity = 160;
+        private const double EnergySampleIntervalS = 0.05;
         private ComputeBuffer liquid, liquidNext;
         private ComputeBuffer u, v, uAdvected, vAdvected, uStar, vStar;
         private ComputeBuffer pressureA, pressureB, fluxX, fluxY;
-        private ComputeBuffer dampingCurveLut;
         private RenderTexture display;
         private int kAdvectU, kAdvectV, kApplyForces, kPressure, kProjectU, kProjectV;
         private int kFluxX, kFluxY, kUpdateLiquid, kRender;
@@ -52,8 +47,13 @@ namespace PhaseTransition.FluidFlow
         private double simulatedTimeS;
         private float maximumU, maximumV, maximumDivergence;
         private float liquidVolumeM3;
+        private float kineticEnergyJ, mechanicalEnergyJ;
+        private readonly float[] energyTimes = new float[EnergyHistoryCapacity];
+        private readonly float[] kineticEnergyHistory = new float[EnergyHistoryCapacity];
+        private readonly float[] mechanicalEnergyHistory = new float[EnergyHistoryCapacity];
+        private int energySampleCount;
+        private double nextEnergySampleTimeS;
         private Case lastCase;
-        private int dampingCurveHash = int.MinValue;
 
         private int CellCount => gridWidth * gridHeight;
         private int UCount => (gridWidth + 1) * gridHeight;
@@ -76,9 +76,9 @@ namespace PhaseTransition.FluidFlow
         {
             if (!initialized) return;
             if (lastCase != validationCase) ResetSolver();
-            UpdateDampingCurveLut();
             if (!isPaused) AdvanceFrame(Time.unscaledDeltaTime * simulationRate);
             MeasureDiagnostics();
+            RecordEnergySample();
             RenderLiquid();
         }
 
@@ -98,7 +98,6 @@ namespace PhaseTransition.FluidFlow
             pressureB = Buffer(CellCount);
             fluxX = Buffer((gridWidth + 1) * gridHeight);
             fluxY = Buffer(gridWidth * (gridHeight + 1));
-            dampingCurveLut = Buffer(DampingCurveSamples);
 
             display = new RenderTexture(gridWidth, gridHeight, 0, RenderTextureFormat.ARGB32)
             {
@@ -139,7 +138,6 @@ namespace PhaseTransition.FluidFlow
             fluidSolver.SetBuffer(kApplyForces, "VAdvected", vAdvected);
             fluidSolver.SetBuffer(kApplyForces, "UStar", uStar);
             fluidSolver.SetBuffer(kApplyForces, "VStar", vStar);
-            fluidSolver.SetBuffer(kApplyForces, "VelocityDampingRate", dampingCurveLut);
             fluidSolver.SetBuffer(kPressure, "LiquidRead", liquid);
             fluidSolver.SetBuffer(kPressure, "UStar", uStar);
             fluidSolver.SetBuffer(kPressure, "VStar", vStar);
@@ -165,7 +163,6 @@ namespace PhaseTransition.FluidFlow
             fluidSolver.SetTexture(kRender, "Output", display);
 
             initialized = true;
-            UpdateDampingCurveLut();
             ResetSolver();
         }
 
@@ -202,6 +199,9 @@ namespace PhaseTransition.FluidFlow
             pressureB.SetData(new float[CellCount]);
             simulatedTimeS = 0;
             maximumU = maximumV = maximumDivergence = 0;
+            kineticEnergyJ = mechanicalEnergyJ = liquidVolumeM3 = 0f;
+            energySampleCount = 0;
+            nextEnergySampleTimeS = 0.0;
             lastCase = validationCase;
         }
 
@@ -226,7 +226,6 @@ namespace PhaseTransition.FluidFlow
         private void AdvanceStep(float dt)
         {
             fluidSolver.SetFloat("Dt", dt);
-            fluidSolver.SetFloat("DampingCurveMaxSpeedMPerS", dampingCurveMaxSpeedMPerS);
             Dispatch(kAdvectU, gridWidth + 1, gridHeight);
             Dispatch(kAdvectV, gridWidth, gridHeight + 1);
             Dispatch(kApplyForces, gridWidth + 1, gridHeight + 1);
@@ -269,36 +268,6 @@ namespace PhaseTransition.FluidFlow
             fluidSolver.Dispatch(kernel, Mathf.CeilToInt(width / (float)Threads),
                 Mathf.CeilToInt(height / (float)Threads), 1);
 
-        private void UpdateDampingCurveLut()
-        {
-            if (velocityDampingRatePerSecond == null)
-                velocityDampingRatePerSecond = new AnimationCurve(new Keyframe(0f, 0f), new Keyframe(5f, 0f));
-            if (dampingCurveLut == null) return;
-            var keys = velocityDampingRatePerSecond.keys;
-            unchecked
-            {
-                int hash = dampingCurveMaxSpeedMPerS.GetHashCode();
-                for (int i = 0; i < keys.Length; i++)
-                {
-                    hash = hash * 31 + keys[i].time.GetHashCode();
-                    hash = hash * 31 + keys[i].value.GetHashCode();
-                    hash = hash * 31 + keys[i].inTangent.GetHashCode();
-                    hash = hash * 31 + keys[i].outTangent.GetHashCode();
-                }
-                if (hash == dampingCurveHash) return;
-                dampingCurveHash = hash;
-            }
-
-            var samples = new float[DampingCurveSamples];
-            float maxSpeed = Mathf.Max(0.1f, dampingCurveMaxSpeedMPerS);
-            for (int i = 0; i < samples.Length; i++)
-            {
-                float speed = maxSpeed * i / (samples.Length - 1f);
-                samples[i] = Mathf.Max(0f, velocityDampingRatePerSecond.Evaluate(speed));
-            }
-            dampingCurveLut.SetData(samples);
-        }
-
         private void MeasureDiagnostics()
         {
             var liquidData = new float[CellCount];
@@ -308,18 +277,45 @@ namespace PhaseTransition.FluidFlow
             u.GetData(uData);
             v.GetData(vData);
             maximumU = maximumV = maximumDivergence = liquidVolumeM3 = 0f;
+            kineticEnergyJ = mechanicalEnergyJ = 0f;
             for (int i = 0; i < uData.Length; i++) maximumU = Mathf.Max(maximumU, Mathf.Abs(uData[i]));
             for (int i = 0; i < vData.Length; i++) maximumV = Mathf.Max(maximumV, Mathf.Abs(vData[i]));
             for (int y = 0; y < gridHeight; y++)
                 for (int x = 0; x < gridWidth; x++)
                 {
                     int cell = x + y * gridWidth;
-                    liquidVolumeM3 += liquidData[cell] * Dx * Dy * sliceDepthM;
+                    float fraction = Mathf.Clamp01(liquidData[cell]);
+                    float cellVolume = fraction * Dx * Dy * sliceDepthM;
+                    float mass = liquidDensityKgPerM3 * cellVolume;
+                    liquidVolumeM3 += cellVolume;
+                    float cellU = 0.5f * (uData[x + y * (gridWidth + 1)] + uData[x + 1 + y * (gridWidth + 1)]);
+                    float cellV = 0.5f * (vData[x + y * gridWidth] + vData[x + (y + 1) * gridWidth]);
+                    kineticEnergyJ += 0.5f * mass * (cellU * cellU + cellV * cellV);
+                    mechanicalEnergyJ += mass * Gravity * ((y + 0.5f) * Dy) +
+                                         0.5f * mass * (cellU * cellU + cellV * cellV);
                     if (liquidData[cell] <= 0.01f) continue;
                     float div = (uData[x + 1 + y * (gridWidth + 1)] - uData[x + y * (gridWidth + 1)]) / Dx +
                                 (vData[x + (y + 1) * gridWidth] - vData[x + y * gridWidth]) / Dy;
                     maximumDivergence = Mathf.Max(maximumDivergence, Mathf.Abs(div));
                 }
+        }
+
+        private void RecordEnergySample()
+        {
+            if (simulatedTimeS + 1e-9 < nextEnergySampleTimeS) return;
+            if (energySampleCount == EnergyHistoryCapacity)
+            {
+                Array.Copy(energyTimes, 1, energyTimes, 0, EnergyHistoryCapacity - 1);
+                Array.Copy(kineticEnergyHistory, 1, kineticEnergyHistory, 0, EnergyHistoryCapacity - 1);
+                Array.Copy(mechanicalEnergyHistory, 1, mechanicalEnergyHistory, 0, EnergyHistoryCapacity - 1);
+                energySampleCount--;
+            }
+
+            energyTimes[energySampleCount] = (float)simulatedTimeS;
+            kineticEnergyHistory[energySampleCount] = kineticEnergyJ;
+            mechanicalEnergyHistory[energySampleCount] = mechanicalEnergyJ;
+            energySampleCount++;
+            nextEnergySampleTimeS = simulatedTimeS + EnergySampleIntervalS;
         }
 
         private void RenderLiquid()
@@ -336,7 +332,7 @@ namespace PhaseTransition.FluidFlow
             float scale = Mathf.Clamp(Screen.height / 720f, 0.65f, 1.35f);
             float pad = 16f * scale;
             float panelWidth = 350f * scale;
-            float panelHeight = 320f * scale;
+            float panelHeight = 360f * scale;
             GUI.color = new Color(0.035f, 0.045f, 0.06f, 0.96f);
             GUI.Box(new Rect(pad, pad, panelWidth, panelHeight), GUIContent.none);
             GUI.color = Color.white;
@@ -346,6 +342,8 @@ namespace PhaseTransition.FluidFlow
             GUILayout.Label("LIQUID FLOW | STEP 1");
             GUI.skin.label.fontSize = Mathf.RoundToInt(12f * scale);
             GUILayout.Label("GPU MAC grid | incompressible liquid | no phase or heat model");
+            GUILayout.Label("g = 9.80665 m/s^2 | open surface p_g = 0 (air not solved)");
+            GUILayout.Label($"Water viscosity: nu = {kinematicViscosityM2PerS:E3} m^2/s");
             GUILayout.Space(8f * scale);
             GUILayout.BeginHorizontal();
             if (GUILayout.Button("Hydrostatic rest")) { validationCase = Case.HydrostaticRest; ResetSolver(); }
@@ -365,8 +363,62 @@ namespace PhaseTransition.FluidFlow
             GUILayout.Label($"Peak speed: {Mathf.Sqrt(maximumU * maximumU + maximumV * maximumV):0.000} m/s");
             GUILayout.Label($"Maximum divergence: {maximumDivergence:0.000} 1/s");
             GUILayout.Label($"Water volume: {liquidVolumeM3:0.000000} m3");
+            GUILayout.Label($"Kinetic energy: {kineticEnergyJ:0.000000} J");
+            GUILayout.Label($"Kinetic + gravitational energy: {mechanicalEnergyJ:0.000000} J");
             GUILayout.EndArea();
+            DrawEnergyGraph(scale, pad, pad + panelHeight + 8f * scale, panelWidth, 108f * scale);
             DrawDomain(scale);
+        }
+
+        private void DrawEnergyGraph(float scale, float x, float y, float width, float height)
+        {
+            Rect frame = new Rect(x, y, width, height);
+            DrawSolidRect(frame, new Color(0.035f, 0.045f, 0.06f, 0.96f));
+            GUI.color = Color.white;
+            GUI.Label(new Rect(x + 8f * scale, y + 2f * scale, width - 16f * scale, 18f * scale),
+                "ENERGY HISTORY | kinetic (blue), kinetic + gravitational (amber)");
+
+            Rect plot = new Rect(x + 30f * scale, y + 24f * scale,
+                width - 40f * scale, height - 42f * scale);
+            DrawSolidRect(plot, new Color(0.012f, 0.018f, 0.028f, 1f));
+            float maximum = 1e-6f;
+            for (int i = 0; i < energySampleCount; i++)
+                maximum = Mathf.Max(maximum, mechanicalEnergyHistory[i]);
+            DrawLine(new Vector2(plot.x, plot.yMax), new Vector2(plot.xMax, plot.yMax),
+                new Color(0.5f, 0.55f, 0.62f), Mathf.Max(1f, scale));
+            if (energySampleCount > 1)
+            {
+                float firstTime = energyTimes[0];
+                float timeSpan = Mathf.Max(1e-5f, energyTimes[energySampleCount - 1] - firstTime);
+                for (int i = 1; i < energySampleCount; i++)
+                {
+                    float x0 = plot.x + (energyTimes[i - 1] - firstTime) / timeSpan * plot.width;
+                    float x1 = plot.x + (energyTimes[i] - firstTime) / timeSpan * plot.width;
+                    float k0 = plot.yMax - kineticEnergyHistory[i - 1] / maximum * plot.height;
+                    float k1 = plot.yMax - kineticEnergyHistory[i] / maximum * plot.height;
+                    float m0 = plot.yMax - mechanicalEnergyHistory[i - 1] / maximum * plot.height;
+                    float m1 = plot.yMax - mechanicalEnergyHistory[i] / maximum * plot.height;
+                    DrawLine(new Vector2(x0, k0), new Vector2(x1, k1), new Color(0.25f, 0.58f, 1f), 2f * scale);
+                    DrawLine(new Vector2(x0, m0), new Vector2(x1, m1), new Color(1f, 0.62f, 0.22f), 2f * scale);
+                }
+            }
+            GUI.color = Color.white;
+            GUI.Label(new Rect(plot.x, plot.yMax + 1f * scale, plot.width, 16f * scale),
+                energySampleCount > 0 ? $"{energyTimes[0]:0.00}–{energyTimes[energySampleCount - 1]:0.00} s" : "0.00 s");
+        }
+
+        private static void DrawLine(Vector2 start, Vector2 end, Color colour, float thickness)
+        {
+            Matrix4x4 oldMatrix = GUI.matrix;
+            Color oldColour = GUI.color;
+            float length = Vector2.Distance(start, end);
+            float angle = Mathf.Atan2(end.y - start.y, end.x - start.x) * Mathf.Rad2Deg;
+            GUIUtility.RotateAroundPivot(angle, start);
+            GUI.color = colour;
+            GUI.DrawTexture(new Rect(start.x, start.y - thickness * 0.5f, length, thickness),
+                Texture2D.whiteTexture, ScaleMode.StretchToFill, false);
+            GUI.matrix = oldMatrix;
+            GUI.color = oldColour;
         }
 
         private void DrawDomain(float scale)
@@ -405,7 +457,6 @@ namespace PhaseTransition.FluidFlow
         {
             Release(liquid); Release(liquidNext); Release(u); Release(v); Release(uAdvected); Release(vAdvected);
             Release(uStar); Release(vStar); Release(pressureA); Release(pressureB); Release(fluxX); Release(fluxY);
-            Release(dampingCurveLut);
             if (display != null) { display.Release(); Destroy(display); }
         }
 
