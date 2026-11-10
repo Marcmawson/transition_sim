@@ -131,12 +131,12 @@ namespace PhaseTransition.Physics
             Rect gasRegion = new Rect(interior.x, interior.y, interior.width,
                 Mathf.Max(1f, interior.height - condensedHeight));
 
-            int iceCount = Mathf.RoundToInt(90f * (float)s.iceMassFraction);
-            int liquidCount = Mathf.RoundToInt(110f * (float)s.liquidMassFraction);
+            float iceCount = 90f * (float)s.iceMassFraction;
+            float liquidCount = 110f * (float)s.liquidMassFraction;
             // Gas occupies much more volume per unit mass than liquid, so use a display
             // scaling rather than drawing equal marker counts for equal mass fractions.
-            int vapourCount = s.vapourMassFraction <= 0.0001 ? 0 :
-                Mathf.Clamp(Mathf.RoundToInt(140f * Mathf.Sqrt((float)s.vapourMassFraction)), 1, 140);
+            float vapourCount = s.vapourMassFraction <= 0.0001 ? 0f :
+                Mathf.Clamp(140f * Mathf.Sqrt((float)s.vapourMassFraction), 1f, 140f);
 
             if (s.vapourMassFraction > 0.001)
             {
@@ -191,13 +191,12 @@ namespace PhaseTransition.Physics
             particleTexture.Apply();
         }
 
-        private void DrawPhaseParticles(Vector2[] sites, int count, Rect region, Color colour,
+        private void DrawPhaseParticles(Vector2[] sites, float count, Rect region, Color colour,
             float motion, bool rising, float diameter)
         {
             if (sites == null || count <= 0 || region.width <= 0f || region.height <= 1f) return;
-            GUI.color = colour;
             float time = Time.time;
-            for (int i = 0; i < count; i++)
+            for (int i = 0; i < Mathf.CeilToInt(count); i++)
             {
                 Vector2 p = sites[i];
                 float px = p.x;
@@ -214,6 +213,8 @@ namespace PhaseTransition.Physics
                 }
                 Rect marker = new Rect(region.x + px * region.width - diameter * 0.5f,
                     region.y + py * region.height - diameter * 0.5f, diameter, diameter);
+                float markerAlpha = Mathf.Clamp01(count - i);
+                GUI.color = new Color(colour.r, colour.g, colour.b, colour.a * markerAlpha);
                 GUI.DrawTexture(marker, particleTexture, ScaleMode.StretchToFill, true);
             }
             GUI.color = Color.white;
