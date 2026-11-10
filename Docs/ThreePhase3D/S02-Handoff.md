@@ -10,7 +10,7 @@ Branch: `physics3d/s02-materials`, based on S01 `260f9a4a376b4eb81a3e188a944eb57
 - `Water95`: direct FP64 IAPWS-95 Helmholtz formulation, second derivatives through a small forward-differentiation value type, homogeneous reference checks, branch-specific density inversion and liquid/vapour coexistence from equal pressure and Gibbs energy.
 - `IceIh`: complex Gibbs formulation and derivatives, pressure-dependent Ice Ih melting and sublimation functions. Ice and fluid use the unshifted IAPWS energy/entropy references. Ice conductivity requires explicit preparation-model selection.
 - `WaterTransport`: IAPWS viscosity, conductivity (including enhancement computed from the EOS susceptibility) and surface tension/temperature derivative. Public transport calls have the narrower beaker bounds below. Official background-only checks are separate.
-- `HumidGas`: G8-10 component Helmholtz energies plus cross-virial mixing, mass/mole conversion, density inversion, thermodynamic derivatives and a homogeneous water chemical-potential check seam. Ambient air is not assigned pure-steam density.
+- `HumidGas`: G8-10 component Helmholtz energies plus cross-virial mixing, mass/mole conversion, density inversion, thermodynamic derivatives and a homogeneous water chemical-potential check seam. Ambient air is not assigned pure-steam density. The continuation adds a bracketed equal-chemical-potential liquid-contact solve and a bounded humid-mixture transport model; see S02-Continuation.md.
 - Massman's water-in-air diffusion correlation, with units converted from cm2/s, explicitly limited to a dilute, near-STP application. Its reported uncertainty is approximately 7%; the numerical arithmetic check is not a new experimental validation.
 - Corrected Bonales slow-frozen-ice conductivity, **only** for an explicitly selected preparation and -40 to -5 Celsius. The original paper interchanged the coefficients; the 2018 correction is used. This does not supply conductivity at the inherited -50 Celsius initial state or near melting.
 - `WaterPropertyTable`: versioned FP32, 101325 Pa isobar tables, phase-separated, schema/units/reference/shape guards and CPU float interpolation. Liquid spacing is 0.125 K; vapour spacing is 0.25 K. The liquid spacing was refined after a measured density-derivative interpolation failure; tolerances were retained.
@@ -26,12 +26,12 @@ Branch: `physics3d/s02-materials`, based on S01 `260f9a4a376b4eb81a3e188a944eb57
 | Water viscosity/conductivity | 273.16–600 K, 611.66 Pa–5 MPa | Requires a thermodynamic state; wider background routines exist for official checks only |
 | Ice T,p | 200–273.16 K, 611.657 Pa–5 MPa | Below Ice Ih melting curve; broader reference seam is separately named |
 | Bonales conductivity | 233.15–268.15 K | Explicit `BonalesSlowFrozenCorrected2018` selection; no extrapolation |
-| Humid-gas T,p,Y | 273.16–473 K, 80–120 kPa, Y in [0,1] | Conservative gas-only margin: mole fraction times pressure at most 95% of pure-water saturation pressure; **not** a nonideal equilibrium criterion |
+| Humid-gas T,p,Y | 273.16–473 K, 80 kPa–1 MPa, Y in [0,1] | Stable gas tested against the liquid chemical potential; liquid-contact equilibrium is solved directly. Mixture transport is more restricted: 80–120 kPa and Y<=0.10 or pure vapour. |
 | Massman dilute-air diffusion | 273.16–373.15 K, 80–101.325 kPa, Y at most 0.02 | Composition and pressure bounds are conservative project restrictions, not new measured source limits; no steam-rich-plume claim |
 | FP32 water tables | 101325 Pa exactly | Liquid 274–373 K, vapour 374–600 K; no pressure interpolation and no interpolation across phase gap |
 | DURAN | Published single-state density and conductivity only | Heat capacity, enthalpy and entropy throw rather than borrowing another glass's data |
 
-Homogeneous reference seams are for fixed named checks. They must not be used to bypass production validity checks in a coupled solver. The near-melting sub-273.16 K liquid branch and hot/saturated gas closure still need explicit support before the full experiment is enabled. Background transport routines do not claim that an omitted critical enhancement is zero at arbitrary states.
+Homogeneous reference seams are for fixed named checks. They must not be used to bypass production validity checks in a coupled solver. The near-melting sub-273.16 K liquid branch, ice-contact humid equilibrium and steam-rich transport still need explicit support before the full experiment is enabled. Background transport routines do not claim that an omitted critical enhancement is zero at arbitrary states.
 
 ## Sources, equations and licences
 
@@ -64,10 +64,10 @@ The current evidence index demotes stale linked S01 run claims rather than weake
 
 ## Remaining work before S02 acceptance
 
-1. Add and independently verify humid-mixture viscosity/conductivity, including dry-air reference checks and a sourced mixing rule. Current calls throw.
-2. Finish nonideal near-saturation interface equilibrium/fugacity and its guards; the gas-only safety margin is not a replacement. Extend diffusion beyond the restricted dilute, near-STP regime only with evidence.
+1. Improve steam-rich humid-mixture transport. Dry-air reference transport and bounded mixture transport are implemented in the continuation; production Y>0.10 (except pure vapour) is rejected because modern reference comparisons expose material model disagreement.
+2. Add ice-contact humid equilibrium and an independent G11 fugacity cross-check. Liquid-contact nonideal equilibrium and supersaturation guards now use G8-10 chemical potentials. Extend diffusion beyond the restricted dilute, near-STP regime only with evidence.
 3. Source an ice-conductivity model covering the chosen initial state through melting, with preparation and uncertainty recorded. The corrected Bonales option covers only its measured subrange.
-4. Validate actual GPU execution and shader import. Extend water-table pressure/temperature coverage and add ice/gas tables with independent error checks; the first isobar tables are deliberately limited.
+4. Extend water-table pressure/temperature coverage and add ice/gas tables with independent error checks. The user's original two-water-table GPU run passed 1742 comparisons on RTX 5060/Direct3D11 and is preserved in ValidationRuns/s02-gpu-user-20261110T230708. It does not validate future tables or gas/continuum solvers.
 5. Complete derivative/transport-enhancement check coverage, coherent phase enthalpy-difference checks at the required interfaces and reviewed evidence mappings. DURAN and tripod apparatus data remain separately blocked.
 
 Rollback: switch to `physics3d/s01-evidence`. This branch introduces no scene wiring or runtime water. S03 geometry/resource work can be designed independently, but S02 acceptance is not claimed.
