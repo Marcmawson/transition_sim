@@ -1,0 +1,5 @@
+event_id,time_s,dt_s,donor,receiver,side,m_water_kg,m_dry_air_kg,total_storage_energy_J,px_kg_m_per_s,py_kg_m_per_s,pz_kg_m_per_s,Lx_kg_m2_per_s,Ly_kg_m2_per_s,Lz_kg_m2_per_s
+"water-to-parcel",0,0,"Eulerian arithmetic inventory","parcel arithmetic inventory",donor_loss,0.125,0,2.40625,0.0625,0.025,-0.0125,0.025,-0.0125,0.00625
+"water-to-parcel",0,0,"Eulerian arithmetic inventory","parcel arithmetic inventory",receiver_gain,0.125,0,2.40625,0.0625,0.025,-0.0125,0.025,-0.0125,0.00625
+"parcel-deposition",0,0,"parcel arithmetic inventory","Eulerian arithmetic inventory",donor_loss,0.125,0,2.40625,0.0625,0.025,-0.0125,0.025,-0.0125,0.00625
+"parcel-deposition",0,0,"parcel arithmetic inventory","Eulerian arithmetic inventory",receiver_gain,0.125,0,2.40625,0.0625,0.025,-0.0125,0.025,-0.0125,0.00625

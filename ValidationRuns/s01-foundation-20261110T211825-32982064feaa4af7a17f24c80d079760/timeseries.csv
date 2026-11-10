@@ -1,0 +1,3 @@
+time_s,dt_s,m_ice_kg,m_liquid_kg,m_vapour_kg,m_parcel_water_kg,m_dry_air_kg,m_water_in_kg,m_water_out_kg,water_mass_residual_kg,internal_energy_J,kinetic_energy_J,gravitational_energy_J,heater_absorbed_J,energy_in_J,energy_out_J,energy_residual_J,entropy_J_per_K,entropy_in_J_per_K,entropy_out_J_per_K,p_abs_min_Pa,p_abs_max_Pa,T_min_K,T_max_K,max_speed_m_per_s,max_Mach,volume_constraint_linf_per_s,pressure_relative_residual,nonlinear_relative_residual,max_CFL,gpu_step_ms,wall_elapsed_s,valid_run,solid_internal_energy_J,interface_energy_J,m_dry_air_in_kg,m_dry_air_out_kg,dry_air_mass_residual_kg
+0,0,0,1,0,0,0.01,0,0,0,10,2,3,0,0,0,0,,,,,,,,,,,,,,,0.0116455,true,4,0.25,0,0,0
+1,1,0,1,0,0,0.01,0,0,0,20,2,3,10,10,0,0,,,,,,,,,,,,,,,0.0129739,true,4,0.25,0,0,0

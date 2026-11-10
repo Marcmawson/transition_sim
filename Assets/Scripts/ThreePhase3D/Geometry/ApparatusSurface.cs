@@ -34,6 +34,7 @@ namespace PhysicsSim.ThreePhase3D.Geometry
         // Implements: R004 R009 R050
         // Model: Specification.md sections 3.1 and 4.1; synthetic axisymmetric vessel.
         // Sources: project-declared geometry, not empirical glass property data.
+        // Source-Locators: Specification.md section 3.1; GeometryInputs synthetic dimensions.
         // Inputs-SI: radius, heights, base/wall thickness [m]; angular subdivisions [1].
         // Outputs-SI: outward-oriented closed glass triangle surface [m]; cavity is open above rim.
         // State-Ownership: newly allocated preview surface only.

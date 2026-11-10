@@ -1,7 +1,9 @@
 param(
     [string]$UnityEditorPath = 'C:\Program Files\Unity\Hub\Editor\2022.3.46f1',
     [string]$OutputPath = '',
-    [switch]$CompileUnitySources
+    [switch]$CompileUnitySources,
+    [string]$BundleOutputRoot = '',
+    [string]$VerifyBundle = ''
 )
 $ErrorActionPreference = 'Stop'
 $taskRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..\..'))
@@ -9,6 +11,8 @@ $taskBuild = Join-Path ([IO.Path]::GetTempPath()) ('transition-sim-threephase3d-
 New-Item -ItemType Directory -Path $taskBuild | Out-Null
 $taskMono = Join-Path $UnityEditorPath 'Editor\Data\MonoBleedingEdge\bin\mono.exe'
 $taskCsc = Join-Path $UnityEditorPath 'Editor\Data\MonoBleedingEdge\lib\mono\4.5\csc.exe'
+$taskEditorVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $UnityEditorPath 'Editor\Unity.exe')).ProductVersion.Split('_')[0]
+if ($taskEditorVersion -ne '2022.3.46f1') { throw ('Expected pinned Unity 2022.3.46f1; found ' + $taskEditorVersion) }
 $taskSources = @(Get-ChildItem (Join-Path $taskRoot 'Assets\Scripts\ThreePhase3D') -Filter '*.cs' -Recurse |
     Where-Object { $_.FullName -notmatch '[\\/](Editor|Rendering)[\\/]' } | ForEach-Object { $_.FullName })
 $taskExe = Join-Path $taskBuild 'FoundationChecks.exe'
@@ -26,6 +30,11 @@ if ($CompileUnitySources) {
     if ($LASTEXITCODE -ne 0) { throw 'Unity API compilation failed.' }
     Write-Output 'PASS C# compile against installed Unity 2022.3 assemblies (not an Editor import or runtime test).'
 }
-if ([string]::IsNullOrWhiteSpace($OutputPath)) { & $taskMono $taskExe }
-else { & $taskMono $taskExe ([IO.Path]::GetFullPath($OutputPath)) }
+if (-not [string]::IsNullOrWhiteSpace($VerifyBundle)) {
+    & $taskMono $taskExe '--verify' ([IO.Path]::GetFullPath($VerifyBundle)) $taskRoot
+} else {
+    if ([string]::IsNullOrWhiteSpace($BundleOutputRoot)) { $BundleOutputRoot = Join-Path $taskRoot 'ValidationRuns\local' }
+    $taskResultOutput = if ([string]::IsNullOrWhiteSpace($OutputPath)) { '' } else { [IO.Path]::GetFullPath($OutputPath) }
+    & $taskMono $taskExe $taskRoot ([IO.Path]::GetFullPath($BundleOutputRoot)) $taskResultOutput
+}
 if ($LASTEXITCODE -ne 0) { throw 'Foundation checks failed.' }

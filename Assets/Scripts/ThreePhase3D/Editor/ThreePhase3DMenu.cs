@@ -1,7 +1,9 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Linq;
 using PhysicsSim.ThreePhase3D.Core;
+using PhysicsSim.ThreePhase3D.Diagnostics;
 using PhysicsSim.ThreePhase3D.Rendering;
 using PhysicsSim.ThreePhase3D.Verification;
 using UnityEditor;
@@ -21,22 +23,49 @@ namespace PhysicsSim.ThreePhase3D.Editor
         }
 
         [MenuItem("Physics Sim/Three Phase 3D/Run foundation checks")]
+        [MenuItem("Physics Sim/Three Phase 3D/Run S01 conservation checks")]
         public static void RunFoundationChecks()
         {
-            var results = FoundationChecks.RunS00();
-            foreach (var check in results)
+            string project = Directory.GetParent(Application.dataPath).FullName;
+            var hardware = new RunHardware { os = SystemInfo.operatingSystem, gpu = SystemInfo.graphicsDeviceName,
+                vram_bytes = (long)SystemInfo.graphicsMemorySize * 1000000, vram_is_approximate = true,
+                driver = SystemInfo.graphicsDeviceVersion, graphics_api = SystemInfo.graphicsDeviceType.ToString(),
+                supports_compute = SystemInfo.supportsComputeShaders, supports_async_readback = SystemInfo.supportsAsyncGPUReadback, gpu_executed = false };
+            var run = FoundationRun.Execute(project, Path.Combine(project, "ValidationRuns", "local"), typeof(FoundationRun).Assembly.Location,
+                "Unity Editor-hosted managed foundation assembly; not a player build", hardware, Application.unityVersion);
+            foreach (var check in run.checks)
             {
                 string text = (check.passed ? "PASS " : "FAIL ") + check.validationId + " " + check.name + " " + check.detail;
                 if (check.passed) Debug.Log(text); else Debug.LogError(text);
             }
-            if (results.Exists(check => !check.passed)) throw new InvalidOperationException("Foundation checks failed; see Console.");
-            Debug.Log("S00 checks passed. This does not verify a 3D flow solver or Unity scene import on another machine.");
+            Debug.Log("S01 run bundle: " + run.directory + "\nSource " + run.gitCommit + "; dirty=" + run.dirty);
+            if (!run.Passed) throw new InvalidOperationException("Foundation checks failed; the failed bundle was preserved.");
+            Debug.Log(run.checks.Length + " foundation checks passed. No continuum fields or phase-change laws were executed.");
         }
 
         public static void RunFoundationChecksBatch()
         {
             try { RunFoundationChecks(); EditorApplication.Exit(0); }
             catch (Exception ex) { Debug.LogException(ex); EditorApplication.Exit(1); }
+        }
+
+        [MenuItem("Physics Sim/Three Phase 3D/Validate latest S01 bundle")]
+        public static void ValidateLatestBundle()
+        {
+            string project = Directory.GetParent(Application.dataPath).FullName;
+            string parent = Path.Combine(project, "ValidationRuns", "local");
+            string latest = Directory.Exists(parent) ? Directory.GetDirectories(parent, "s01-foundation-*").OrderByDescending(Directory.GetCreationTimeUtc).FirstOrDefault() : null;
+            if (latest == null) throw new InvalidOperationException("Run S01 conservation checks first.");
+            EvidenceValidator.VerifyBundle(latest, project);
+            Debug.Log("PASS integrity, balances and dependency freshness: " + latest);
+        }
+
+        [MenuItem("Physics Sim/Three Phase 3D/Validate evidence index")]
+        public static void ValidateEvidenceIndex()
+        {
+            string project = Directory.GetParent(Application.dataPath).FullName;
+            EvidenceValidator.VerifyIndex(project); EvidenceValidator.VerifyFunctionContracts(project);
+            Debug.Log("PASS evidence identifiers, code symbols, paths and comment contracts. Physical correctness still requires benchmark and review evidence.");
         }
 
         [MenuItem("Physics Sim/Three Phase 3D/Export pre-run report")]

@@ -11,13 +11,15 @@ namespace PhysicsSim.ThreePhase3D.Core
         public static byte[] Encode<T>(T value)
         {
             using (var stream = new MemoryStream())
-            { new DataContractJsonSerializer(typeof(T)).WriteObject(stream, value); return stream.ToArray(); }
+            { Serializer<T>().WriteObject(stream, value); return stream.ToArray(); }
         }
         public static T Decode<T>(byte[] value)
         {
             using (var stream = new MemoryStream(value))
-                return (T)new DataContractJsonSerializer(typeof(T)).ReadObject(stream);
+                return (T)Serializer<T>().ReadObject(stream);
         }
+        static DataContractJsonSerializer Serializer<T>() => new DataContractJsonSerializer(typeof(T),
+            new DataContractJsonSerializerSettings { UseSimpleDictionaryFormat = true });
         public static string Hash(byte[] bytes)
         {
             using (var sha = SHA256.Create()) return BitConverter.ToString(sha.ComputeHash(bytes)).Replace("-", "").ToLowerInvariant();
