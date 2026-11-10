@@ -72,6 +72,8 @@ namespace PhaseTransition.Physics
         private double[,] massChangeKg;
         private double[,] buoyancyBaseMassKg;
         private double[,] buoyancyBaseEnergyJ;
+        private double[,] buoyancyIceMassKg;
+        private double[,] buoyancyIceEnergyJ;
         private int[] bottomContactRows;
         private LiquidConvection2D liquidFlow;
         private double[,] liquidFractionBuffer;
@@ -132,6 +134,8 @@ namespace PhaseTransition.Physics
             massChangeKg = new double[gridWidth, gridHeight];
             buoyancyBaseMassKg = new double[gridWidth, gridHeight];
             buoyancyBaseEnergyJ = new double[gridWidth, gridHeight];
+            buoyancyIceMassKg = new double[gridWidth, gridHeight];
+            buoyancyIceEnergyJ = new double[gridWidth, gridHeight];
             bottomContactRows = new int[gridWidth];
             liquidFractionBuffer = new double[gridWidth, gridHeight];
             iceFractionBuffer = new double[gridWidth, gridHeight];
@@ -430,30 +434,46 @@ namespace PhaseTransition.Physics
 
         private void ApplyIceBuoyancy()
         {
-            // Once the meltwater mass can support the remaining ice weight, reposition the
-            // ice phase to its Archimedean flotation height in each occupied x-column.
-            // This is a coarse grid-level solid-motion closure, not a rigid-body solver.
+            // Translate the complete ice distribution by one common vertical offset. A per-
+            // column equilibrium would shear the block into independently floating columns.
+            // This conserves phase mass and enthalpy but remains a coarse grid-level closure.
             double totalIceMass = 0.0;
             double totalLiquidMass = 0.0;
+            int lowestIceRow = gridHeight;
+            int highestIceRow = -1;
             for (int y = 0; y < gridHeight; y++)
                 for (int x = 0; x < gridWidth; x++)
                 {
-                    totalIceMass += cellMassKg[x, y] * cellThermo[x, y].iceMassFraction;
+                    double iceMass = cellMassKg[x, y] * cellThermo[x, y].iceMassFraction;
+                    totalIceMass += iceMass;
                     totalLiquidMass += cellMassKg[x, y] * cellThermo[x, y].liquidMassFraction;
+                    if (iceMass > 1e-12)
+                    {
+                        lowestIceRow = System.Math.Min(lowestIceRow, y);
+                        highestIceRow = System.Math.Max(highestIceRow, y);
+                    }
                 }
             if (totalIceMass <= 1e-12) return;
 
-            double dx = beakerWidthM / gridWidth;
             double dy = beakerHeightM / gridHeight;
-            double columnArea = dx * beakerDepthM;
             double waterSurfaceM = (totalIceMass + totalLiquidMass) /
                 (LiquidDensityKgPerM3 * beakerWidthM * beakerDepthM);
             bool floating = totalLiquidMass >= totalIceMass;
+            double iceFootprintArea = beakerWidthM * initialIceWidthFraction * beakerDepthM;
+            double targetBottomM = floating
+                ? waterSurfaceM - totalIceMass / (LiquidDensityKgPerM3 * iceFootprintArea)
+                : 0.0;
+            targetBottomM = System.Math.Max(0.0, targetBottomM);
+            double currentBottomM = lowestIceRow * dy;
+            double currentTopM = (highestIceRow + 1) * dy;
+            double translationM = targetBottomM - currentBottomM;
+            translationM = System.Math.Max(-currentBottomM,
+                System.Math.Min(beakerHeightM - currentTopM, translationM));
+
+            if (System.Math.Abs(translationM) < 1e-9) return;
 
             for (int x = 0; x < gridWidth; x++)
             {
-                double columnIceMass = 0.0;
-                double columnIceEnergyJ = 0.0;
                 for (int y = 0; y < gridHeight; y++)
                 {
                     var state = cellThermo[x, y];
@@ -463,30 +483,43 @@ namespace PhaseTransition.Physics
                         System.Math.Min(273.15, state.temperatureC + 273.15));
                     double iceSpecificEnthalpy = WaterThermodynamicsSI.IceSpecificEnthalpyJPerKg(iceTemperatureK);
                     double iceEnergy = iceMass * iceSpecificEnthalpy;
-                    columnIceMass += iceMass;
-                    columnIceEnergyJ += iceEnergy;
                     buoyancyBaseMassKg[x, y] = mass - iceMass;
                     buoyancyBaseEnergyJ[x, y] = mass * cellEnthalpyJPerKg[x, y] - iceEnergy;
+                    buoyancyIceMassKg[x, y] = iceMass;
+                    buoyancyIceEnergyJ[x, y] = iceEnergy;
+                    massChangeKg[x, y] = 0.0;
+                    energyChangeJ[x, y] = 0.0;
                 }
-                if (columnIceMass <= 1e-12) continue;
+            }
 
-                double iceHeightM = columnIceMass / (IceDensityKgPerM3 * columnArea);
-                double iceBottomM = floating
-                    ? waterSurfaceM - columnIceMass / (LiquidDensityKgPerM3 * columnArea)
-                    : 0.0;
-                iceBottomM = System.Math.Max(0.0, System.Math.Min(
-                    beakerHeightM - iceHeightM, iceBottomM));
-                double iceTopM = iceBottomM + iceHeightM;
-                double meanIceEnthalpy = columnIceEnergyJ / columnIceMass;
-
-                for (int y = 0; y < gridHeight; y++)
+            // Remap each source row to destination rows after applying the same translation.
+            for (int x = 0; x < gridWidth; x++)
+                for (int sourceY = 0; sourceY < gridHeight; sourceY++)
                 {
-                    double cellBottomM = y * dy;
-                    double cellTopM = cellBottomM + dy;
-                    double overlapM = System.Math.Max(0.0,
-                        System.Math.Min(cellTopM, iceTopM) - System.Math.Max(cellBottomM, iceBottomM));
-                    double iceMass = overlapM * IceDensityKgPerM3 * columnArea;
-                    double newMass = buoyancyBaseMassKg[x, y] + iceMass;
+                    double sourceIceMass = buoyancyIceMassKg[x, sourceY];
+                    if (sourceIceMass <= 0.0) continue;
+                    double sourceBottomM = sourceY * dy + translationM;
+                    double sourceTopM = sourceBottomM + dy;
+                    int firstDestinationY = Mathf.Clamp((int)(sourceBottomM / dy), 0, gridHeight - 1);
+                    int lastDestinationY = Mathf.Clamp((int)System.Math.Ceiling(sourceTopM / dy) - 1,
+                        0, gridHeight - 1);
+                    for (int destinationY = firstDestinationY; destinationY <= lastDestinationY; destinationY++)
+                    {
+                        double destinationBottomM = destinationY * dy;
+                        double destinationTopM = destinationBottomM + dy;
+                        double overlapM = System.Math.Max(0.0,
+                            System.Math.Min(sourceTopM, destinationTopM) -
+                            System.Math.Max(sourceBottomM, destinationBottomM));
+                        double share = overlapM / dy;
+                        massChangeKg[x, destinationY] += sourceIceMass * share;
+                        energyChangeJ[x, destinationY] += buoyancyIceEnergyJ[x, sourceY] * share;
+                    }
+                }
+
+            for (int y = 0; y < gridHeight; y++)
+                for (int x = 0; x < gridWidth; x++)
+                {
+                    double newMass = buoyancyBaseMassKg[x, y] + massChangeKg[x, y];
                     if (newMass <= 1e-12)
                     {
                         cellMassKg[x, y] = 0.0;
@@ -496,10 +529,9 @@ namespace PhaseTransition.Physics
                     {
                         cellMassKg[x, y] = newMass;
                         cellEnthalpyJPerKg[x, y] =
-                            (buoyancyBaseEnergyJ[x, y] + iceMass * meanIceEnthalpy) / newMass;
+                            (buoyancyBaseEnergyJ[x, y] + energyChangeJ[x, y]) / newMass;
                     }
                 }
-            }
         }
 
         private void TransferHeat(int ax, int ay, int bx, int by,

@@ -100,7 +100,9 @@ namespace PhaseTransition.Physics
                     density[x, y] = LiquidWaterDensityKgPerM3(t);
                     double buoyancy = GravityMPerS2 *
                         (ReferenceDensityKgPerM3 - density[x, y]) / ReferenceDensityKgPerM3;
-                    v[x, y] += buoyancy * dt * liquidFraction[x, y];
+                    // Include gravity for free-surface hydrostatic pressure; the projection
+                    // balances its uniform component and leaves surface-height gradients to drive flow.
+                    v[x, y] += (-GravityMPerS2 + buoyancy) * dt * liquidFraction[x, y];
                 }
 
             // Viscous momentum diffusion: nu = dynamic viscosity / density.
