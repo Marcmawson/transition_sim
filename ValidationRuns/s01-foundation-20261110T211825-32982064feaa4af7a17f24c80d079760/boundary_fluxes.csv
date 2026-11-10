@@ -1,0 +1,2 @@
+time_s,dt_s,channel,direction,water_kg,dry_air_kg,energy_J
+0,1,HeaterAbsorbed,IntoDomain,0,0,10

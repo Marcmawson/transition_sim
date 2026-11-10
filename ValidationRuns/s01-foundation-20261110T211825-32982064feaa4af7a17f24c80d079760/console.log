@@ -1,0 +1,26 @@
+S01 bookkeeping; unavailable physical fields are blank, never invented as zero.
+Git 4f1c3a019672d786f22b47ea389ccf382ab9ef72; dirty=False; Standalone managed foundation runner; not a Unity player build
+PASS V01 SI temperature, pressure, mass and volume All declared assertions passed.
+PASS V01 Preview permits explicit missing physics data; physical run is blocked All declared assertions passed.
+PASS V01 Reject incompatible configuration and nonfinite values All declared assertions passed.
+PASS V01 Mass/volume agreement uses a supplied synthetic provider All declared assertions passed.
+PASS V01 Configuration serialization retains SI identity All declared assertions passed.
+PASS V01 Glass preview scale, winding and polygonal volume All declared assertions passed.
+PASS V02 Compensated reduction retains cancellation-sensitive terms Declared assertions executed.
+PASS V34 Body to Eulerian to parcel to deposition preserves inventory Declared assertions executed.
+PASS V02 Repeated small transfers retain total mass and storage energy Declared assertions executed.
+PASS V02 Unmatched mass energy linear and angular momentum are rejected atomically Declared assertions executed.
+PASS V02 Overdraw and nonfinite inventories are rejected Declared assertions executed.
+PASS V02 Independent audit detects unrecorded mass and heat loss Declared assertions executed.
+PASS V02 Humid inflow heater support radiation and mechanical work close once Declared assertions executed.
+PASS V02 Numerical corrections remain invalid even if they restore the balance Declared assertions executed.
+PASS V33 Bundle export snapshot reload and source identity round trip Declared assertions executed.
+PASS V33 Unmatched transfer and lost heat invalidate exported evidence Declared assertions executed.
+PASS V33 Modified output bytes and missing seal are rejected Declared assertions executed.
+PASS V33 Changed shader table or dependency set makes evidence stale Declared assertions executed.
+PASS V33 Schema and required metric failures cannot be repaired by resealing hashes Declared assertions executed.
+PASS V33 Independent CSV audit rejects fabricated passing balance and transfer flags Declared assertions executed.
+PASS V33 Dirty development bundle is identifiable and rejected for clean review Declared assertions executed.
+PASS V33 Interrupted runs path escapes and writes after sealing are rejected Declared assertions executed.
+PASS V33 Evidence index resolves all requirements and actual code symbols Declared assertions executed.
+PASS V33 Evidence index rejects unknown identifiers and nonexistent symbols Declared assertions executed.

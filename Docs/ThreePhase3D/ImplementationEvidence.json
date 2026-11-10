@@ -649,7 +649,13 @@
         "V33",
         "V43"
       ],
-      "runs": [],
+      "runs": [
+        {
+          "path": "ValidationRuns/s01-foundation-20261110T211825-32982064feaa4af7a17f24c80d079760",
+          "git_commit_sha": "4f1c3a019672d786f22b47ea389ccf382ab9ef72",
+          "manifest_sha256": "d55b06b8d2ddc0ef36636b21177ad7cc7b4de2ae73317e5bf7a71d1be5972570"
+        }
+      ],
       "review": null,
       "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
     },
@@ -713,7 +719,13 @@
         "V34",
         "V43"
       ],
-      "runs": [],
+      "runs": [
+        {
+          "path": "ValidationRuns/s01-foundation-20261110T211825-32982064feaa4af7a17f24c80d079760",
+          "git_commit_sha": "4f1c3a019672d786f22b47ea389ccf382ab9ef72",
+          "manifest_sha256": "d55b06b8d2ddc0ef36636b21177ad7cc7b4de2ae73317e5bf7a71d1be5972570"
+        }
+      ],
       "review": null,
       "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
     },
@@ -806,7 +818,13 @@
       "validation_ids": [
         "V46"
       ],
-      "runs": [],
+      "runs": [
+        {
+          "path": "ValidationRuns/s01-foundation-20261110T211825-32982064feaa4af7a17f24c80d079760",
+          "git_commit_sha": "4f1c3a019672d786f22b47ea389ccf382ab9ef72",
+          "manifest_sha256": "d55b06b8d2ddc0ef36636b21177ad7cc7b4de2ae73317e5bf7a71d1be5972570"
+        }
+      ],
       "review": null,
       "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
     },
@@ -835,7 +853,13 @@
         "V33",
         "V36"
       ],
-      "runs": [],
+      "runs": [
+        {
+          "path": "ValidationRuns/s01-foundation-20261110T211825-32982064feaa4af7a17f24c80d079760",
+          "git_commit_sha": "4f1c3a019672d786f22b47ea389ccf382ab9ef72",
+          "manifest_sha256": "d55b06b8d2ddc0ef36636b21177ad7cc7b4de2ae73317e5bf7a71d1be5972570"
+        }
+      ],
       "review": null,
       "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
     },
@@ -1027,7 +1051,13 @@
         "V34",
         "V37"
       ],
-      "runs": [],
+      "runs": [
+        {
+          "path": "ValidationRuns/s01-foundation-20261110T211825-32982064feaa4af7a17f24c80d079760",
+          "git_commit_sha": "4f1c3a019672d786f22b47ea389ccf382ab9ef72",
+          "manifest_sha256": "d55b06b8d2ddc0ef36636b21177ad7cc7b4de2ae73317e5bf7a71d1be5972570"
+        }
+      ],
       "review": null,
       "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
     },

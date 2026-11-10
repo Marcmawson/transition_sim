@@ -8,7 +8,7 @@ This stage supplies accounting and reproducible evidence infrastructure. It does
 
 The user reported that the beaker renders after the quaternion correction. That observation establishes visible apparatus rendering only. Exact client commit, hardware, Console baseline and the new S01 Editor menu run have not yet been supplied, so no broader V36 or physical-validation pass is inferred.
 
-Development checks and Unity-assembly compilation passed. The attached run record, once supplied, identifies the exact clean source commit, executable hash, configuration/reference hashes and measured metrics. Requirement acceptance/review remains PENDING. Do not equate bookkeeping transfers with implemented melting, spray conversion or resolved phase flow.
+The 25 standalone check groups and Unity-assembly compilation passed. S01-Verification.md links the actual clean-source run, executable hash, configuration/reference hashes and measured metrics. Requirement acceptance/review remains PENDING. Do not equate bookkeeping transfers with implemented melting, spray conversion or resolved phase flow.
 
 ## Implemented interfaces
 
