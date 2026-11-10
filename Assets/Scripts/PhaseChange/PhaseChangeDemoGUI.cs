@@ -13,6 +13,7 @@ namespace PhaseTransition.Physics
         private GUIStyle titleStyle;
         private GUIStyle noteStyle;
         private Texture2D particleTexture;
+        private bool showFlowVectors = true;
 
         private void Awake()
         {
@@ -60,7 +61,7 @@ namespace PhaseTransition.Physics
         {
             if (ledger == null) return;
             GUILayout.Label("Spatial SI enthalpy grid: each cell has its own temperature and phase fractions.", noteStyle);
-            GUILayout.Label("White = ice or vapour; blue = liquid. Markers are representative, not individual molecules.", noteStyle);
+            GUILayout.Label("White = ice or vapour; blue = liquid. Lines show the computed liquid-flow direction.", noteStyle);
             GUILayout.Space(8f);
             ledger.heaterEnabled = GUILayout.Toggle(ledger.heaterEnabled, "Heater on");
             GUILayout.Label($"Heater power: {ledger.heaterPowerW:0} W");
@@ -72,9 +73,11 @@ namespace PhaseTransition.Physics
             GUILayout.Label($"Mass-weighted temperature: {ledger.AverageTemperatureC:0.00} deg C");
             GUILayout.Label($"Ice: {ledger.IceMassFraction:P1}   liquid: {ledger.LiquidMassFraction:P1}   vapour: {ledger.VapourMassFraction:P1}");
             GUILayout.Label($"Specific enthalpy: {ledger.SpecificEnthalpyJPerKg / 1000.0:0.0} kJ/kg");
+            GUILayout.Label($"Peak liquid speed: {ledger.MaximumLiquidSpeedMS:0.000} m/s");
+            showFlowVectors = GUILayout.Toggle(showFlowVectors, "Show liquid flow direction");
             if (GUILayout.Button("Reset to ice at -50 deg C")) ledger.ResetSample();
             GUILayout.Space(5f);
-            GUILayout.Label("A hot cell can melt, warm, or boil while other cells remain colder. Heat conducts from the base; natural convection, beaker metal, ambient losses, nucleation and actual vapour transport are not included yet.", noteStyle);
+            GUILayout.Label("Liquid uses a 2-D incompressible flow approximation with buoyancy and temperature-dependent viscosity. Flow carries liquid sensible heat. Solid movement, vapour flow, beaker heat capacity and 16 C ambient heat exchange are not included yet.", noteStyle);
         }
 
         private void DrawLatticeControls()
@@ -115,6 +118,7 @@ namespace PhaseTransition.Physics
             }
 
             DrawLocalPhaseParticles(interior);
+            if (showFlowVectors) DrawLiquidFlowVectors(interior);
             if (ledger.heaterEnabled && ledger.heaterPowerW > 0f)
             {
                 GUI.color = new Color(1f, 0.28f, 0.06f, 0.95f);
@@ -127,11 +131,37 @@ namespace PhaseTransition.Physics
             GUI.Label(new Rect(x, y + h + 44f, w + 120f, 44f), "Cells transition locally: mass-average temperature can rise while ice remains elsewhere.", noteStyle);
         }
 
+        private void DrawLiquidFlowVectors(Rect interior)
+        {
+            float cellWidth = interior.width / ledger.GridWidth;
+            float cellHeight = interior.height / ledger.GridHeight;
+            for (int iy = 1; iy < ledger.GridHeight - 1; iy += 2)
+                for (int ix = 1; ix < ledger.GridWidth - 1; ix += 2)
+                {
+                    BeakerEnergyLedger.CellState cell = ledger.GetCellState(ix, iy);
+                    if (cell.liquidMassFraction < 0.2) continue;
+                    float u = (float)cell.velocityXMS;
+                    float v = -(float)cell.velocityYMS;
+                    float speed = Mathf.Sqrt(u * u + v * v);
+                    if (speed < 0.00005f) continue;
+
+                    float centreX = interior.x + (ix + 0.5f) * cellWidth;
+                    float centreY = interior.y + interior.height - (iy + 0.5f) * cellHeight;
+                    float angle = Mathf.Atan2(v, u) * Mathf.Rad2Deg;
+                    Matrix4x4 oldMatrix = GUI.matrix;
+                    GUIUtility.RotateAroundPivot(angle, new Vector2(centreX, centreY));
+                    GUI.color = new Color(0.92f, 0.96f, 1f, 0.8f);
+                    GUI.DrawTexture(new Rect(centreX - cellWidth * 0.32f, centreY - 1f,
+                        cellWidth * 0.64f, 2f), Texture2D.whiteTexture);
+                    GUI.matrix = oldMatrix;
+                    GUI.color = Color.white;
+                }
+        }
+
         private void DrawLocalPhaseParticles(Rect interior)
         {
             float cellWidth = interior.width / ledger.GridWidth;
             float cellHeight = interior.height / ledger.GridHeight;
-            float time = Time.time;
             double cellVolume = (ledger.beakerWidthM / ledger.GridWidth) *
                                 (ledger.beakerHeightM / ledger.GridHeight) * ledger.beakerDepthM;
 
@@ -146,21 +176,15 @@ namespace PhaseTransition.Physics
                     float localVolumeFraction = Mathf.Clamp01((float)condensedVolumeFraction);
                     float centreX = interior.x + (ix + 0.5f) * cellWidth;
                     float centreY = interior.y + interior.height - (iy + localVolumeFraction * 0.5f) * cellHeight;
-                    float liquidDriftX = Mathf.Sin(time + ix * 0.91f + iy * 1.37f) * cellWidth * 0.16f;
-                    float liquidDriftY = Mathf.Sin(time * 0.7f + ix * 1.71f + iy * 0.57f) * cellHeight * 0.13f;
-
                     DrawParticle(new Rect(centreX - cellWidth * 0.18f - 3f, centreY - 3f, 6f, 6f),
                         Color.white, (float)cell.iceMassFraction);
-                    DrawParticle(new Rect(centreX + cellWidth * 0.18f - 3f + liquidDriftX,
-                        centreY - 3f + liquidDriftY, 6f, 6f),
+                    DrawParticle(new Rect(centreX + cellWidth * 0.18f - 3f,
+                        centreY - 3f, 6f, 6f),
                         new Color(0.12f, 0.52f, 1f, 1f), (float)cell.liquidMassFraction);
 
                     if (cell.vapourMassFraction > 0.001)
                     {
-                        float rise = Mathf.Repeat(time * 18f + (ix * 17 + iy * 31) * 0.37f,
-                            Mathf.Max(1f, interior.height * 0.60f));
-                        float gasY = Mathf.Max(interior.y + 3f, centreY - rise);
-                        DrawParticle(new Rect(centreX - 2.5f, gasY - 2.5f, 5f, 5f),
+                        DrawParticle(new Rect(centreX - 2.5f, centreY - 2.5f, 5f, 5f),
                             Color.white, (float)cell.vapourMassFraction);
                     }
                 }

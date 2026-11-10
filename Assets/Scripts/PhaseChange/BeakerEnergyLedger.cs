@@ -6,7 +6,8 @@ namespace PhaseTransition.Physics
     /// A spatial SI enthalpy grid for a small beaker sample. Each occupied cell has its own
     /// enthalpy and phase fractions, so locally melted water can warm while ice remains
     /// elsewhere, and local boiling can begin while most of the sample remains liquid.
-    /// This is conduction-only: it does not yet advect water or vapour.
+    /// Liquid cells use a 2-D incompressible flow approximation that advects sensible heat.
+    /// Vapour flow, solid motion, and conservative phase-mass transport are not yet included.
     /// </summary>
     public sealed class BeakerEnergyLedger : MonoBehaviour
     {
@@ -34,6 +35,8 @@ namespace PhaseTransition.Physics
             public double iceMassFraction;
             public double liquidMassFraction;
             public double vapourMassFraction;
+            public double velocityXMS;
+            public double velocityYMS;
         }
 
         public double SpecificEnthalpyJPerKg { get; private set; }
@@ -44,6 +47,7 @@ namespace PhaseTransition.Physics
         public double AmbientPressurePa { get; private set; }
         public double WaterLevelM { get; private set; }
         public double TotalSampleMassKg { get; private set; }
+        public double MaximumLiquidSpeedMS { get; private set; }
 
         private const double IceDensityKgPerM3 = 917.0;
         private const double LiquidDensityKgPerM3 = 998.2;
@@ -56,6 +60,9 @@ namespace PhaseTransition.Physics
         private double[,] cellEnthalpyJPerKg;
         private WaterThermodynamicsSI.EquilibriumState[,] cellThermo;
         private double[,] energyChangeJ;
+        private LiquidConvection2D liquidFlow;
+        private double[,] liquidFractionBuffer;
+        private double[,] temperatureBuffer;
         private bool initialized;
 
         public int GridWidth => gridWidth;
@@ -93,7 +100,9 @@ namespace PhaseTransition.Physics
                 temperatureC = s.temperatureC,
                 iceMassFraction = s.iceMassFraction,
                 liquidMassFraction = s.liquidMassFraction,
-                vapourMassFraction = s.vapourMassFraction
+                vapourMassFraction = s.vapourMassFraction,
+                velocityXMS = liquidFlow != null ? liquidFlow.GetVelocityX(x, y) : 0.0,
+                velocityYMS = liquidFlow != null ? liquidFlow.GetVelocityY(x, y) : 0.0
             };
         }
 
@@ -106,6 +115,9 @@ namespace PhaseTransition.Physics
             cellEnthalpyJPerKg = new double[gridWidth, gridHeight];
             cellThermo = new WaterThermodynamicsSI.EquilibriumState[gridWidth, gridHeight];
             energyChangeJ = new double[gridWidth, gridHeight];
+            liquidFractionBuffer = new double[gridWidth, gridHeight];
+            temperatureBuffer = new double[gridWidth, gridHeight];
+            liquidFlow = new LiquidConvection2D(gridWidth, gridHeight);
 
             double dx = beakerWidthM / gridWidth;
             double dy = beakerHeightM / gridHeight;
@@ -131,6 +143,7 @@ namespace PhaseTransition.Physics
 
             AmbientPressurePa = WaterThermodynamicsSI.AmbientPressureAtAltitudePa(altitudeM);
             initialized = true;
+            liquidFlow.Reset();
             RebuildCellStatesAndTotals();
         }
 
@@ -149,9 +162,27 @@ namespace PhaseTransition.Physics
         private void AdvanceThermalStep(double dt)
         {
             RebuildCellStatesAndTotals();
-            System.Array.Clear(energyChangeJ, 0, energyChangeJ.Length);
+            for (int y = 0; y < gridHeight; y++)
+                for (int x = 0; x < gridWidth; x++)
+                {
+                    liquidFractionBuffer[x, y] = cellThermo[x, y].liquidMassFraction;
+                    temperatureBuffer[x, y] = cellThermo[x, y].temperatureC;
+                }
+
             double dx = beakerWidthM / gridWidth;
             double dy = beakerHeightM / gridHeight;
+            liquidFlow.Advance(liquidFractionBuffer, temperatureBuffer, dx, dy, dt);
+            MaximumLiquidSpeedMS = 0.0;
+            for (int y = 0; y < gridHeight; y++)
+                for (int x = 0; x < gridWidth; x++)
+                {
+                    double u = liquidFlow.GetVelocityX(x, y);
+                    double v = liquidFlow.GetVelocityY(x, y);
+                    double speed = System.Math.Sqrt(u * u + v * v);
+                    if (speed > MaximumLiquidSpeedMS) MaximumLiquidSpeedMS = speed;
+                }
+
+            System.Array.Clear(energyChangeJ, 0, energyChangeJ.Length);
             double cellVolume = dx * dy * beakerDepthM;
 
             // Pairwise finite-volume Fourier fluxes; every internal face is counted once.
@@ -175,11 +206,67 @@ namespace PhaseTransition.Physics
                             energyChangeJ[x, 0] += heaterPowerW * dt * cellMassKg[x, 0] / wetBaseMass;
             }
 
+            AdvectLiquidSensibleHeat(dt, dx, dy);
+
             for (int y = 0; y < gridHeight; y++)
                 for (int x = 0; x < gridWidth; x++)
                     if (cellMassKg[x, y] > 0.0)
                         cellEnthalpyJPerKg[x, y] += energyChangeJ[x, y] / cellMassKg[x, y];
             RebuildCellStatesAndTotals();
+        }
+
+        private void AdvectLiquidSensibleHeat(double dt, double dx, double dy)
+        {
+            const double liquidDensity = 998.2;
+            const double liquidHeatCapacity = 4181.3;
+            double xFaceArea = dy * beakerDepthM;
+            double yFaceArea = dx * beakerDepthM;
+
+            for (int y = 0; y < gridHeight; y++)
+                for (int x = 0; x < gridWidth; x++)
+                {
+                    if (x + 1 < gridWidth)
+                    {
+                        double fractionA = liquidFractionBuffer[x, y];
+                        double fractionB = liquidFractionBuffer[x + 1, y];
+                        double faceFraction = System.Math.Min(fractionA, fractionB);
+                        if (faceFraction > 0.0)
+                        {
+                            double faceVelocity = 0.5 * (liquidFlow.GetVelocityX(x, y) +
+                                                          liquidFlow.GetVelocityX(x + 1, y));
+                            double signedMassFlux = liquidDensity * faceVelocity * xFaceArea * dt * faceFraction;
+                            double maxFlux = 0.10 * System.Math.Min(cellMassKg[x, y] * fractionA,
+                                cellMassKg[x + 1, y] * fractionB);
+                            signedMassFlux = System.Math.Max(-maxFlux, System.Math.Min(maxFlux, signedMassFlux));
+                            double donorTemperature = signedMassFlux >= 0.0
+                                ? temperatureBuffer[x, y] : temperatureBuffer[x + 1, y];
+                            double energyFlux = signedMassFlux * liquidHeatCapacity * donorTemperature;
+                            energyChangeJ[x, y] -= energyFlux;
+                            energyChangeJ[x + 1, y] += energyFlux;
+                        }
+                    }
+
+                    if (y + 1 < gridHeight)
+                    {
+                        double fractionA = liquidFractionBuffer[x, y];
+                        double fractionB = liquidFractionBuffer[x, y + 1];
+                        double faceFraction = System.Math.Min(fractionA, fractionB);
+                        if (faceFraction > 0.0)
+                        {
+                            double faceVelocity = 0.5 * (liquidFlow.GetVelocityY(x, y) +
+                                                          liquidFlow.GetVelocityY(x, y + 1));
+                            double signedMassFlux = liquidDensity * faceVelocity * yFaceArea * dt * faceFraction;
+                            double maxFlux = 0.10 * System.Math.Min(cellMassKg[x, y] * fractionA,
+                                cellMassKg[x, y + 1] * fractionB);
+                            signedMassFlux = System.Math.Max(-maxFlux, System.Math.Min(maxFlux, signedMassFlux));
+                            double donorTemperature = signedMassFlux >= 0.0
+                                ? temperatureBuffer[x, y] : temperatureBuffer[x, y + 1];
+                            double energyFlux = signedMassFlux * liquidHeatCapacity * donorTemperature;
+                            energyChangeJ[x, y] -= energyFlux;
+                            energyChangeJ[x, y + 1] += energyFlux;
+                        }
+                    }
+                }
         }
 
         private void TransferHeat(int ax, int ay, int bx, int by,
