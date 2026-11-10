@@ -3,10 +3,10 @@ using System.Numerics;
 
 namespace PhysicsSim.ThreePhase3D.Materials
 {
-    public enum IceConductivityModel { Unspecified, BonalesSlowFrozenCorrected2018 }
+    public enum IceConductivityModel { Unspecified, BonalesSlowFrozenCorrected2018, Yen1981PurePolycrystalline }
     public sealed class IceIh : IIceProperties
     {
-        public const string Version="S02-IceIh-1";
+        public const string Version="S02-IceIh-2";
         public readonly IceConductivityModel ConductivityModel;
         public IceIh(IceConductivityModel model=IceConductivityModel.Unspecified)
         {if(!Enum.IsDefined(typeof(IceConductivityModel),model))throw new ArgumentOutOfRangeException(nameof(model));ConductivityModel=model;}
@@ -58,6 +58,12 @@ namespace PhysicsSim.ThreePhase3D.Materials
         public double ConductivityWmK(double t)
         {
             Guard.Finite(t);
+            // Yen, CRREL Report 81-10 (1981), p15 Eq33 and p16 Table3.
+            // Broad regression of pure polycrystalline ice data, not a continuation
+            // of the Bonales preparation. Project restricts to 200-273.15 K.
+            // No pressure, porosity or crystal-orientation correction is implied.
+            if(ConductivityModel==IceConductivityModel.Yen1981PurePolycrystalline)
+            {Guard.Range(t,200,273.15);return 9.828*Math.Exp(-.0057*t);}
             if(ConductivityModel!=IceConductivityModel.BonalesSlowFrozenCorrected2018)
                 throw new NotSupportedException("MAT011: explicitly select an applicable sourced ice preparation model.");
             // Bonales et al. 2017: slow-frozen ice, -40 to -5 Celsius, 5-minute
