@@ -439,7 +439,7 @@ namespace PhaseTransition.FluidFlow
             // texture is multiplied by the near-black vessel background colour.
             GUI.color = Color.white;
             if (display != null)
-                GUI.DrawTextureWithTexCoords(vessel, display, new Rect(0f, 1f, 1f, -1f), false);
+                GUI.DrawTexture(vessel, display, ScaleMode.StretchToFill, false);
             Color wallColour = new Color(0.65f, 0.88f, 1f, 1f);
             float wall = Mathf.Max(3f, 4f * scale);
             DrawSolidRect(new Rect(vessel.x - wall, vessel.y, wall, vessel.height), wallColour);
