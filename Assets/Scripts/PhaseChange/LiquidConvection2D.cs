@@ -5,8 +5,8 @@ namespace PhaseTransition.Physics
     /// <summary>
     /// First liquid-flow stage for the beaker: 2-D incompressible Navier-Stokes with
     /// temperature-dependent water density (Boussinesq buoyancy), viscosity, advection,
-    /// and a pressure projection. Solid cells are treated as stationary obstacles.
-    /// Vapour/compressible gas flow and solid-body motion are not handled here.
+    /// and a pressure projection. Ice cells are obstacles during each fluid step; empty cells
+    /// define an atmospheric-pressure free surface. Compressible gas flow is absent.
     /// </summary>
     public sealed class LiquidConvection2D
     {
@@ -54,13 +54,13 @@ namespace PhaseTransition.Physics
                     density[x, y] = ReferenceDensityKgPerM3;
         }
 
-        public void Advance(double[,] liquidFraction, double[,] temperatureC,
+        public void Advance(double[,] liquidFraction, double[,] iceFraction, double[,] temperatureC,
             double dxM, double dyM, double dtS)
         {
             AdvectVelocity(liquidFraction, dxM, dyM, dtS);
             ApplyBuoyancyAndViscosity(liquidFraction, temperatureC, dxM, dyM, dtS);
-            Project(liquidFraction, dxM, dyM, dtS);
-            EnforceSolidBoundaries(liquidFraction);
+            Project(liquidFraction, iceFraction, dxM, dyM, dtS);
+            EnforceSolidBoundaries(liquidFraction, iceFraction);
         }
 
         private void AdvectVelocity(double[,] liquidFraction, double dx, double dy, double dt)
@@ -127,7 +127,7 @@ namespace PhaseTransition.Physics
             Copy(vNext, v);
         }
 
-        private void Project(double[,] liquidFraction, double dx, double dy, double dt)
+        private void Project(double[,] liquidFraction, double[,] iceFraction, double dx, double dy, double dt)
         {
             double invDx2 = 1.0 / (dx * dx);
             double invDy2 = 1.0 / (dy * dy);
@@ -147,10 +147,10 @@ namespace PhaseTransition.Physics
                             continue;
                         }
 
-                        double pL = PressureAt(liquidFraction, x - 1, y, x, y);
-                        double pR = PressureAt(liquidFraction, x + 1, y, x, y);
-                        double pD = PressureAt(liquidFraction, x, y - 1, x, y);
-                        double pU = PressureAt(liquidFraction, x, y + 1, x, y);
+                        double pL = PressureAt(liquidFraction, iceFraction, x - 1, y, x, y);
+                        double pR = PressureAt(liquidFraction, iceFraction, x + 1, y, x, y);
+                        double pD = PressureAt(liquidFraction, iceFraction, x, y - 1, x, y);
+                        double pU = PressureAt(liquidFraction, iceFraction, x, y + 1, x, y);
                         double divergence = (VelocityUAt(liquidFraction, x + 1, y) -
                                              VelocityUAt(liquidFraction, x - 1, y)) / (2.0 * dx) +
                                             (VelocityVAt(liquidFraction, x, y + 1) -
@@ -172,13 +172,15 @@ namespace PhaseTransition.Physics
                         continue;
                     }
                     u[x, y] -= dt / ReferenceDensityKgPerM3 *
-                        (PressureAt(liquidFraction, x + 1, y, x, y) - PressureAt(liquidFraction, x - 1, y, x, y)) / (2.0 * dx);
+                        (PressureAt(liquidFraction, iceFraction, x + 1, y, x, y) -
+                         PressureAt(liquidFraction, iceFraction, x - 1, y, x, y)) / (2.0 * dx);
                     v[x, y] -= dt / ReferenceDensityKgPerM3 *
-                        (PressureAt(liquidFraction, x, y + 1, x, y) - PressureAt(liquidFraction, x, y - 1, x, y)) / (2.0 * dy);
+                        (PressureAt(liquidFraction, iceFraction, x, y + 1, x, y) -
+                         PressureAt(liquidFraction, iceFraction, x, y - 1, x, y)) / (2.0 * dy);
                 }
         }
 
-        private void EnforceSolidBoundaries(double[,] liquidFraction)
+        private void EnforceSolidBoundaries(double[,] liquidFraction, double[,] iceFraction)
         {
             for (int y = 0; y < height; y++)
                 for (int x = 0; x < width; x++)
@@ -190,9 +192,13 @@ namespace PhaseTransition.Physics
                         continue;
                     }
 
-                    if (x == 0 || x == width - 1 || !IsFluid(liquidFraction, x - 1, y) || !IsFluid(liquidFraction, x + 1, y))
+                    // Empty cells are free surface, not solid walls. Keep normal flow open there
+                    // so the same Navier-Stokes velocity field can advance the liquid interface.
+                    if (x == 0 || x == width - 1 || IsSolid(iceFraction, liquidFraction, x - 1, y) ||
+                        IsSolid(iceFraction, liquidFraction, x + 1, y))
                         u[x, y] = 0.0;
-                    if (y == 0 || y == height - 1 || !IsFluid(liquidFraction, x, y - 1) || !IsFluid(liquidFraction, x, y + 1))
+                    if (y == 0 || IsSolid(iceFraction, liquidFraction, x, y - 1) ||
+                        IsSolid(iceFraction, liquidFraction, x, y + 1))
                         v[x, y] = 0.0;
                 }
         }
@@ -229,8 +235,14 @@ namespace PhaseTransition.Physics
             int x, int y, int fallbackX, int fallbackY) =>
             IsFluid(liquidFraction, x, y) ? field[x, y] : field[fallbackX, fallbackY];
 
-        private double PressureAt(double[,] liquidFraction, int x, int y, int fallbackX, int fallbackY) =>
-            IsFluid(liquidFraction, x, y) ? pressure[x, y] : pressure[fallbackX, fallbackY];
+        private double PressureAt(double[,] liquidFraction, double[,] iceFraction,
+            int x, int y, int fallbackX, int fallbackY)
+        {
+            if (x < 0 || x >= width || y < 0) return pressure[fallbackX, fallbackY];
+            if (y >= height || IsAir(liquidFraction, iceFraction, x, y)) return 0.0;
+            if (IsSolid(iceFraction, liquidFraction, x, y)) return pressure[fallbackX, fallbackY];
+            return pressure[x, y];
+        }
 
         private double VelocityUAt(double[,] liquidFraction, int x, int y) =>
             IsFluid(liquidFraction, x, y) ? u[x, y] : 0.0;
@@ -240,6 +252,14 @@ namespace PhaseTransition.Physics
 
         private bool IsFluid(double[,] liquidFraction, int x, int y) =>
             x >= 0 && y >= 0 && x < width && y < height && liquidFraction[x, y] >= MinimumFlowFraction;
+
+        private bool IsAir(double[,] liquidFraction, double[,] iceFraction, int x, int y) =>
+            x >= 0 && y >= 0 && x < width && y < height &&
+            liquidFraction[x, y] < MinimumFlowFraction && iceFraction[x, y] < 0.5;
+
+        private bool IsSolid(double[,] iceFraction, double[,] liquidFraction, int x, int y) =>
+            x >= 0 && y >= 0 && x < width && y < height &&
+            iceFraction[x, y] >= 0.5 && liquidFraction[x, y] < MinimumFlowFraction;
 
         private static double LiquidWaterDensityKgPerM3(double temperatureC)
         {

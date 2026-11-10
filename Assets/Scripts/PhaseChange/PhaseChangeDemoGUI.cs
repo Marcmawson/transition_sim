@@ -85,7 +85,7 @@ namespace PhaseTransition.Physics
             showFlowVectors = GUILayout.Toggle(showFlowVectors, "Show liquid flow direction");
             if (GUILayout.Button("Reset to ice at -50 deg C")) ledger.ResetSample();
             GUILayout.Space(5f);
-            GUILayout.Label("Liquid mass and heat move with a 2-D incompressible flow approximation. Vapour bubbles rise and vent using a buoyant-drag approximation. Gas Navier-Stokes, moving ice, beaker heat capacity and 16 C ambient heat exchange are not included yet.", noteStyle);
+            GUILayout.Label("The Navier-Stokes velocity field advects liquid across the free surface and carries its heat. Ice floats through an Archimedean grid-level approximation. Vapour bubbles rise with a drag approximation; gas Navier-Stokes, beaker heat capacity and 16 C ambient exchange remain unmodelled.", noteStyle);
         }
 
         private void DrawLatticeControls()
