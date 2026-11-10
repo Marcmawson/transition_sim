@@ -204,12 +204,20 @@
     },
     {
       "requirement_id": "R013",
-      "status": "SPECIFIED",
-      "code_symbols": [],
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Materials/Water95.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Materials.Water95.Evaluate",
+          "source_sha256": null
+        }
+      ],
       "source_ids": [
         "D01"
       ],
-      "source_locators": [],
+      "source_locators": [
+        "Docs/ThreePhase3D/S02-Handoff.md"
+      ],
       "validation_ids": [
         "V03"
       ],
@@ -218,13 +226,21 @@
     },
     {
       "requirement_id": "R014",
-      "status": "SPECIFIED",
-      "code_symbols": [],
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Materials/IceIh.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Materials.IceIh.Evaluate",
+          "source_sha256": null
+        }
+      ],
       "source_ids": [
         "D02",
         "D03"
       ],
-      "source_locators": [],
+      "source_locators": [
+        "Docs/ThreePhase3D/S02-Handoff.md"
+      ],
       "validation_ids": [
         "V04"
       ],
@@ -233,13 +249,21 @@
     },
     {
       "requirement_id": "R015",
-      "status": "SPECIFIED",
-      "code_symbols": [],
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Materials/HumidGas.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Materials.HumidGas.Evaluate",
+          "source_sha256": null
+        }
+      ],
       "source_ids": [
         "D06",
         "D07"
       ],
-      "source_locators": [],
+      "source_locators": [
+        "Docs/ThreePhase3D/S02-Handoff.md"
+      ],
       "validation_ids": [
         "V05",
         "V27"
@@ -249,8 +273,14 @@
     },
     {
       "requirement_id": "R016",
-      "status": "SPECIFIED",
-      "code_symbols": [],
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Materials/WaterTransport.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Materials.WaterTransport.Conductivity",
+          "source_sha256": null
+        }
+      ],
       "source_ids": [
         "D04",
         "D05",
@@ -260,7 +290,9 @@
         "D13",
         "D14"
       ],
-      "source_locators": [],
+      "source_locators": [
+        "Docs/ThreePhase3D/S02-Handoff.md"
+      ],
       "validation_ids": [
         "V05"
       ],
@@ -649,13 +681,7 @@
         "V33",
         "V43"
       ],
-      "runs": [
-        {
-          "path": "ValidationRuns/s01-foundation-20261110T211825-32982064feaa4af7a17f24c80d079760",
-          "git_commit_sha": "4f1c3a019672d786f22b47ea389ccf382ab9ef72",
-          "manifest_sha256": "d55b06b8d2ddc0ef36636b21177ad7cc7b4de2ae73317e5bf7a71d1be5972570"
-        }
-      ],
+      "runs": [],
       "review": null,
       "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
     },
@@ -719,13 +745,7 @@
         "V34",
         "V43"
       ],
-      "runs": [
-        {
-          "path": "ValidationRuns/s01-foundation-20261110T211825-32982064feaa4af7a17f24c80d079760",
-          "git_commit_sha": "4f1c3a019672d786f22b47ea389ccf382ab9ef72",
-          "manifest_sha256": "d55b06b8d2ddc0ef36636b21177ad7cc7b4de2ae73317e5bf7a71d1be5972570"
-        }
-      ],
+      "runs": [],
       "review": null,
       "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
     },
@@ -818,13 +838,7 @@
       "validation_ids": [
         "V46"
       ],
-      "runs": [
-        {
-          "path": "ValidationRuns/s01-foundation-20261110T211825-32982064feaa4af7a17f24c80d079760",
-          "git_commit_sha": "4f1c3a019672d786f22b47ea389ccf382ab9ef72",
-          "manifest_sha256": "d55b06b8d2ddc0ef36636b21177ad7cc7b4de2ae73317e5bf7a71d1be5972570"
-        }
-      ],
+      "runs": [],
       "review": null,
       "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
     },
@@ -853,13 +867,7 @@
         "V33",
         "V36"
       ],
-      "runs": [
-        {
-          "path": "ValidationRuns/s01-foundation-20261110T211825-32982064feaa4af7a17f24c80d079760",
-          "git_commit_sha": "4f1c3a019672d786f22b47ea389ccf382ab9ef72",
-          "manifest_sha256": "d55b06b8d2ddc0ef36636b21177ad7cc7b4de2ae73317e5bf7a71d1be5972570"
-        }
-      ],
+      "runs": [],
       "review": null,
       "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
     },
@@ -1051,13 +1059,7 @@
         "V34",
         "V37"
       ],
-      "runs": [
-        {
-          "path": "ValidationRuns/s01-foundation-20261110T211825-32982064feaa4af7a17f24c80d079760",
-          "git_commit_sha": "4f1c3a019672d786f22b47ea389ccf382ab9ef72",
-          "manifest_sha256": "d55b06b8d2ddc0ef36636b21177ad7cc7b4de2ae73317e5bf7a71d1be5972570"
-        }
-      ],
+      "runs": [],
       "review": null,
       "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
     },

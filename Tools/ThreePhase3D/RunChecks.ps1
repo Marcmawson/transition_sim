@@ -16,7 +16,7 @@ if ($taskEditorVersion -ne '2022.3.46f1') { throw ('Expected pinned Unity 2022.3
 $taskSources = @(Get-ChildItem (Join-Path $taskRoot 'Assets\Scripts\ThreePhase3D') -Filter '*.cs' -Recurse |
     Where-Object { $_.FullName -notmatch '[\\/](Editor|Rendering)[\\/]' } | ForEach-Object { $_.FullName })
 $taskExe = Join-Path $taskBuild 'FoundationChecks.exe'
-$taskArgs = @('/nologo', '/target:exe', ('/out:' + $taskExe), '/reference:System.Runtime.Serialization.dll') + $taskSources + (Join-Path $PSScriptRoot 'CheckMain.cs')
+$taskArgs = @('/nologo', '/target:exe', ('/out:' + $taskExe), '/reference:System.Runtime.Serialization.dll', '/reference:System.Numerics.dll') + $taskSources + (Join-Path $PSScriptRoot 'CheckMain.cs')
 & $taskMono $taskCsc @taskArgs
 if ($LASTEXITCODE -ne 0) { throw 'Foundation compilation failed.' }
 if ($CompileUnitySources) {
