@@ -1,0 +1,1085 @@
+{
+  "schema_version": "1.0",
+  "template": false,
+  "baseline_specification": "1.0",
+  "inspected_repository_commit": "e51635ca16160a9afbf4570b2f9e3512fb831b8a",
+  "records": [
+    {
+      "requirement_id": "R001",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "U01"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V06",
+        "V19"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R002",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "U01",
+        "U02"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V36"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R003",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "U01",
+        "U02"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V35",
+        "V45"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R004",
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Core/ScenarioConfigSI.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Core.ScenarioConfigSI.Validate",
+          "source_sha256": "cb0c232a0edf94b35a10856138e90e03420c7aa0a4f33992b93c3078433c0223"
+        }
+      ],
+      "source_ids": [
+        "D00"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V01"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R005",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "B01"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V14",
+        "V15"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R006",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D02",
+        "M09"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V06",
+        "V25",
+        "V26"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R007",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D01",
+        "D06"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V02",
+        "V27"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R008",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "M02",
+        "D06"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V15",
+        "V27",
+        "V43"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R009",
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Geometry/ApparatusSurface.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Geometry.ApparatusSurface.Beaker",
+          "source_sha256": "298094651e010eeaa3dd18bdfd5ed2c4f7026c6970a86ba2a4f385b186409748"
+        }
+      ],
+      "source_ids": [
+        "D10"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V06",
+        "V35"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R010",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D10"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V18"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R011",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D10"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V16",
+        "V17",
+        "V18"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R012",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D10"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V17",
+        "V25",
+        "V40"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R013",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D01"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V03"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R014",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D02",
+        "D03"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V04"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R015",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D06",
+        "D07"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V05",
+        "V27"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R016",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D04",
+        "D05",
+        "D08",
+        "D09",
+        "D12",
+        "D13",
+        "D14"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V05"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R017",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D01"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V20"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R018",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "M04",
+        "M13"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V09",
+        "V10"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R019",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "M02",
+        "M10"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V07",
+        "V08",
+        "V35"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R020",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "M02",
+        "M03",
+        "M10"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V23",
+        "V29"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R021",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D01",
+        "D02",
+        "M03",
+        "M06"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V21",
+        "V22",
+        "V29",
+        "V43"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R022",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D03",
+        "M06"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V21",
+        "V22",
+        "V23"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R023",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "M02",
+        "D06",
+        "D07"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V27",
+        "V28"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R024",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "M03",
+        "M05"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V29",
+        "V30",
+        "V31"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R025",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "M07"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V30",
+        "V44"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R026",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D02",
+        "D03"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V41"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R027",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D05",
+        "M01"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V11",
+        "V12",
+        "V39"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R028",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "M08"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V13"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R029",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "M09"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V25"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R030",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D02",
+        "M09"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V24",
+        "V26"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R031",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D02",
+        "M06",
+        "M09"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V23",
+        "V26",
+        "V34"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R032",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D06",
+        "D13",
+        "M02"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V19",
+        "V27",
+        "V43"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R033",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D06",
+        "D07"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V01",
+        "V27",
+        "V32"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R034",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D10",
+        "D11"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V17",
+        "V40",
+        "V43"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R035",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D01",
+        "D02",
+        "D06"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V42"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R036",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "M11",
+        "M12"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V37",
+        "V38"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R037",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "O01",
+        "O02",
+        "D10"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V38",
+        "V43"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R038",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "O01",
+        "D00"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V01",
+        "V40"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R039",
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "symbol": "PhysicsSim.ThreePhase3D.Diagnostics.RunRecorder.Record",
+          "path": "Assets/Scripts/ThreePhase3D/Diagnostics/RunRecorder.cs",
+          "source_sha256": "d65ca3386557be7d4beffbfc2a08df512feb53cda89092f4ebf19b17f1085099"
+        }
+      ],
+      "source_ids": [
+        "D00"
+      ],
+      "source_locators": [
+        "Specification.md section 14; EvidenceProtocol.md sections 3-6; S01-Handoff.md scope and conventions"
+      ],
+      "validation_ids": [
+        "V01",
+        "V33",
+        "V43"
+      ],
+      "runs": [
+        {
+          "path": "ValidationRuns/s01-foundation-20261110T211825-32982064feaa4af7a17f24c80d079760",
+          "git_commit_sha": "4f1c3a019672d786f22b47ea389ccf382ab9ef72",
+          "manifest_sha256": "d55b06b8d2ddc0ef36636b21177ad7cc7b4de2ae73317e5bf7a71d1be5972570"
+        }
+      ],
+      "review": null,
+      "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
+    },
+    {
+      "requirement_id": "R040",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D00"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V01",
+        "V33"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R041",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "M01",
+        "M03"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V08",
+        "V12",
+        "V29",
+        "V45"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R042",
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "symbol": "PhysicsSim.ThreePhase3D.Diagnostics.ConservationLedger.Audit",
+          "path": "Assets/Scripts/ThreePhase3D/Diagnostics/ConservationLedger.cs",
+          "source_sha256": "7f64f933468a267815daabb5d4973e100b79be6acb6d9847744deb0e5d2cd793"
+        },
+        {
+          "symbol": "PhysicsSim.ThreePhase3D.Diagnostics.ConservedInventory.Transfer",
+          "path": "Assets/Scripts/ThreePhase3D/Diagnostics/ConservedInventory.cs",
+          "source_sha256": "07a5819692eb3b2adea88a1e6ba9a81c0b6bed1cd3d9bfe0647cbfb6e58c5d8a"
+        }
+      ],
+      "source_ids": [
+        "M03",
+        "D01"
+      ],
+      "source_locators": [
+        "Specification.md section 14; EvidenceProtocol.md sections 3-6; S01-Handoff.md scope and conventions"
+      ],
+      "validation_ids": [
+        "V02",
+        "V34",
+        "V43"
+      ],
+      "runs": [
+        {
+          "path": "ValidationRuns/s01-foundation-20261110T211825-32982064feaa4af7a17f24c80d079760",
+          "git_commit_sha": "4f1c3a019672d786f22b47ea389ccf382ab9ef72",
+          "manifest_sha256": "d55b06b8d2ddc0ef36636b21177ad7cc7b4de2ae73317e5bf7a71d1be5972570"
+        }
+      ],
+      "review": null,
+      "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
+    },
+    {
+      "requirement_id": "R043",
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Core/ScenarioConfigSI.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Core.ScenarioConfigSI.Validate",
+          "source_sha256": "cb0c232a0edf94b35a10856138e90e03420c7aa0a4f33992b93c3078433c0223"
+        }
+      ],
+      "source_ids": [
+        "D00",
+        "D10"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V01",
+        "V05"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R044",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D01",
+        "D02",
+        "D06"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V32"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R045",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "B04"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V09",
+        "V16",
+        "V21",
+        "V45"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R046",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "B01"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V14",
+        "V44"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R047",
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "symbol": "PhysicsSim.ThreePhase3D.Diagnostics.EvidenceValidator.VerifyFunctionContracts",
+          "path": "Assets/Scripts/ThreePhase3D/Diagnostics/EvidenceValidator.cs",
+          "source_sha256": "46b58dada83bd29d95244c433e3cd85214410c0474a3848e85f43c7e2cddcbaa"
+        }
+      ],
+      "source_ids": [
+        "D00"
+      ],
+      "source_locators": [
+        "Specification.md section 14; EvidenceProtocol.md sections 3-6; S01-Handoff.md scope and conventions"
+      ],
+      "validation_ids": [
+        "V46"
+      ],
+      "runs": [
+        {
+          "path": "ValidationRuns/s01-foundation-20261110T211825-32982064feaa4af7a17f24c80d079760",
+          "git_commit_sha": "4f1c3a019672d786f22b47ea389ccf382ab9ef72",
+          "manifest_sha256": "d55b06b8d2ddc0ef36636b21177ad7cc7b4de2ae73317e5bf7a71d1be5972570"
+        }
+      ],
+      "review": null,
+      "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
+    },
+    {
+      "requirement_id": "R048",
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "symbol": "PhysicsSim.ThreePhase3D.Diagnostics.RunRecorder.Complete",
+          "path": "Assets/Scripts/ThreePhase3D/Diagnostics/RunRecorder.cs",
+          "source_sha256": "d65ca3386557be7d4beffbfc2a08df512feb53cda89092f4ebf19b17f1085099"
+        },
+        {
+          "symbol": "PhysicsSim.ThreePhase3D.Diagnostics.EvidenceValidator.VerifyBundle",
+          "path": "Assets/Scripts/ThreePhase3D/Diagnostics/EvidenceValidator.cs",
+          "source_sha256": "46b58dada83bd29d95244c433e3cd85214410c0474a3848e85f43c7e2cddcbaa"
+        }
+      ],
+      "source_ids": [
+        "U02"
+      ],
+      "source_locators": [
+        "Specification.md section 14; EvidenceProtocol.md sections 3-6; S01-Handoff.md scope and conventions"
+      ],
+      "validation_ids": [
+        "V33",
+        "V36"
+      ],
+      "runs": [
+        {
+          "path": "ValidationRuns/s01-foundation-20261110T211825-32982064feaa4af7a17f24c80d079760",
+          "git_commit_sha": "4f1c3a019672d786f22b47ea389ccf382ab9ef72",
+          "manifest_sha256": "d55b06b8d2ddc0ef36636b21177ad7cc7b4de2ae73317e5bf7a71d1be5972570"
+        }
+      ],
+      "review": null,
+      "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
+    },
+    {
+      "requirement_id": "R049",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "U01"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V46"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R050",
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Core/ScenarioConfigSI.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Core.ScenarioConfigSI.Validate",
+          "source_sha256": "cb0c232a0edf94b35a10856138e90e03420c7aa0a4f33992b93c3078433c0223"
+        }
+      ],
+      "source_ids": [
+        "U01"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V36"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R051",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "B01",
+        "B04"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V44"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R052",
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Core/ScenarioConfigSI.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Core.ScenarioConfigSI.Validate",
+          "source_sha256": "cb0c232a0edf94b35a10856138e90e03420c7aa0a4f33992b93c3078433c0223"
+        }
+      ],
+      "source_ids": [
+        "M02",
+        "M09",
+        "M10"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V32",
+        "V46"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R053",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "U01",
+        "U02"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V35",
+        "V45"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R054",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "U01"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V33"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R055",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "U01"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V35"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R056",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D01",
+        "U01"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V32",
+        "V35",
+        "V46"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R057",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D01",
+        "M03"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V08",
+        "V29",
+        "V43"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R058",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "M01",
+        "M12"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V06",
+        "V18",
+        "V38"
+      ],
+      "runs": [],
+      "review": null
+    },
+    {
+      "requirement_id": "R059",
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "symbol": "PhysicsSim.ThreePhase3D.Diagnostics.ConservedInventory.Transfer",
+          "path": "Assets/Scripts/ThreePhase3D/Diagnostics/ConservedInventory.cs",
+          "source_sha256": "07a5819692eb3b2adea88a1e6ba9a81c0b6bed1cd3d9bfe0647cbfb6e58c5d8a"
+        }
+      ],
+      "source_ids": [
+        "M03",
+        "M12"
+      ],
+      "source_locators": [
+        "Specification.md section 14; EvidenceProtocol.md sections 3-6; S01-Handoff.md scope and conventions"
+      ],
+      "validation_ids": [
+        "V34",
+        "V37"
+      ],
+      "runs": [
+        {
+          "path": "ValidationRuns/s01-foundation-20261110T211825-32982064feaa4af7a17f24c80d079760",
+          "git_commit_sha": "4f1c3a019672d786f22b47ea389ccf382ab9ef72",
+          "manifest_sha256": "d55b06b8d2ddc0ef36636b21177ad7cc7b4de2ae73317e5bf7a71d1be5972570"
+        }
+      ],
+      "review": null,
+      "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
+    },
+    {
+      "requirement_id": "R060",
+      "status": "SPECIFIED",
+      "code_symbols": [],
+      "source_ids": [
+        "D06",
+        "M02"
+      ],
+      "source_locators": [],
+      "validation_ids": [
+        "V07",
+        "V27"
+      ],
+      "runs": [],
+      "review": null
+    }
+  ],
+  "notes": [
+    "S00 apparatus rendering was reported by the user after the quaternion fix; exact hardware and Console evidence pending.",
+    "S01 infrastructure verification is separately scoped. No full coupled-physics requirement is accepted automatically."
+  ]
+}
