@@ -1,0 +1,5 @@
+Managed executable SHA256: 03f17b5ec2677d9f3cef989c5e84c2059edc1400595e7ff4cf86dbf428550b54
+Managed runtime: 4.0.30319.42000
+Compiler/reference environment: Unity 2022.3.46f1; see RunMaterialChecks.ps1
+GPU executed: false
+Stage complete: false
