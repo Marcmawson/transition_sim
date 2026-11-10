@@ -7,6 +7,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
     {
         private void GasCompletionChecks()
         {
+            ExtendedMaterialChecks();
             // Numerical verification: primary printed Table V, not generated expected values.
             // Original density is mol/dm3; transport M=28.9586 g/mol performs conversion.
             double[,] air={{100,0,7.09559,9.35902},{300,0,18.5230,26.3529},
