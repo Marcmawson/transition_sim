@@ -148,6 +148,8 @@ namespace PhaseTransition.FluidFlow
             fluidSolver.SetBuffer(kUpdateLiquid, "FluxX", fluxX);
             fluidSolver.SetBuffer(kUpdateLiquid, "FluxY", fluxY);
             fluidSolver.SetBuffer(kRender, "LiquidRead", liquid);
+            fluidSolver.SetBuffer(kRender, "URead", u);
+            fluidSolver.SetBuffer(kRender, "VRead", v);
             fluidSolver.SetTexture(kRender, "Output", display);
 
             initialized = true;
@@ -279,6 +281,8 @@ namespace PhaseTransition.FluidFlow
         private void RenderLiquid()
         {
             fluidSolver.SetBuffer(kRender, "LiquidRead", liquid);
+            fluidSolver.SetBuffer(kRender, "URead", u);
+            fluidSolver.SetBuffer(kRender, "VRead", v);
             fluidSolver.SetTexture(kRender, "Output", display);
             Dispatch(kRender, gridWidth, gridHeight);
         }

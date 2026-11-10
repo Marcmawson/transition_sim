@@ -321,7 +321,11 @@ void RenderLiquid(uint3 id : SV_DispatchThreadID)
     int x = id.x, y = id.y;
     if (x >= Width || y >= Height) return;
     float f = saturate(LiquidRead[CellIndex(x, y)]);
-    float3 dry = float3(0.015, 0.023, 0.035);
-    float3 water = lerp(float3(0.025, 0.24, 0.72), float3(0.18, 0.68, 1.0), saturate((f - 0.3) * 1.8));
+    float3 dry = float3(0.012, 0.018, 0.028);
+    float3 darkBlue = float3(0.025, 0.12, 0.48);
+    float uCell = 0.5 * (URead[UIndex(x, y)] + URead[UIndex(x + 1, y)]);
+    float vCell = 0.5 * (VRead[VIndex(x, y)] + VRead[VIndex(x, y + 1)]);
+    float speed = length(float2(uCell, vCell));
+    float3 water = lerp(darkBlue, float3(1.0, 1.0, 1.0), saturate(speed / 1.5));
     Output[int2(x, y)] = float4(lerp(dry, water, f), 1.0);
 }
