@@ -1,0 +1,13 @@
+{
+  "context": "User reported git HEAD 82f9329d58cd6c744b216817a2861c9bbb1f7a85 and successful Console result. Original result files read directly and retained unchanged.",
+  "reported_source_commit": "82f9329d58cd6c744b216817a2861c9bbb1f7a85",
+  "shader_raw_sha256": "78ffe61e7bce3db9397b41d2fb9031edfa02a3bef1d7502e7f781e4e368513b8",
+  "shader_canonical_lf_sha256": "082cbfd83e307d592e67d8e54e326a8ba2c1454e45be3814dca2f265b85a31c4",
+  "shader_matches_workspace_after_line_ending_normalisation": true,
+  "table_sha256": [
+    "e94fe2657f5814189dd6d75f54ee48e85f04bd99845de9e0b48714ed84e5fe59",
+    "5a836bb9c94ad6ad551a3062f54da16c6f9dd5b0fbf9319c35a537c9b326fc57"
+  ],
+  "comparison_count": 1742,
+  "scope": "Two water isobar tables and range guards; no humid-gas GPU table or coupled physics execution."
+}
