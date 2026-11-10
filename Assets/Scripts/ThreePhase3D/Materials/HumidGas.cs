@@ -4,7 +4,7 @@ namespace PhysicsSim.ThreePhase3D.Materials
 {
     public sealed class HumidGas : IHumidGasProperties
     {
-        public const string Version="S02-SeaAir-1";
+        public const string Version="S02-SeaAir-2";
         public const double Ma=.02896546, Mw=.018015268;
         internal static Jet2 AirHelmholtz(Jet2 t,Jet2 rho)
         {
@@ -46,32 +46,44 @@ namespace PhysicsSim.ThreePhase3D.Materials
             return result+2*a*y*rho*8.314472*t/(Ma*Mw)*(baw+.75*rho*(a/Ma*caaw+y/Mw*caww));
         }
         public ThermodynamicState ReferenceRhoT(double t,double rho,double y)
-        {Guard.Range(t,193,473);Guard.Range(rho,1e-8,10);Guard.Range(y,0,1);return Water95.FromHelmholtz(t,rho,Helmholtz(new Jet2(t,1),new Jet2(rho,0,1),y));}
+        {Guard.Range(t,193,473);Guard.Range(rho,1e-8,20);Guard.Range(y,0,1);return Water95.FromHelmholtz(t,rho,Helmholtz(new Jet2(t,1),new Jet2(rho,0,1),y));}
         public static double WaterMoleFraction(double y)
         {Guard.Range(y,0,1);return (y/Mw)/(y/Mw+(1-y)/Ma);}
         public static double WaterMassFraction(double x)
         {Guard.Range(x,0,1);return x*Mw/(x*Mw+(1-x)*Ma);}
         public ThermodynamicState Evaluate(double t,double p,double y)
         {
-            Guard.Range(t,273.16,473);Guard.Range(p,80000,120000);Guard.Range(y,0,1);
-            // Conservative gas-only envelope: a 5% undersaturation margin. Equilibrium/near-saturation
-            // interface states require the later chemical-potential/fugacity solve, not an ideal shortcut.
-            double psat=new Water95().Saturation(t).PressurePa;
-            if(WaterMoleFraction(y)*p>.95*psat)throw new ArgumentOutOfRangeException("Gas-only provider excludes saturation/condensation margin; use reference seam for named check states.");
+            Guard.Range(t,273.16,473);Guard.Range(p,80000,1e6);Guard.Range(y,0,1);
+            var gas=ReferenceTp(t,p,y);
+            // G8-10 section 6: stability against liquid is determined by equal chemical
+            // potentials, not by an ideal partial-pressure percentage margin.
+            var water=new Water95();
+            if(y>0 && water.Saturation(t).PressurePa<=p)
+            {
+                double liquidMu=water.Evaluate(t,p,WaterBranch.Liquid).GibbsJkg;
+                if(WaterChemicalPotential(t,gas.DensityKgM3,y)>liquidMu+2e-5)
+                    throw new ArgumentOutOfRangeException("Humid gas is supersaturated relative to liquid water at T,p.");
+            }
+            return gas;
+        }
+        // Homogeneous check/iteration seam. Does not assert global phase stability.
+        public ThermodynamicState ReferenceTp(double t,double p,double y)
+        {
+            Guard.Range(t,193,473);Guard.Range(p,1,1e6);Guard.Range(y,0,1);
             double rho=p/(t*((1-y)*8.31451/Ma+y*Water95.R));
             for(int i=0;i<20;i++)
             {
                 var s=ReferenceRhoT(t,rho,y);double e=s.PressurePa-p;
                 if(Math.Abs(e)<1e-6)return s;
                 rho-=e*s.DensityPressureDerivative;
-                if(rho<=0||rho>10)throw new InvalidOperationException("Humid density iteration left supported bracket.");
+                if(rho<=0||rho>20)throw new InvalidOperationException("Humid density iteration left supported bracket.");
             }
             throw new InvalidOperationException("Humid density iteration did not converge.");
         }
         public double ViscosityPaS(double t,double p,double y)
-        {Evaluate(t,p,y);throw new NotSupportedException("MAT010: independently verified humid-mixture transport rule pending.");}
+        {var state=Evaluate(t,p,y);return HumidGasTransport.Viscosity(t,p,y,state.DensityKgM3);}
         public double ConductivityWmK(double t,double p,double y)
-        {Evaluate(t,p,y);throw new NotSupportedException("MAT010: independently verified humid-mixture conductivity pending.");}
+        {var state=Evaluate(t,p,y);return HumidGasTransport.Conductivity(t,p,y,state.DensityKgM3);}
         public double BinaryDiffusivityM2s(double t,double p,double y)
         {
             Evaluate(t,p,y);Guard.Range(t,273.16,373.15);Guard.Range(p,80000,101325);Guard.Range(y,0,.02);
@@ -85,10 +97,56 @@ namespace PhysicsSim.ThreePhase3D.Materials
         {Guard.Range(t,253.15,373.15);Guard.Range(p,80000,101325);return 2.178e-5*(101325/p)*Math.Pow(t/273.15,1.81);}
         public double ReferenceWaterChemicalPotential(double t,double rho,double y)
         {
-            Guard.Range(t,193,473);Guard.Range(rho,1e-8,10);Guard.Range(y,1e-12,1-1e-12);
+            Guard.Range(t,193,473);Guard.Range(rho,1e-8,20);Guard.Range(y,1e-12,1-1e-12);
             Jet2 composition=Helmholtz(t,rho,new Jet2(y,1)),density=Helmholtz(t,new Jet2(rho,0,1),y);
             return composition.V+rho*density.Y+(1-y)*composition.X;
         }
+        private double WaterChemicalPotential(double t,double rho,double y)
+        {return y==1?ReferenceRhoT(t,rho,1).GibbsJkg:ReferenceWaterChemicalPotential(t,rho,y);}
+
+        // Physics-ID: MAT-HUMID-LIQUID-EQUILIBRIUM
+        // Implements: R013 R015
+        // Model: IAPWS G8-10 Eq 12; Table 12 T66 and Table 13
+        // Sources: D01 D06
+        // Source-Locators: G8-10 Eq 12 and section 6; R6-95(2018) Table 3
+        // Inputs-SI: temperature [K], total absolute pressure [Pa]
+        // Outputs-SI: water mass fraction [kg/kg], gas/liquid state [SI], chemical residual [J/kg]
+        // State-Ownership: pure reference solve; no phase mass transfer or time integration
+        // Conservation: phase energies retain the common IAPWS reference
+        // Discretisation: bracketed composition bisection with converged density inversion
+        // Validity: 273.16 <= T <= 473 K; 80 kPa <= p <= 1 MPa; stable liquid must exist
+        // Validation: V05 V32
+        // Evidence: PENDING
+        // Status: IMPLEMENTED_UNVERIFIED
+        // Limitations: liquid contact only; no ice-contact humid equilibrium or interfacial kinetic law
+        public GasLiquidEquilibrium EquilibriumWithLiquid(double t,double p)
+        {
+            Guard.Range(t,273.16,473);Guard.Range(p,80000,1e6);
+            var water=new Water95();var sat=water.Saturation(t);
+            if(p<=sat.PressurePa)throw new ArgumentOutOfRangeException("A humid liquid-contact equilibrium requires total pressure above pure-water saturation.");
+            var liquid=water.Evaluate(t,p,WaterBranch.Liquid);
+            double lo=1e-12,hi=WaterMassFraction(Math.Min(1-1e-12,1.15*sat.PressurePa/p));
+            double flo=ChemicalPotentialResidual(t,p,lo,liquid.GibbsJkg),fhi=ChemicalPotentialResidual(t,p,hi,liquid.GibbsJkg);
+            if(flo>=0||fhi<=0)throw new InvalidOperationException("Chemical-equilibrium root is not bracketed in the supported gas neighbourhood.");
+            for(int i=0;i<80;i++)
+            {
+                double y=(lo+hi)/2;var gas=ReferenceTp(t,p,y);
+                double residual=WaterChemicalPotential(t,gas.DensityKgM3,y)-liquid.GibbsJkg;
+                if(Math.Abs(residual)<=1e-6)return new GasLiquidEquilibrium(t,p,y,liquid,gas,residual);
+                if(residual>0)hi=y;else lo=y;
+            }
+            throw new InvalidOperationException("Humid equilibrium did not converge to the chemical-potential tolerance.");
+        }
+        private double ChemicalPotentialResidual(double t,double p,double y,double liquidMu)
+        {var gas=ReferenceTp(t,p,y);return WaterChemicalPotential(t,gas.DensityKgM3,y)-liquidMu;}
+    }
+
+    public sealed class GasLiquidEquilibrium
+    {
+        public readonly double TemperatureK,PressurePa,WaterMassFraction,ChemicalPotentialResidualJkg;
+        public readonly ThermodynamicState Liquid,Gas;
+        internal GasLiquidEquilibrium(double t,double p,double y,ThermodynamicState liquid,ThermodynamicState gas,double residual)
+        {TemperatureK=t;PressurePa=p;WaterMassFraction=y;Liquid=liquid;Gas=gas;ChemicalPotentialResidualJkg=residual;}
     }
 
     // Product data are deliberately not represented by a guessed cp curve.
