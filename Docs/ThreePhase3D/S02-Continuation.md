@@ -23,7 +23,11 @@ The user executed the existing water lookup checks in Unity at 2026-11-10T23:07:
 
 This evidence covers the existing liquid/vapour isobar lookup and guard checks. It does not validate the new humid-gas routines on the GPU or a coupled fluid, heat or phase solver.
 
-## Remaining S02 work
+## Subsequent checkpoint
+
+See [S02-Expanded-Materials.md](S02-Expanded-Materials.md) for the later ice/G11/diffusion/table additions and current remaining limits. The results above describe this earlier checkpoint.
+
+## Remaining S02 work at this checkpoint
 
 - Steam-rich humid-mixture transport beyond the bounded production provider.
 - Wider diffusion coverage beyond the existing dilute, near-STP Massman application.
