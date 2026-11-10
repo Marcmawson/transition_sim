@@ -8,4 +8,4 @@ The repository is being initialized from the existing Unity project baseline; th
 
 ## Phase-change prototype
 
-The first model code is in `Assets/Scripts/PhaseChange`. Once Unity finishes compiling, use **Physics Sim → Create Phase Change Beaker Scene** to create and open the prototype scene. Press Play to see the SI energy ledger and the separate lattice-gas teaching view. The current implementation is explicitly an equilibrium enthalpy demonstration, not a spatially resolved heat/fluid simulation; see `Assets/Scripts/PhaseChange/ModelNotes.md` for assumptions and limits.
+Open `Assets/Scenes/PhaseChange Beaker.unity` and press Play to see the SI energy ledger and the separate lattice-gas teaching view. The current implementation is explicitly an equilibrium enthalpy demonstration, not a spatially resolved heat/fluid simulation; see `Assets/Scripts/PhaseChange/ModelNotes.md` for assumptions and limits.
