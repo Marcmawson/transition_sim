@@ -2,9 +2,10 @@ using System;
 
 namespace PhysicsSim.ThreePhase3D.Materials
 {
-    public sealed class HumidGas : IHumidGasProperties
+    public enum GasDiffusionModel { Massman1998Dilute, MasonMonchickAshrae2025Tabulated }
+    public sealed partial class HumidGas : IHumidGasProperties
     {
-        public const string Version="S02-SeaAir-2";
+        public const string Version="S02-SeaAir-3";
         public const double Ma=.02896546, Mw=.018015268;
         internal static Jet2 AirHelmholtz(Jet2 t,Jet2 rho)
         {
@@ -53,8 +54,15 @@ namespace PhysicsSim.ThreePhase3D.Materials
         {Guard.Range(x,0,1);return x*Mw/(x*Mw+(1-x)*Ma);}
         public ThermodynamicState Evaluate(double t,double p,double y)
         {
-            Guard.Range(t,273.16,473);Guard.Range(p,80000,1e6);Guard.Range(y,0,1);
+            Guard.Range(t,200,473);Guard.Range(p,80000,1e6);Guard.Range(y,0,1);
             var gas=ReferenceTp(t,p,y);
+            if(t<PhaseEquilibrium.MeltingTemperature(p))
+            {
+                if(y>0&&WaterChemicalPotential(t,gas.DensityKgM3,y)>new IceIh().Evaluate(t,p).GibbsJkg+2e-5)
+                    throw new ArgumentOutOfRangeException("Gas is supersaturated relative to ice Ih.");
+                return gas;
+            }
+            if(t<273.16)throw new NotSupportedException("The narrow near-melting liquid-contact interval needs a supercooled-liquid provider.");
             // G8-10 section 6: stability against liquid is determined by equal chemical
             // potentials, not by an ideal partial-pressure percentage margin.
             var water=new Water95();
@@ -85,9 +93,35 @@ namespace PhysicsSim.ThreePhase3D.Materials
         public double ConductivityWmK(double t,double p,double y)
         {var state=Evaluate(t,p,y);return HumidGasTransport.Conductivity(t,p,y,state.DensityKgM3);}
         public double BinaryDiffusivityM2s(double t,double p,double y)
+        {return BinaryDiffusivityM2s(t,p,y,GasDiffusionModel.Massman1998Dilute);}
+        public double BinaryDiffusivityM2s(double t,double p,double y,GasDiffusionModel model)
         {
-            Evaluate(t,p,y);Guard.Range(t,273.16,373.15);Guard.Range(p,80000,101325);Guard.Range(y,0,.02);
-            return ReferenceDiffusivity(t,p);
+            Evaluate(t,p,y);Guard.Range(p,80000,101325);Guard.Range(y,0,.02);
+            if(model==GasDiffusionModel.Massman1998Dilute){Guard.Range(t,273.16,373.15);return ReferenceDiffusivity(t,p);}
+            if(model==GasDiffusionModel.MasonMonchickAshrae2025Tabulated)return ReferenceTabulatedDiffusivity(t,p);
+            throw new ArgumentOutOfRangeException(nameof(model));
+        }
+        // Marrero & Mason (1972), Table13 air-H2O, Eq4.3-2: pD=A*T^s.
+        // First fit 282-450 K; second 450-1070 K. SI conversion 1 cm2=1e-4 m2.
+        // This reference is the source's equimolar correlation; dilute application
+        // is a declared project approximation, not composition-resolved validation.
+        public static double ReferenceHotDiluteDiffusivity(double t,double p)
+        {
+            Guard.Range(t,282,473);Guard.Range(p,80000,101325);
+            return (t<=450?1.87e-10*Math.Pow(t,2.072):2.75e-9*Math.Pow(t,1.632))*101325/p;
+        }
+        // ASHRAE2025 Fundamentals Ch1 Table4, calculated Mason-Monchick1965
+        // values. Explicit table model, not an inferred fit to the missing equations.
+        // Log-log interpolation and dilute-gas inverse-pressure scaling are project
+        // choices. No high-composition correction or uncertainty bound is asserted.
+        public static double ReferenceTabulatedDiffusivity(double t,double p)
+        {
+            Guard.Range(t,203.15,473);Guard.Range(p,80000,101325);
+            double[] tc={-70,-50,-40,-35,-30,-25,-20,-15,-10,-5,0,5,10,15,20,25,30,35,40,45,50,55,60,70,100,130,160,190,220};
+            double[] d={13.2,15.6,16.9,17.5,18.2,18.8,19.5,20.2,20.8,21.5,22.2,22.9,23.6,24.3,25.1,25.8,26.5,27.3,28.0,28.8,29.5,30.3,31.1,32.7,37.6,42.8,48.3,54.0,60.0};
+            int i=0;while(i<tc.Length-2&&t>tc[i+1]+273.15)i++;
+            double w=Math.Log(t/(tc[i]+273.15))/Math.Log((tc[i+1]+273.15)/(tc[i]+273.15));
+            return 1e-6*d[i]*Math.Pow(d[i+1]/d[i],w)*101325/p;
         }
         // Massman 1998, Eq 1, H2O discussion and Table 8: 0.2178 cm2/s at
         // 273.15 K/1 atm, exponent 1.81, stated absolute uncertainty +/-7%.
