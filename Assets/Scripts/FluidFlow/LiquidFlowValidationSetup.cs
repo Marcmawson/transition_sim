@@ -342,6 +342,7 @@ namespace PhaseTransition.FluidFlow
             GUILayout.Label("LIQUID FLOW | STEP 1");
             GUI.skin.label.fontSize = Mathf.RoundToInt(12f * scale);
             GUILayout.Label("GPU MAC grid | incompressible liquid | no phase or heat model");
+            GUILayout.Label("Liquid only: blue-to-white indicates speed, not a gas phase.");
             GUILayout.Label("g = 9.80665 m/s^2 | open surface p_g = 0 (air not solved)");
             GUILayout.Label($"Water viscosity: nu = {kinematicViscosityM2PerS:E3} m^2/s");
             GUILayout.Space(8f * scale);

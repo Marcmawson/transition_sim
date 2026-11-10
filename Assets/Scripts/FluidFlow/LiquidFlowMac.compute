@@ -49,6 +49,11 @@ float FAt(int x, int y)
     return LiquidRead[CellIndex(x, y)];
 }
 
+float MinMod(float a, float b)
+{
+    return a * b <= 0.0 ? 0.0 : sign(a) * min(abs(a), abs(b));
+}
+
 float UAt(int x, int y)
 {
     if (x < 0 || x > Width || y < 0 || y >= Height) return 0.0;
@@ -286,8 +291,21 @@ void ComputeFluxX(uint3 id : SV_DispatchThreadID)
     int index = x + y * (Width + 1);
     if (x == 0 || x == Width) { FluxX[index] = 0.0; return; }
     float speed = URead[UIndex(x, y)];
-    float donor = speed >= 0.0 ? FAt(x - 1, y) : FAt(x, y);
-    FluxX[index] = speed * Dt / Dx * donor;
+    float cfl = abs(speed) * Dt / Dx;
+    float donor, slope;
+    if (speed >= 0.0)
+    {
+        donor = FAt(x - 1, y);
+        slope = MinMod(donor - FAt(x - 2, y), FAt(x, y) - donor);
+        donor += 0.5 * (1.0 - cfl) * slope;
+    }
+    else
+    {
+        donor = FAt(x, y);
+        slope = MinMod(donor - FAt(x - 1, y), FAt(x + 1, y) - donor);
+        donor -= 0.5 * (1.0 - cfl) * slope;
+    }
+    FluxX[index] = speed * Dt / Dx * saturate(donor);
 }
 
 [numthreads(8, 8, 1)]
@@ -298,9 +316,21 @@ void ComputeFluxY(uint3 id : SV_DispatchThreadID)
     int index = x + y * Width;
     if (y == 0) { FluxY[index] = 0.0; return; }
     float speed = VRead[VIndex(x, y)];
-    float below = FAt(x, y - 1), above = y < Height ? FAt(x, y) : 0.0;
-    float donor = speed >= 0.0 ? below : above;
-    FluxY[index] = speed * Dt / Dy * donor;
+    float cfl = abs(speed) * Dt / Dy;
+    float donor, slope;
+    if (speed >= 0.0)
+    {
+        donor = FAt(x, y - 1);
+        slope = MinMod(donor - FAt(x, y - 2), FAt(x, y) - donor);
+        donor += 0.5 * (1.0 - cfl) * slope;
+    }
+    else
+    {
+        donor = FAt(x, y);
+        slope = MinMod(donor - FAt(x, y - 1), FAt(x, y + 1) - donor);
+        donor -= 0.5 * (1.0 - cfl) * slope;
+    }
+    FluxY[index] = speed * Dt / Dy * saturate(donor);
 }
 
 [numthreads(8, 8, 1)]
@@ -324,9 +354,15 @@ void RenderLiquid(uint3 id : SV_DispatchThreadID)
     float f = saturate(LiquidRead[CellIndex(x, y)]);
     float3 dry = float3(0.012, 0.018, 0.028);
     float3 darkBlue = float3(0.025, 0.12, 0.48);
+    if (f < 0.03)
+    {
+        Output[int2(x, y)] = float4(dry, 1.0);
+        return;
+    }
     float uCell = 0.5 * (URead[UIndex(x, y)] + URead[UIndex(x + 1, y)]);
     float vCell = 0.5 * (VRead[VIndex(x, y)] + VRead[VIndex(x, y + 1)]);
     float speed = length(float2(uCell, vCell));
-    float3 water = lerp(darkBlue, float3(1.0, 1.0, 1.0), saturate(speed / 1.5));
-    Output[int2(x, y)] = float4(lerp(dry, water, f), 1.0);
+    float3 water = lerp(darkBlue, float3(1.0, 1.0, 1.0), saturate(speed / 3.0));
+    float coverage = smoothstep(0.03, 0.35, f);
+    Output[int2(x, y)] = float4(lerp(dry, water, coverage), 1.0);
 }
