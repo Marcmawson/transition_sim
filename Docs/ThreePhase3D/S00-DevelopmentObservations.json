@@ -1,0 +1,27 @@
+{
+  "schema_version": "1.0",
+  "record_kind": "development_observations_transcribed_from_tool_output",
+  "status": "IMPLEMENTED_UNVERIFIED",
+  "local_development_commit": "7227493d355a48ec3e9450c39dd340aff28eb10d",
+  "published_commit_rerun": "PENDING",
+  "immutable_run_manifest": "PENDING",
+  "compiler_observation": "PASS C# compile against installed Unity 2022.3 assemblies (not an Editor import or runtime test).",
+  "observations": [
+    "PASS V01 SI temperature, pressure, mass and volume",
+    "PASS V01 Preview permits explicit missing physics data; physical run is blocked",
+    "PASS V01 Reject incompatible configuration and nonfinite values",
+    "PASS V01 Mass/volume agreement uses a supplied synthetic provider",
+    "PASS V01 Configuration serialization retains SI identity",
+    "PASS V01 Glass preview scale, winding and polygonal volume"
+  ],
+  "unity_import": {
+    "status": "PENDING",
+    "observed_exit_code": 199,
+    "reason": "Licensing IPC connection refused/timed out."
+  },
+  "limitations": [
+    "Source recovered after workspace disconnection; asset metadata reconstructed.",
+    "Not an accepted clean-commit evidence bundle.",
+    "No 3D flow, thermal, phase or GPU field run."
+  ]
+}
