@@ -110,7 +110,7 @@ IAPWS, *G11-15 Guideline on a Virial Equation for the Fugacity of H2O in Humid A
 
 [Official release](https://iapws.org/technical-guidance/release/VirialFugacity).
 
-Use for water chemical equilibrium in a non-ideal humid mixture. Any ideal-mixture simplification must be compared to this reference over the selected conditions. Official page inspected.
+Full official release inspected. The continuation implements Eqs 2-11 and Tables 1-4 independently of the full Helmholtz mixture evaluator, checks all seven virial coefficients at 200/300/400 K against Table 7 and fugacity/auxiliary values against Table 8, then compares stable G8 states to G11 with an explicit 0.1% project cross-model threshold. This threshold is not the guideline's uncertainty or a lookup tolerance. Table 8 includes intentionally unstable states, supported only by a separately named reference function.
 
 ### D08 Water diffusion in air
 
@@ -375,6 +375,30 @@ ASHRAE (2025), *Fundamentals*, Chapter 1, section 11, Table 5.
 [Official table](https://handbook.ashrae.org/handbooks/F25/SI/F25_Ch01/F25_Ch01_si.aspx).
 
 The table provides calculated dry/saturated moist-air transport at 101325 Pa, based on LibHuAirProp/RP-1767. It is an independent modern calculated reference, not a new experimental dataset. Comparisons at 10-90 C expose increasing disagreement of the historical transport shape at high humidity. These differences are recorded separately from numerical assertions; no tolerance is increased to turn them into passing numerical checks.
+
+### D18 Broad pure-ice conductivity regression
+
+Y.-C. Yen (1981), *Review of Thermal Properties of Snow, Ice, and Sea Ice*, CRREL Report 81-10, pp 15-16, Eq 33, Figure 14 and Table 3.
+
+[USACE record](https://usace.contentdm.oclc.org/digital/collection/p266001coll1/id/7366) · [Full primary report scan](https://upload.wikimedia.org/wikipedia/commons/8/80/Review_of_thermal_properties_of_snow%2C_ice%2C_and_sea_ice_-_USACE-p266001coll1-7366.pdf).
+
+The report recommends k=9.828 exp(-0.0057 T_K) W/(m K) as a practical broad regression of the collected pure polycrystalline ice data. It explicitly discusses scatter from purity, preparation, heat-loss correction and reproducibility. The regression correlation coefficient 0.9313 is not an uncertainty bound. S02 requires explicit `Yen1981PurePolycrystalline` selection, restricts its use to 200-273.15 K, and does not switch or blend it with the Bonales preparation. This supplies a sourced model through near melting, not independent validation for an arbitrary physical sample. No pressure, bubbles or anisotropy correction is asserted.
+
+### D19 Wider water-air diffusion comparison
+
+T. R. Marrero and E. A. Mason (1972), *Gaseous Diffusion Coefficients*, Journal of Physical and Chemical Reference Data 1, 3.
+
+[Full primary paper](https://srd.nist.gov/jpcrdreprint/1.3253094.pdf) · [DOI](https://doi.org/10.1063/1.3253094).
+
+Eq 4.3-2 and Table 13 list air-H2O pD=A T^s: A=1.87e-6 atm cm2/(s K^s), s=2.072 over 282-450 K; A=2.75e-5, s=1.632 over 450-1070 K. S02 retains the equimolar correlation as a separately named research comparison over 282-473 K. It disagrees with the ASHRAE calculated diffusion table by about 14% at 190 Celsius and is not wired to production. The production extension explicitly selects ASHRAE 2025 Chapter 1 Table 4 (Mason-Monchick calculated values), using log-log interpolation over 203.15-473 K, inverse-pressure scaling over 80-101.325 kPa, and Y<=0.02. The Massman default is retained; there is no automatic switch between correlations. This widens temperature coverage, not composition-resolved steam-rich diffusion. The two source fits are not forced to join by changing coefficients. Table-node checks are numerical regression, not independent physical validation. Differences from the older equimolar fit are recorded as informational observations, not passing assertions. The 296-1640 K exponential correlation in Table 13 belongs to H2O-CO2 and is not used for air.
+
+### D20 Modern moist-air transport model acquisition
+
+S. Herrmann et al. (2021), *Transport properties of real moist air, dry air, steam, and water*, Science and Technology for the Built Environment 27, 393-401, doi:10.1080/23744731.2021.1877519.
+
+[Author's accessible first page](https://thermofluidprop.com/fileadmin/Dateien/Publikationen/Veroeffentlichungen/Herrmann_Paper_STBE_2021_393_published_Page_2.pdf) · [Author's supplementary calculated tables](https://thermofluidprop.com/fileadmin/Dateien/KCE-Dateien/Tables_Download_Paper_Herrmann_Moist_Air_Transport_Properties_Rev.pdf).
+
+The full publisher article returned HTTP 403. A public text rendering of the original paper was subsequently inspected through a mirrored copy (Scribd document 1075965237). A separately named research candidate implements the low-density matrix limit and Eq32 composition-dependent interaction length, using A*=B*=1.1, unit contact factors and no bulk or critical contribution. It is not the complete finite-density RP-1767 formulation and is not wired into production. Its calculated-table comparisons are informational observations. Exact collision-integral choices and the switch-over-density/contact treatment still require acquisition and verification from the full report before replacing the guarded production provider. No third-party code, software or paper is redistributed.
 
 ## 7 Work still needed before claiming physical completion
 
