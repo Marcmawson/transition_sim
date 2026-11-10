@@ -13,6 +13,19 @@ namespace PhysicsSim.ThreePhase3D.Verification
         [DataMember] public string validationId;
         [DataMember] public bool passed;
         [DataMember] public string detail;
+        [DataMember] public CheckMetric[] metrics = new CheckMetric[0];
+    }
+
+    [DataContract]
+    public sealed class CheckMetric
+    {
+        [DataMember] public string name;
+        [DataMember] public string unit;
+        [DataMember] public string definition;
+        [DataMember] public double actual;
+        [DataMember] public double? minimum_allowed;
+        [DataMember] public double? maximum_allowed;
+        [DataMember] public bool passed;
     }
 
     public static partial class FoundationChecks

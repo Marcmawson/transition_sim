@@ -122,6 +122,7 @@ namespace PhysicsSim.ThreePhase3D.Core
         // Implements: R004 R043 R052
         // Model: Specification.md sections 2, 3 and 5.
         // Sources: D00 (SI Brochure sections 2.3 and 3); project configuration contract.
+        // Source-Locators: D00 sections 2.3 and 3; Specification.md sections 2, 3 and 5.
         // Inputs-SI: geometry [m], ambient/sample T [K], p_abs [Pa], amount [kg or m3].
         // Outputs-SI: dimensional errors and missing-data report; no physical state produced.
         // State-Ownership: report only; never edits, clamps or supplies missing inputs.

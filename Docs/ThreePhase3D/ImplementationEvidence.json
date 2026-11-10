@@ -56,7 +56,8 @@
       "code_symbols": [
         {
           "path": "Assets/Scripts/ThreePhase3D/Core/ScenarioConfigSI.cs",
-          "symbol": "PhysicsSim.ThreePhase3D.Core.ScenarioConfigSI.Validate"
+          "symbol": "PhysicsSim.ThreePhase3D.Core.ScenarioConfigSI.Validate",
+          "source_sha256": "cb0c232a0edf94b35a10856138e90e03420c7aa0a4f33992b93c3078433c0223"
         }
       ],
       "source_ids": [
@@ -140,7 +141,8 @@
       "code_symbols": [
         {
           "path": "Assets/Scripts/ThreePhase3D/Geometry/ApparatusSurface.cs",
-          "symbol": "PhysicsSim.ThreePhase3D.Geometry.ApparatusSurface.Beaker"
+          "symbol": "PhysicsSim.ThreePhase3D.Geometry.ApparatusSurface.Beaker",
+          "source_sha256": "298094651e010eeaa3dd18bdfd5ed2c4f7026c6970a86ba2a4f385b186409748"
         }
       ],
       "source_ids": [
@@ -628,19 +630,28 @@
     },
     {
       "requirement_id": "R039",
-      "status": "SPECIFIED",
-      "code_symbols": [],
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "symbol": "PhysicsSim.ThreePhase3D.Diagnostics.RunRecorder.Record",
+          "path": "Assets/Scripts/ThreePhase3D/Diagnostics/RunRecorder.cs",
+          "source_sha256": "d65ca3386557be7d4beffbfc2a08df512feb53cda89092f4ebf19b17f1085099"
+        }
+      ],
       "source_ids": [
         "D00"
       ],
-      "source_locators": [],
+      "source_locators": [
+        "Specification.md section 14; EvidenceProtocol.md sections 3-6; S01-Handoff.md scope and conventions"
+      ],
       "validation_ids": [
         "V01",
         "V33",
         "V43"
       ],
       "runs": [],
-      "review": null
+      "review": null,
+      "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
     },
     {
       "requirement_id": "R040",
@@ -677,20 +688,34 @@
     },
     {
       "requirement_id": "R042",
-      "status": "SPECIFIED",
-      "code_symbols": [],
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "symbol": "PhysicsSim.ThreePhase3D.Diagnostics.ConservationLedger.Audit",
+          "path": "Assets/Scripts/ThreePhase3D/Diagnostics/ConservationLedger.cs",
+          "source_sha256": "7f64f933468a267815daabb5d4973e100b79be6acb6d9847744deb0e5d2cd793"
+        },
+        {
+          "symbol": "PhysicsSim.ThreePhase3D.Diagnostics.ConservedInventory.Transfer",
+          "path": "Assets/Scripts/ThreePhase3D/Diagnostics/ConservedInventory.cs",
+          "source_sha256": "07a5819692eb3b2adea88a1e6ba9a81c0b6bed1cd3d9bfe0647cbfb6e58c5d8a"
+        }
+      ],
       "source_ids": [
         "M03",
         "D01"
       ],
-      "source_locators": [],
+      "source_locators": [
+        "Specification.md section 14; EvidenceProtocol.md sections 3-6; S01-Handoff.md scope and conventions"
+      ],
       "validation_ids": [
         "V02",
         "V34",
         "V43"
       ],
       "runs": [],
-      "review": null
+      "review": null,
+      "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
     },
     {
       "requirement_id": "R043",
@@ -698,7 +723,8 @@
       "code_symbols": [
         {
           "path": "Assets/Scripts/ThreePhase3D/Core/ScenarioConfigSI.cs",
-          "symbol": "PhysicsSim.ThreePhase3D.Core.ScenarioConfigSI.Validate"
+          "symbol": "PhysicsSim.ThreePhase3D.Core.ScenarioConfigSI.Validate",
+          "source_sha256": "cb0c232a0edf94b35a10856138e90e03420c7aa0a4f33992b93c3078433c0223"
         }
       ],
       "source_ids": [
@@ -763,32 +789,55 @@
     },
     {
       "requirement_id": "R047",
-      "status": "SPECIFIED",
-      "code_symbols": [],
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "symbol": "PhysicsSim.ThreePhase3D.Diagnostics.EvidenceValidator.VerifyFunctionContracts",
+          "path": "Assets/Scripts/ThreePhase3D/Diagnostics/EvidenceValidator.cs",
+          "source_sha256": "46b58dada83bd29d95244c433e3cd85214410c0474a3848e85f43c7e2cddcbaa"
+        }
+      ],
       "source_ids": [
         "D00"
       ],
-      "source_locators": [],
+      "source_locators": [
+        "Specification.md section 14; EvidenceProtocol.md sections 3-6; S01-Handoff.md scope and conventions"
+      ],
       "validation_ids": [
         "V46"
       ],
       "runs": [],
-      "review": null
+      "review": null,
+      "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
     },
     {
       "requirement_id": "R048",
-      "status": "SPECIFIED",
-      "code_symbols": [],
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "symbol": "PhysicsSim.ThreePhase3D.Diagnostics.RunRecorder.Complete",
+          "path": "Assets/Scripts/ThreePhase3D/Diagnostics/RunRecorder.cs",
+          "source_sha256": "d65ca3386557be7d4beffbfc2a08df512feb53cda89092f4ebf19b17f1085099"
+        },
+        {
+          "symbol": "PhysicsSim.ThreePhase3D.Diagnostics.EvidenceValidator.VerifyBundle",
+          "path": "Assets/Scripts/ThreePhase3D/Diagnostics/EvidenceValidator.cs",
+          "source_sha256": "46b58dada83bd29d95244c433e3cd85214410c0474a3848e85f43c7e2cddcbaa"
+        }
+      ],
       "source_ids": [
         "U02"
       ],
-      "source_locators": [],
+      "source_locators": [
+        "Specification.md section 14; EvidenceProtocol.md sections 3-6; S01-Handoff.md scope and conventions"
+      ],
       "validation_ids": [
         "V33",
         "V36"
       ],
       "runs": [],
-      "review": null
+      "review": null,
+      "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
     },
     {
       "requirement_id": "R049",
@@ -810,7 +859,8 @@
       "code_symbols": [
         {
           "path": "Assets/Scripts/ThreePhase3D/Core/ScenarioConfigSI.cs",
-          "symbol": "PhysicsSim.ThreePhase3D.Core.ScenarioConfigSI.Validate"
+          "symbol": "PhysicsSim.ThreePhase3D.Core.ScenarioConfigSI.Validate",
+          "source_sha256": "cb0c232a0edf94b35a10856138e90e03420c7aa0a4f33992b93c3078433c0223"
         }
       ],
       "source_ids": [
@@ -844,7 +894,8 @@
       "code_symbols": [
         {
           "path": "Assets/Scripts/ThreePhase3D/Core/ScenarioConfigSI.cs",
-          "symbol": "PhysicsSim.ThreePhase3D.Core.ScenarioConfigSI.Validate"
+          "symbol": "PhysicsSim.ThreePhase3D.Core.ScenarioConfigSI.Validate",
+          "source_sha256": "cb0c232a0edf94b35a10856138e90e03420c7aa0a4f33992b93c3078433c0223"
         }
       ],
       "source_ids": [
@@ -957,19 +1008,28 @@
     },
     {
       "requirement_id": "R059",
-      "status": "SPECIFIED",
-      "code_symbols": [],
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "symbol": "PhysicsSim.ThreePhase3D.Diagnostics.ConservedInventory.Transfer",
+          "path": "Assets/Scripts/ThreePhase3D/Diagnostics/ConservedInventory.cs",
+          "source_sha256": "07a5819692eb3b2adea88a1e6ba9a81c0b6bed1cd3d9bfe0647cbfb6e58c5d8a"
+        }
+      ],
       "source_ids": [
         "M03",
         "M12"
       ],
-      "source_locators": [],
+      "source_locators": [
+        "Specification.md section 14; EvidenceProtocol.md sections 3-6; S01-Handoff.md scope and conventions"
+      ],
       "validation_ids": [
         "V34",
         "V37"
       ],
       "runs": [],
-      "review": null
+      "review": null,
+      "implementation_scope": "S01 bookkeeping/evidence seam only. Full requirement and coupled physical solver acceptance remain pending."
     },
     {
       "requirement_id": "R060",
@@ -989,6 +1049,7 @@
     }
   ],
   "notes": [
-    "S00 draft only; no accepted run at this published source SHA. See S00-Handoff.md."
+    "S00 apparatus rendering was reported by the user after the quaternion fix; exact hardware and Console evidence pending.",
+    "S01 infrastructure verification is separately scoped. No full coupled-physics requirement is accepted automatically."
   ]
 }

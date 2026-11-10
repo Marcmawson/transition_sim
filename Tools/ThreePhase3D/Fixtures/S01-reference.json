@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "case_definition": "S01 synthetic bookkeeping verification. The named inventories and J values exercise accounting only; they are not an EOS state, thermal model, parcel dynamics, phase-change prediction or measured water experiment.",
+  "initial_inventory": {
+    "iceKg": 0,
+    "liquidKg": 1,
+    "vapourKg": 0,
+    "parcelWaterKg": 0,
+    "dryAirKg": 0.01,
+    "internalEnergyJ": 10,
+    "kineticEnergyJ": 2,
+    "gravitationalEnergyJ": 3,
+    "solidInternalEnergyJ": 4,
+    "interfaceEnergyJ": 0.25,
+    "momentumXKgMPerS": 0.5,
+    "momentumYKgMPerS": 0.2,
+    "momentumZKgMPerS": -0.1,
+    "angularMomentumXKgM2PerS": 0.2,
+    "angularMomentumYKgM2PerS": -0.1,
+    "angularMomentumZKgM2PerS": 0.05
+  },
+  "duration_s": 1,
+  "transfer_fraction": 0.125,
+  "absorbed_heater_J": 10,
+  "tolerance": {
+    "massKg": 1e-12,
+    "energyJ": 1e-9,
+    "momentumKgMPerS": 1e-12,
+    "angularMomentumKgM2PerS": 1e-12
+  }
+}
