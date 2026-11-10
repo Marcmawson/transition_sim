@@ -1,4 +1,6 @@
-# S02 checkpoint verification — 10 November 2026
+# S02 original checkpoint verification — 10 November 2026
+
+Later implementation and the user's successful GPU execution are recorded in [S02-Continuation.md](S02-Continuation.md). The results below describe the original saved checkpoint, before that GPU evidence was supplied.
 
 Status: **development checkpoint, S02 incomplete, review pending**.
 
