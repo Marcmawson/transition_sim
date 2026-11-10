@@ -13,7 +13,7 @@ namespace PhaseTransition.Physics
     public sealed class BeakerEnergyLedger : MonoBehaviour
     {
         [Header("Initial sample")]
-        [Min(0.001f)] public float sampleMassKg = 0.25f;
+        [Min(0.001f)] public float sampleMassKg = 0.10f;
         [Range(-100f, 0f)] public float initialIceTemperatureC = -50f;
 
         [Header("Beaker geometry (SI)")]

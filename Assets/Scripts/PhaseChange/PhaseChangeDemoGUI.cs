@@ -64,6 +64,8 @@ namespace PhaseTransition.Physics
             GUILayout.Label("Spatial SI enthalpy grid: each cell has its own temperature and phase fractions.", noteStyle);
             GUILayout.Label("White = ice or vapour; blue = liquid. Lines show the computed liquid-flow direction.", noteStyle);
             GUILayout.Space(8f);
+            GUILayout.Label($"Initial ice mass: {ledger.sampleMassKg:0.000} kg (applied on reset)");
+            ledger.sampleMassKg = GUILayout.HorizontalSlider(ledger.sampleMassKg, 0.02f, 0.25f);
             ledger.heaterEnabled = GUILayout.Toggle(ledger.heaterEnabled, "Heater on");
             GUILayout.Label($"Heater power: {ledger.heaterPowerW:0} W");
             ledger.heaterPowerW = GUILayout.HorizontalSlider(ledger.heaterPowerW, 0f, 1500f);
