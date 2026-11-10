@@ -47,6 +47,7 @@ namespace PhysicsSim.ThreePhase3D.Materials
     public interface IHumidGasProperties
     {
         ThermodynamicState Evaluate(double temperatureK, double absolutePressurePa, double waterMassFraction);
+        GasLiquidEquilibrium EquilibriumWithLiquid(double temperatureK, double absolutePressurePa);
         double ViscosityPaS(double temperatureK, double absolutePressurePa, double waterMassFraction);
         double ConductivityWmK(double temperatureK, double absolutePressurePa, double waterMassFraction);
         double BinaryDiffusivityM2s(double temperatureK, double absolutePressurePa, double waterMassFraction);
