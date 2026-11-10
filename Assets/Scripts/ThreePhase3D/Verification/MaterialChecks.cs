@@ -18,9 +18,9 @@ namespace PhysicsSim.ThreePhase3D.Verification
     }
     [DataContract] public sealed class MaterialReport
     {
-        [DataMember] public string schema="S02-CPU-2", utc, source_base="82f9329d58cd6c744b216817a2861c9bbb1f7a85";
+        [DataMember] public string schema="S02-CPU-3", utc, source_base="4d571dc2f0e2b2649b7cd2a7fae63063260778a6";
         [DataMember] public bool gpu_executed=false, complete_stage=false;
-        [DataMember] public string[] open_items={"Ice conductivity outside corrected slow-frozen -40 to -5 C model", "Steam-rich mixture transport beyond Y=0.10: historical-model disagreement with modern references", "Hot/steam-rich water-air diffusion beyond dilute near-STP scope", "Ice-contact gas equilibrium and independent G11 fugacity cross-check", "Expanded pressure/ice/gas GPU tables"};
+        [DataMember] public string[] open_items={"Steam-rich mixture transport beyond Y=0.10: historical-model disagreement with modern references", "Hot/steam-rich water-air diffusion beyond dilute near-STP scope", "Expanded pressure/ice/gas GPU tables require measured device execution"};
         [DataMember] public MaterialComparison[] comparisons;
         [DataMember] public MaterialModelObservation[] model_observations;
     }
@@ -34,6 +34,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
         private readonly List<MaterialComparison> rows=new List<MaterialComparison>();
         private readonly Water95 water=new Water95();
         private readonly List<WaterTableData> tables=new List<WaterTableData>();
+        private readonly List<MaterialSurfaceData> surfaces=new List<MaterialSurfaceData>();
         private readonly List<MaterialModelObservation> observations=new List<MaterialModelObservation>();
         private void Compare(string id,string q,string unit,string source,double actual,double expected,double tolerance)
         {
@@ -147,11 +148,12 @@ namespace PhysicsSim.ThreePhase3D.Verification
             Reject("condensing-gas",()=>gas.Evaluate(300,101325,.1));
             Reject("missing-ice-k",()=>ice.ConductivityWmK(250));
             Reject("gas-transport-high-pressure",()=>gas.ViscosityPaS(300,200000,.01));
-            Reject("hot-gas-diffusion",()=>gas.BinaryDiffusivityM2s(400,101325,.01));
+            Reject("Massman-hot-gas-diffusion",()=>gas.BinaryDiffusivityM2s(400,101325,.01));
+            Compare("hot-gas-diffusion","D>0","1","ASHRAE2025 Table4 explicitly selected tabulated model",gas.BinaryDiffusivityM2s(400,101325,.01,GasDiffusionModel.MasonMonchickAshrae2025Tabulated)>0?1:0,1,0);
             Reject("steam-rich-diffusion",()=>gas.BinaryDiffusivityM2s(360,101325,.1));
             Reject("missing-duran-cp",()=>new DuranDataGap().CpJkgK(300));
             GasCompletionChecks();
-            if(rows.All(r=>r.passed))TableChecks();
+            if(rows.All(r=>r.passed)){TableChecks();SurfaceChecks();}
             return new MaterialReport {utc=DateTime.UtcNow.ToString("o"),comparisons=rows.ToArray(),model_observations=observations.ToArray()};
         }
         public static double TableTolerance(int property,double expected)
@@ -189,13 +191,13 @@ namespace PhysicsSim.ThreePhase3D.Verification
             string output=Path.Combine(projectRoot,"ValidationRuns/local","s02-materials-"+DateTime.UtcNow.ToString("yyyyMMddTHHmmss")+"-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(output);
             File.WriteAllBytes(Path.Combine(output,"comparisons.json"),RecordJson.Encode(report));
             if(report.comparisons.All(r=>r.passed))
-            {Directory.CreateDirectory(Path.Combine(output,"tables"));foreach(var table in checks.tables)File.WriteAllBytes(Path.Combine(output,"tables",table.phase.ToLowerInvariant()+"-101325Pa.json"),RecordJson.Encode(table));}
+            {Directory.CreateDirectory(Path.Combine(output,"tables"));foreach(var table in checks.tables)File.WriteAllBytes(Path.Combine(output,"tables",table.phase.ToLowerInvariant()+"-101325Pa.json"),RecordJson.Encode(table));foreach(var table in checks.surfaces)File.WriteAllBytes(Path.Combine(output,"tables",table.surface+"-TP.json"),RecordJson.Encode(table));}
             var csv=new StringBuilder("case_id,quantity,unit,source,expected,actual,absolute_error,tolerance,passed\n");
             foreach(var r in report.comparisons)csv.AppendLine(string.Join(",",new[]{r.case_id,r.quantity,r.unit,r.source,r.expected.ToString("R",CultureInfo.InvariantCulture),r.actual.ToString("R",CultureInfo.InvariantCulture),r.absolute_error.ToString("R",CultureInfo.InvariantCulture),r.tolerance.ToString("R",CultureInfo.InvariantCulture),r.passed.ToString()}));
             File.WriteAllText(Path.Combine(output,"comparisons.csv"),csv.ToString(),new UTF8Encoding(false));
             var sources=Directory.GetFiles(Path.Combine(projectRoot,"Assets/Scripts/ThreePhase3D/Materials"),"*.cs").Concat(new[]{
-                "Assets/Scripts/ThreePhase3D/Verification/MaterialChecks.cs","Assets/Scripts/ThreePhase3D/Verification/MaterialGasChecks.cs","Assets/Scripts/ThreePhase3D/Editor/MaterialVerificationMenu.cs",
-                "Assets/Resources/ThreePhase3D/WaterPropertyLookup.compute","Tools/ThreePhase3D/MaterialMain.cs","Tools/ThreePhase3D/RunMaterialChecks.ps1"
+                "Assets/Scripts/ThreePhase3D/Verification/MaterialChecks.cs","Assets/Scripts/ThreePhase3D/Verification/MaterialGasChecks.cs","Assets/Scripts/ThreePhase3D/Verification/MaterialExtendedChecks.cs","Assets/Scripts/ThreePhase3D/Editor/MaterialVerificationMenu.cs",
+                "Assets/Resources/ThreePhase3D/WaterPropertyLookup.compute","Assets/Resources/ThreePhase3D/MaterialSurfaceLookup.compute","Assets/Scripts/ThreePhase3D/Editor/MaterialSurfaceVerificationMenu.cs","Tools/ThreePhase3D/MaterialMain.cs","Tools/ThreePhase3D/RunMaterialChecks.ps1"
             }.Select(p=>Path.Combine(projectRoot,p))).OrderBy(p=>p,StringComparer.Ordinal);
             File.WriteAllText(Path.Combine(output,"source-hashes.txt"),"# SHA-256 with source CRLF normalised to LF; not a signed attestation\n"+string.Join("\n",sources.Select(p=>PhysicsSim.ThreePhase3D.Diagnostics.ProvenanceCapture.SourceHash(p)+"  "+p.Substring(projectRoot.Length+1).Replace('\\','/')))+"\n");
             File.WriteAllText(Path.Combine(output,"runner.txt"),"Managed executable SHA256: "+RecordJson.FileHash(typeof(MaterialChecks).Assembly.Location)+"\nManaged runtime: "+Environment.Version+"\nCompiler/reference environment: Unity 2022.3.46f1; see RunMaterialChecks.ps1\nGPU executed: false\nStage complete: false\n");
