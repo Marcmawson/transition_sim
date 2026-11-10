@@ -1,0 +1,151 @@
+{
+  "published_code_commit": "ee40c3b7e742cb053a0541cecaa779154e2ca159",
+  "all_remote_blob_hashes_matched": true,
+  "files": [
+    {
+      "path": "Docs/ThreePhase3D/ImplementationEvidence.json",
+      "git_blob_sha1": "3f92497a98d8f9e3764179e7fab2d3b4d5c7bf73",
+      "sha256": "f26c28fc663e7d07a6b33baa73577df37216d70804075dd3744f1e125c70413a"
+    },
+    {
+      "path": "Tools/ThreePhase3D/RunChecks.ps1",
+      "git_blob_sha1": "556b8de70c2e9da632dfacbca94cc52d49721cd9",
+      "sha256": "b224383090d2026df7a00d8bd03d4c57c25a27f89923583b05b67e9780cf39e9"
+    },
+    {
+      "path": "Assets/Resources/ThreePhase3D.meta",
+      "git_blob_sha1": "5cbf4dc79b01bc90f93ee86466ed9b8b96745610",
+      "sha256": "50687799ab1d94896915a61ba90a304f799a4fd829b6e0326149340874f767a4"
+    },
+    {
+      "path": "Assets/Resources/ThreePhase3D/WaterPropertyLookup.compute",
+      "git_blob_sha1": "b9b59059bb49d9db29ccea343a40ebe63706d294",
+      "sha256": "082cbfd83e307d592e67d8e54e326a8ba2c1454e45be3814dca2f265b85a31c4"
+    },
+    {
+      "path": "Assets/Resources/ThreePhase3D/WaterPropertyLookup.compute.meta",
+      "git_blob_sha1": "da3edb8f518b19b60ba43c15fa0ad06442c2d843",
+      "sha256": "20bc44d9b4bfae1a86c4bf1d120309920652348784909ffc240f9cc37aec7d9b"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Editor/MaterialVerificationMenu.cs",
+      "git_blob_sha1": "d67dc9652dbd940b78860700c2bde46692d07cad",
+      "sha256": "00e902166eec2d102e9809411b669231e283c1bd9f61a8ddbce8db3c91cb62b9"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Editor/MaterialVerificationMenu.cs.meta",
+      "git_blob_sha1": "65a20b61557834d8093ef908503b002d642884b9",
+      "sha256": "0e7d5bf67f62402787881a42399543ba5ba31dcf30e3555244bd7371cf517d3f"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Materials.meta",
+      "git_blob_sha1": "5d33988461bc01aa9062972cb5407e3e3c9b74ce",
+      "sha256": "e62f0ec4006da16f7951d6ed461072ae23869f5aa68c93d6d37bfb5df0fc8999"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Materials/HumidGas.cs",
+      "git_blob_sha1": "d40b1db6703b908e9a15dd9e8dec8eebf4aa43c0",
+      "sha256": "273bbef3d4f29ba289196d87e19f318b3994490de6e75577983d2a6a18039513"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Materials/HumidGas.cs.meta",
+      "git_blob_sha1": "085bdc2dd73a111864af47a8ed0e297b9843da73",
+      "sha256": "a043a07891618a6e94c0c8f41769e8c51204bfd6f46b88dbdc51409f0d773c1e"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Materials/IceIh.cs",
+      "git_blob_sha1": "ae4ec7476be3687cf6248b1f3650ca7db0df367f",
+      "sha256": "f2edf275496adbc0bc82cd7f16c1f8f9f7296e754ebd5a6dc17710be7aed1848"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Materials/IceIh.cs.meta",
+      "git_blob_sha1": "2fe8d4c613597c425c08586e35a2db4183c27b10",
+      "sha256": "f7e73724e750f143a8861421759ecc6d047f30dc8f096b890ac0b2700ef97803"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Materials/Jet2.cs",
+      "git_blob_sha1": "d6d0a679d4f20852f53efcc5550ddffacd475bf1",
+      "sha256": "882efc6384cd7dae5f34d8c0e110e9411c82906811851f686df51c5284a15fe1"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Materials/Jet2.cs.meta",
+      "git_blob_sha1": "a5ce58c1880ce5295dd1f4873ae783c08ae294a6",
+      "sha256": "a3344f449464dded8dc89bf123837425074c75e859b1ed61ad848686312d1f54"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Materials/MaterialContracts.cs",
+      "git_blob_sha1": "92d253d50b6541a2ffa97fc353fa1458c3b6e87e",
+      "sha256": "66048ae27aa04eb2d4e6b24a60746ed2fd34ac994ccd12ada0faf752b148200a"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Materials/MaterialContracts.cs.meta",
+      "git_blob_sha1": "ba8aa7910c5b6052e23c8ff70e862f57c8128970",
+      "sha256": "7e2d45de37af1f65adfeafd726ad262bafa63de023be2dc50ba58fd538e14852"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Materials/Water95.cs",
+      "git_blob_sha1": "1d5f9da53cb19936c6bc69d314b8c4ae1997d9cc",
+      "sha256": "e01a8ef9df15b775b1e1aa759cf01fcd3c425ee3fc45303a38b6e2b3e2dbbe7f"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Materials/Water95.cs.meta",
+      "git_blob_sha1": "23f323c697fc43b54682517f4b9a4d8454402450",
+      "sha256": "7318563a9f30e2fa3e8011ef84f3d6d2c87f0edd4115176f8970308db349f20c"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Materials/WaterPropertyTable.cs",
+      "git_blob_sha1": "f3df14202383ef9a2c5d26218f0947cda7ae1567",
+      "sha256": "7ddecdd14e85357274a6b229666ce3ce4745d9791c1dd53503fafc2dfacc106a"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Materials/WaterPropertyTable.cs.meta",
+      "git_blob_sha1": "26b76f487cd1f23ad945ebc03f8591089e381105",
+      "sha256": "2daa0317ac6b9b2881ad529d513236ec9c67fecececb5ef32b5c2e5d3dd31243"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Materials/WaterTransport.cs",
+      "git_blob_sha1": "fa708c3208e57fe9323772bba5ac3582c2c4c3c6",
+      "sha256": "ac1c2e5994f78986de9fcae5d2f3254e127f84fa5b566d9c3feea6a9f7024dbd"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Materials/WaterTransport.cs.meta",
+      "git_blob_sha1": "34d2bb07284427004098cd0ef3e8b4983ba23cff",
+      "sha256": "1eb8588bbf1288174af67376a88791e456b9cf1d47ac8629d0c7ee98bc278150"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Verification/MaterialChecks.cs",
+      "git_blob_sha1": "bc260384453c215a9679e2dea32fe6036ab6e719",
+      "sha256": "eeb7e9da95523c0dca3fdfa0702e7e34b4e238b716afc60e2a459f387a17506e"
+    },
+    {
+      "path": "Assets/Scripts/ThreePhase3D/Verification/MaterialChecks.cs.meta",
+      "git_blob_sha1": "29717183c5534a48366f4e045a96c11e09e8eccb",
+      "sha256": "011a2bd6139e1b8467377e60de11d4b654a6c5d0b15e7e7eca813f656deb27a1"
+    },
+    {
+      "path": "Docs/ThreePhase3D/History/S01-ImplementationEvidence.json",
+      "git_blob_sha1": "9accf49e558700f1b52e8146f04838ccc52beba0",
+      "sha256": "8451cb67a93b58c7f47fd8df89452e9869b1a652a6df7a17f8cc96d1537a850c"
+    },
+    {
+      "path": "Docs/ThreePhase3D/S02-Handoff.md",
+      "git_blob_sha1": "93645f338de136a177c0929cba5fa26880eaa99f",
+      "sha256": "f00169427ddaee339127d06a74669a91b816ab8503d5a36c10745064163775f8"
+    },
+    {
+      "path": "Tools/ThreePhase3D/MaterialMain.cs",
+      "git_blob_sha1": "045309dbb769f7c58b4f806a6a2a562137efd218",
+      "sha256": "1e86e13bdf85f1b6c96c75e4cb44bc7a87ffb76d33597730c9d53319055f56c9"
+    },
+    {
+      "path": "Tools/ThreePhase3D/PlotMaterialTables.js",
+      "git_blob_sha1": "56d19ac7e8a4a949be0fdfb82180b0d7eee16937",
+      "sha256": "ddc6a962b622ad5c7bbf674f393e979884c958df698fa717136ad1dc296cab95"
+    },
+    {
+      "path": "Tools/ThreePhase3D/RunMaterialChecks.ps1",
+      "git_blob_sha1": "c2edfbf3e477dabf5b933a6110ed83dd591e12a2",
+      "sha256": "2ac7ff6cb1957b24d03bd016a24515fbd8b040156639d16ebde931df9e46d6ee"
+    }
+  ]
+}
