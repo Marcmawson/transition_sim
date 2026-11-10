@@ -2,7 +2,7 @@ using UnityEngine;
 
 namespace PhaseTransition.Physics
 {
-    /// <summary>Simple IMGUI presentation for the initial SI beaker and lattice-gas prototypes.</summary>
+    /// <summary>IMGUI presentation for the spatial beaker model and separate lattice-gas prototype.</summary>
     public sealed class PhaseChangeDemoGUI : MonoBehaviour
     {
         private enum View { Beaker, LatticeGas }
@@ -13,9 +13,6 @@ namespace PhaseTransition.Physics
         private GUIStyle titleStyle;
         private GUIStyle noteStyle;
         private Texture2D particleTexture;
-        private Vector2[] iceSites;
-        private Vector2[] liquidSites;
-        private Vector2[] vapourSites;
 
         private void Awake()
         {
@@ -24,7 +21,7 @@ namespace PhaseTransition.Physics
             const int width = 28, height = 18;
             lattice = new LatticeGas2D(width, height, width * height / 2, latticeTemperatureK,
                 LatticeGas2D.PairEnergyForSquareLatticeCriticalTemperature(647.096));
-            CreateParticleDisplay();
+            CreateParticleTexture();
         }
 
         private void OnDestroy()
@@ -45,7 +42,7 @@ namespace PhaseTransition.Physics
         {
             EnsureStyles();
             float panelWidth = Mathf.Min(430f, Screen.width - 24f);
-            GUILayout.BeginArea(new Rect(12, 12, panelWidth, Screen.height - 24), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(12f, 12f, panelWidth, Screen.height - 24f), GUI.skin.box);
             GUILayout.Label("PHASE TRANSITION STUDY", titleStyle);
             GUILayout.BeginHorizontal();
             if (GUILayout.Toggle(view == View.Beaker, "SI beaker", GUI.skin.button)) view = View.Beaker;
@@ -55,32 +52,29 @@ namespace PhaseTransition.Physics
             else DrawLatticeControls();
             GUILayout.EndArea();
 
-            if (view == View.Beaker) DrawSchematic();
+            if (view == View.Beaker) DrawBeaker();
             else DrawLatticeGrid();
         }
 
         private void DrawBeakerControls()
         {
             if (ledger == null) return;
-            GUILayout.Label("Uniform-sample SI enthalpy ledger; schematic is not to scale.", noteStyle);
-            GUILayout.Label("Display markers: white ice, blue liquid, white vapour. They are representative, not individual molecules.", noteStyle);
-            GUILayout.Space(8);
+            GUILayout.Label("Spatial SI enthalpy grid: each cell has its own temperature and phase fractions.", noteStyle);
+            GUILayout.Label("White = ice or vapour; blue = liquid. Markers are representative, not individual molecules.", noteStyle);
+            GUILayout.Space(8f);
             ledger.heaterEnabled = GUILayout.Toggle(ledger.heaterEnabled, "Heater on");
             GUILayout.Label($"Heater power: {ledger.heaterPowerW:0} W");
             ledger.heaterPowerW = GUILayout.HorizontalSlider(ledger.heaterPowerW, 0f, 1500f);
-            GUILayout.Label($"Sample mass: {ledger.sampleMassKg:0.00} kg");
-            ledger.sampleMassKg = GUILayout.HorizontalSlider(ledger.sampleMassKg, 0.05f, 1.00f);
-            GUILayout.Label($"Altitude: {ledger.altitudeM:0} m  |  pressure: {ledger.AmbientPressurePa / 1000.0:0.00} kPa");
+            GUILayout.Label($"Sample mass: {ledger.sampleMassKg:0.00} kg  |  grid: {ledger.GridWidth} x {ledger.GridHeight}");
+            GUILayout.Label($"Altitude: {ledger.altitudeM:0} m  |  ambient pressure: {ledger.AmbientPressurePa / 1000.0:0.00} kPa");
             ledger.altitudeM = GUILayout.HorizontalSlider(ledger.altitudeM, 0f, 3000f);
-            GUILayout.Space(8);
-            var s = ledger.CurrentState;
-            GUILayout.Label($"Phase: {s.phase}");
-            GUILayout.Label($"Temperature: {s.temperatureC:0.00} deg C");
-            GUILayout.Label($"Ice: {s.iceMassFraction:P1}   liquid: {s.liquidMassFraction:P1}   vapour: {s.vapourMassFraction:P1}");
+            GUILayout.Space(8f);
+            GUILayout.Label($"Mass-weighted temperature: {ledger.AverageTemperatureC:0.00} deg C");
+            GUILayout.Label($"Ice: {ledger.IceMassFraction:P1}   liquid: {ledger.LiquidMassFraction:P1}   vapour: {ledger.VapourMassFraction:P1}");
             GUILayout.Label($"Specific enthalpy: {ledger.SpecificEnthalpyJPerKg / 1000.0:0.0} kJ/kg");
             if (GUILayout.Button("Reset to ice at -50 deg C")) ledger.ResetSample();
-            GUILayout.Space(5);
-            GUILayout.Label("Currently omitted: spatial conduction/convection, beaker heat capacity, heat loss, nucleation and vapour transport.", noteStyle);
+            GUILayout.Space(5f);
+            GUILayout.Label("A hot cell can melt, warm, or boil while other cells remain colder. Heat conducts from the base; natural convection, beaker metal, ambient losses, nucleation and actual vapour transport are not included yet.", noteStyle);
         }
 
         private void DrawLatticeControls()
@@ -91,64 +85,36 @@ namespace PhaseTransition.Physics
             GUILayout.Label($"Occupied sites: {lattice.ParticleCount} / {lattice.Width * lattice.Height}");
             GUILayout.Label($"Occupied neighbour pairs: {lattice.CountOccupiedNeighbourPairs()}");
             GUILayout.Label($"Configurational energy: {lattice.ConfigurationalEnergyJ:E3} J");
-            GUILayout.Space(5);
+            GUILayout.Space(5f);
             GUILayout.Label("Nearest-neighbour attraction, Metropolis updates; particle count is conserved.", noteStyle);
             GUILayout.Label("Pair energy is calibrated only to the 647.096 K critical-point coordinate. This is not quantitative water physics.", noteStyle);
         }
 
-        private void DrawSchematic()
+        private void DrawBeaker()
         {
-            if (ledger == null) return;
+            if (ledger == null || particleTexture == null) return;
             float x = Mathf.Min(Screen.width - 260f, 500f);
             float y = Mathf.Max(85f, Screen.height * 0.20f);
             float w = Mathf.Min(250f, Screen.width * 0.30f);
             float h = Mathf.Min(330f, Screen.height * 0.48f);
-            float wall = 8f;
+            const float wall = 8f;
             GUI.color = new Color(0.72f, 0.87f, 0.91f, 0.8f);
             GUI.Box(new Rect(x, y, wall, h), GUIContent.none);
             GUI.Box(new Rect(x + w - wall, y, wall, h), GUIContent.none);
             GUI.Box(new Rect(x, y + h - wall, w, wall), GUIContent.none);
 
-            var s = ledger.CurrentState;
-            float sampleFraction = Mathf.Clamp01((float)(s.iceMassFraction + s.liquidMassFraction));
-            float fillHeight = (h - wall * 2) * sampleFraction * 0.70f;
-            if (fillHeight > 0.5f)
-            {
-                Color sampleColor = s.phase == WaterThermodynamicsSI.Phase.SolidIce ||
-                                    s.phase == WaterThermodynamicsSI.Phase.MeltingMixture
-                    ? new Color(0.22f, 0.42f, 0.58f, 0.90f)
-                    : new Color(0.02f, 0.15f, 0.42f, 0.88f);
-                GUI.color = sampleColor;
-                GUI.Box(new Rect(x + wall + 4f, y + h - wall - fillHeight, w - 2f * (wall + 4f), fillHeight), GUIContent.none);
-            }
-
             Rect interior = new Rect(x + wall + 4f, y + wall + 4f,
                 w - 2f * (wall + 4f), h - 2f * (wall + 4f));
-            float condensedFraction = Mathf.Clamp01((float)(s.iceMassFraction + s.liquidMassFraction));
-            float condensedHeight = interior.height * condensedFraction * 0.70f;
-            Rect condensedRegion = new Rect(interior.x, interior.y + interior.height - condensedHeight,
-                interior.width, condensedHeight);
-            Rect gasRegion = new Rect(interior.x, interior.y, interior.width,
-                Mathf.Max(1f, interior.height - condensedHeight));
-
-            float iceCount = 90f * (float)s.iceMassFraction;
-            float liquidCount = 110f * (float)s.liquidMassFraction;
-            // Gas occupies much more volume per unit mass than liquid, so use a display
-            // scaling rather than drawing equal marker counts for equal mass fractions.
-            float vapourCount = s.vapourMassFraction <= 0.0001 ? 0f :
-                Mathf.Clamp(140f * Mathf.Sqrt((float)s.vapourMassFraction), 1f, 140f);
-
-            if (s.vapourMassFraction > 0.001)
+            float levelFraction = Mathf.Clamp01((float)(ledger.WaterLevelM / ledger.beakerHeightM));
+            float fillHeight = interior.height * levelFraction;
+            if (fillHeight > 0.5f)
             {
-                GUI.color = new Color(0.72f, 0.81f, 0.88f, 0.20f);
-                float vapourHeight = Mathf.Max(16f, (h - wall * 2) * (float)s.vapourMassFraction * 0.35f);
-                GUI.Box(new Rect(x + wall + 4f, y + wall + 4f, w - 2f * (wall + 4f), vapourHeight), GUIContent.none);
+                GUI.color = new Color(0.02f, 0.15f, 0.30f, 0.88f);
+                GUI.Box(new Rect(interior.x, interior.y + interior.height - fillHeight,
+                    interior.width, fillHeight), GUIContent.none);
             }
-            DrawPhaseParticles(iceSites, iceCount, condensedRegion, Color.white, 0f, false, 7f);
-            DrawPhaseParticles(liquidSites, liquidCount, condensedRegion,
-                new Color(0.10f, 0.48f, 1f, 1f), 0.012f, false, 6f);
-            DrawPhaseParticles(vapourSites, vapourCount, gasRegion, Color.white, 0.08f, true, 5f);
 
+            DrawLocalPhaseParticles(interior);
             if (ledger.heaterEnabled && ledger.heaterPowerW > 0f)
             {
                 GUI.color = new Color(1f, 0.28f, 0.06f, 0.95f);
@@ -158,24 +124,59 @@ namespace PhaseTransition.Physics
             }
             GUI.color = Color.white;
             GUI.Label(new Rect(x, y - 24f, w + 80f, 22f), "OPEN GLASS BEAKER  |  SEA-LEVEL REFERENCE");
-            GUI.Label(new Rect(x, y + h + 44f, w + 100f, 42f), "Ice markers are ordered; liquid markers move locally; vapour markers spread through the headspace.", noteStyle);
+            GUI.Label(new Rect(x, y + h + 44f, w + 120f, 44f), "Cells transition locally: mass-average temperature can rise while ice remains elsewhere.", noteStyle);
         }
 
-        private void CreateParticleDisplay()
+        private void DrawLocalPhaseParticles(Rect interior)
         {
-            const int displayCount = 140;
-            iceSites = new Vector2[displayCount];
-            liquidSites = new Vector2[displayCount];
-            vapourSites = new Vector2[displayCount];
-            var random = new System.Random(7319);
-            for (int i = 0; i < displayCount; i++)
-            {
-                // Ordered points communicate a solid lattice; this is not a water crystal model.
-                iceSites[i] = new Vector2((i % 14 + 0.5f) / 14f, (i / 14 + 0.5f) / 10f);
-                liquidSites[i] = new Vector2((float)random.NextDouble(), (float)random.NextDouble());
-                vapourSites[i] = new Vector2((float)random.NextDouble(), (float)random.NextDouble());
-            }
+            float cellWidth = interior.width / ledger.GridWidth;
+            float cellHeight = interior.height / ledger.GridHeight;
+            float time = Time.time;
+            double cellVolume = (ledger.beakerWidthM / ledger.GridWidth) *
+                                (ledger.beakerHeightM / ledger.GridHeight) * ledger.beakerDepthM;
 
+            for (int iy = 0; iy < ledger.GridHeight; iy++)
+                for (int ix = 0; ix < ledger.GridWidth; ix++)
+                {
+                    BeakerEnergyLedger.CellState cell = ledger.GetCellState(ix, iy);
+                    if (!cell.containsSample) continue;
+
+                    double condensedVolumeFraction = cell.massKg *
+                        (cell.iceMassFraction / 917.0 + cell.liquidMassFraction / 998.2) / cellVolume;
+                    float localVolumeFraction = Mathf.Clamp01((float)condensedVolumeFraction);
+                    float centreX = interior.x + (ix + 0.5f) * cellWidth;
+                    float centreY = interior.y + interior.height - (iy + localVolumeFraction * 0.5f) * cellHeight;
+                    float liquidDriftX = Mathf.Sin(time + ix * 0.91f + iy * 1.37f) * cellWidth * 0.16f;
+                    float liquidDriftY = Mathf.Sin(time * 0.7f + ix * 1.71f + iy * 0.57f) * cellHeight * 0.13f;
+
+                    DrawParticle(new Rect(centreX - cellWidth * 0.18f - 3f, centreY - 3f, 6f, 6f),
+                        Color.white, (float)cell.iceMassFraction);
+                    DrawParticle(new Rect(centreX + cellWidth * 0.18f - 3f + liquidDriftX,
+                        centreY - 3f + liquidDriftY, 6f, 6f),
+                        new Color(0.12f, 0.52f, 1f, 1f), (float)cell.liquidMassFraction);
+
+                    if (cell.vapourMassFraction > 0.001)
+                    {
+                        float rise = Mathf.Repeat(time * 18f + (ix * 17 + iy * 31) * 0.37f,
+                            Mathf.Max(1f, interior.height * 0.60f));
+                        float gasY = Mathf.Max(interior.y + 3f, centreY - rise);
+                        DrawParticle(new Rect(centreX - 2.5f, gasY - 2.5f, 5f, 5f),
+                            Color.white, (float)cell.vapourMassFraction);
+                    }
+                }
+        }
+
+        private void DrawParticle(Rect rect, Color colour, float phaseFraction)
+        {
+            if (phaseFraction <= 0f) return;
+            GUI.color = new Color(colour.r, colour.g, colour.b,
+                colour.a * Mathf.Clamp01(phaseFraction));
+            GUI.DrawTexture(rect, particleTexture, ScaleMode.StretchToFill, true);
+            GUI.color = Color.white;
+        }
+
+        private void CreateParticleTexture()
+        {
             const int textureSize = 16;
             particleTexture = new Texture2D(textureSize, textureSize, TextureFormat.RGBA32, false);
             particleTexture.name = "Phase particle display marker";
@@ -189,35 +190,6 @@ namespace PhaseTransition.Physics
                     particleTexture.SetPixel(px, py, new Color(1f, 1f, 1f, alpha));
                 }
             particleTexture.Apply();
-        }
-
-        private void DrawPhaseParticles(Vector2[] sites, float count, Rect region, Color colour,
-            float motion, bool rising, float diameter)
-        {
-            if (sites == null || count <= 0 || region.width <= 0f || region.height <= 1f) return;
-            float time = Time.time;
-            for (int i = 0; i < Mathf.CeilToInt(count); i++)
-            {
-                Vector2 p = sites[i];
-                float px = p.x;
-                float py = p.y;
-                if (rising)
-                {
-                    py = Mathf.Repeat(py + time * motion, 1f);
-                    px = Mathf.Repeat(px + Mathf.Sin(time * 1.7f + i * 1.91f) * 0.035f, 1f);
-                }
-                else if (motion > 0f)
-                {
-                    px = Mathf.Clamp01(px + Mathf.Sin(time * 1.1f + i * 2.17f) * motion);
-                    py = Mathf.Clamp01(py + Mathf.Sin(time * 0.8f + i * 1.37f) * motion);
-                }
-                Rect marker = new Rect(region.x + px * region.width - diameter * 0.5f,
-                    region.y + py * region.height - diameter * 0.5f, diameter, diameter);
-                float markerAlpha = Mathf.Clamp01(count - i);
-                GUI.color = new Color(colour.r, colour.g, colour.b, colour.a * markerAlpha);
-                GUI.DrawTexture(marker, particleTexture, ScaleMode.StretchToFill, true);
-            }
-            GUI.color = Color.white;
         }
 
         private void DrawLatticeGrid()

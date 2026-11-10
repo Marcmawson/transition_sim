@@ -118,14 +118,15 @@ namespace PhaseTransition.Physics
         /// <summary>
         /// Maps specific enthalpy to equilibrium phase fractions at a supplied absolute pressure.
         /// Enthalpy reference is liquid water at 0 C. Vapour/liquid coexistence is represented
-        /// only over the IF97 saturation table range (0-100 C).
+        /// only over the near-atmospheric range; vapourisation enthalpy is tabulated to 100 C
+        /// and held at that final tabulated value for the small hydrostatic correction above it.
         /// </summary>
         public static EquilibriumState StateFromSpecificEnthalpy(double enthalpyJPerKg, double pressurePa)
         {
             double tsatK = SaturationTemperatureK(pressurePa);
             double tsatC = tsatK - 273.15;
-            if (tsatC < 0.0 || tsatC > 100.0)
-                throw new ArgumentOutOfRangeException(nameof(pressurePa), "The initial beaker approximation supports boiling points from 0 to 100 C.");
+            if (tsatC < 0.0 || tsatC > 110.0)
+                throw new ArgumentOutOfRangeException(nameof(pressurePa), "The beaker approximation supports saturation temperatures from 0 to 110 C.");
 
             double meltEnthalpy = 0.0;
             double boilStartEnthalpy = LiquidHeatCapacity * tsatC;

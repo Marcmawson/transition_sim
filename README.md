@@ -8,4 +8,4 @@ The repository is being initialized from the existing Unity project baseline; th
 
 ## Phase-change prototype
 
-Open `Assets/Scenes/PhaseChange Beaker.unity` and press Play to see the SI energy ledger and the separate lattice-gas teaching view. The current implementation is explicitly an equilibrium enthalpy demonstration, not a spatially resolved heat/fluid simulation; see `Assets/Scripts/PhaseChange/ModelNotes.md` for assumptions and limits.
+Open `Assets/Scenes/PhaseChange Beaker.unity` and press Play to see the SI thermal grid and the separate lattice-gas teaching view. The beaker grid resolves local conduction and phase fractions, while fluid motion and convection remain future work; see `Assets/Scripts/PhaseChange/ModelNotes.md` for assumptions and limits.

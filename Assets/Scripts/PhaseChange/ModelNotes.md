@@ -1,12 +1,12 @@
 # First phase-transition model slice
 
-## SI beaker energy ledger
+## SI beaker thermal grid
 
-`BeakerEnergyLedger` integrates heater energy as `Q = P Δt` and specific enthalpy as `Δh = Q/m`. It starts with 0.25 kg of ice at −50 °C and a 500 W heater as editable experiment inputs. The values are expressed in SI units; they describe the chosen apparatus and can be changed in the Inspector.
+`BeakerEnergyLedger` is a 2-D finite-volume enthalpy grid. Each cell stores its own mass and specific enthalpy. A 0.10 m wide by 0.12 m high beaker with 0.025 m model depth contains 0.25 kg of ice initially at −50 °C; a 20 by 24 grid is the numerical resolution. Heater power is in watts, geometry in metres, mass in kilograms, enthalpy in joules per kilogram, and cell heat transfer uses Fourier conduction (`q = k A ΔT / Δx`). Heater input is applied at the wet bottom boundary, with 100% of the selected heater power assumed to enter the sample.
 
-`WaterThermodynamicsSI` maps specific enthalpy to equilibrium ice/liquid/vapour mass fractions. It includes the ice heat-capacity correlation, latent heat of fusion, liquid heat capacity, tabulated near-atmospheric latent heat of vaporisation, and the IAPWS-IF97 saturation-pressure relation. Ambient pressure uses the standard-atmosphere troposphere relation and liquid pressure can include hydrostatic head.
+`WaterThermodynamicsSI` maps each cell's local specific enthalpy and pressure to ice/liquid/vapour fractions. Therefore, a cell near the heated base can melt, then warm, then boil while cooler cells remain ice or liquid. Pressure in each cell includes ambient pressure and hydrostatic head. Ice uses the stated heat-capacity correlation; fusion uses latent heat; liquid uses a near-room-temperature heat capacity; boiling uses the IAPWS-IF97 saturation relation and a near-atmospheric latent-heat table.
 
-This first slice deliberately does not claim a complete beaker simulation. It assumes a uniform sample temperature and pressure, and it has no spatial conduction, convection, vapor transport, nucleation delay, glass heat capacity, or heat loss. The vapour superheat branch uses a constant approximate heat capacity. The boiling enthalpy lookup is restricted to saturation temperatures from 0 to 100 °C. These limitations need to be removed before interpreting the scene as a quantitatively predictive experiment.
+This is still a conduction and local-equilibrium model, not a complete fluid simulation. Water and vapour are not advected; buoyancy-driven convection is absent; cells keep their assigned sample mass; there is no glass-metal heat capacity, burner-to-beaker loss, ambient cooling, surface evaporation, nucleation delay, or open-vessel mass loss. The vapour superheat heat capacity is approximate, and vaporisation enthalpy is held at its 100 °C tabulated value for the small hydrostatic correction above 100 °C. The displayed markers follow local phase fractions but are not molecules. These assumptions must be improved before treating results as quantitatively predictive.
 
 ## Lattice gas from the supplied diagram
 
