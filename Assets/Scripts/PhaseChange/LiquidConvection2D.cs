@@ -21,12 +21,17 @@ namespace PhaseTransition.Physics
         private readonly double[,] density;
         private readonly bool[,] fluid;
         private readonly bool[,] solid;
+        private readonly double[,] liquidFractionField;
+        private readonly double[,] interfaceNormalX;
+        private readonly double[,] interfaceNormalY;
+        private readonly double[,] interfaceCurvature;
 
         private const double GravityMPerS2 = 9.80665;
         private const double ReferenceDensityKgPerM3 = 999.972;
         private const double MinimumFlowFraction = 0.02;
         private const double PressureRelaxation = 1.7;
         private const int PressureIterations = 180;
+        private const double InterfaceGradientEpsilon = 1e-8;
 
         public double MaximumSpeedMS { get; private set; }
         public double MaximumDivergencePerS { get; private set; }
@@ -43,6 +48,10 @@ namespace PhaseTransition.Physics
             density = new double[width, height];
             fluid = new bool[width, height];
             solid = new bool[width, height];
+            liquidFractionField = new double[width, height];
+            interfaceNormalX = new double[width, height];
+            interfaceNormalY = new double[width, height];
+            interfaceCurvature = new double[width, height];
             Reset();
         }
 
@@ -68,15 +77,96 @@ namespace PhaseTransition.Physics
         }
 
         public void Advance(double[,] liquidFraction, double[,] iceFraction,
-            double[,] temperatureC, double dxM, double dyM, double dtS)
+            double[,] temperatureC, double dxM, double dyM, double dtS,
+            double surfaceTensionNPerM, double glassContactAngleDegrees)
         {
             BuildMasks(liquidFraction, iceFraction);
+            BuildInterfaceGeometry(liquidFraction, dxM, dyM, glassContactAngleDegrees);
             AdvectVelocity(dxM, dyM, dtS);
-            ApplyForcesAndViscosity(temperatureC, dxM, dyM, dtS);
+            ApplyForcesAndViscosity(temperatureC, dxM, dyM, dtS, surfaceTensionNPerM);
             EnforceFaceBoundaries();
             Project(dxM, dyM, dtS);
             EnforceFaceBoundaries();
             MeasureMaximumSpeed(dxM, dyM);
+        }
+
+        private void BuildInterfaceGeometry(double[,] liquidFraction, double dx, double dy,
+            double contactAngleDegrees)
+        {
+            // A diffuse interface is represented by the transported liquid volume fraction.
+            // Its normalized gradient points from gas toward liquid.
+            for (int y = 0; y < height; y++)
+                for (int x = 0; x < width; x++)
+                {
+                    liquidFractionField[x, y] = Clamp(liquidFraction[x, y], 0.0, 1.0);
+                    double gx = (FractionAt(liquidFraction, x + 1, y) -
+                                 FractionAt(liquidFraction, x - 1, y)) / (2.0 * dx);
+                    double gy = (FractionAt(liquidFraction, x, y + 1) -
+                                 FractionAt(liquidFraction, x, y - 1)) / (2.0 * dy);
+                    double magnitude = System.Math.Sqrt(gx * gx + gy * gy);
+                    if (magnitude > InterfaceGradientEpsilon)
+                    {
+                        interfaceNormalX[x, y] = gx / magnitude;
+                        interfaceNormalY[x, y] = gy / magnitude;
+                    }
+                    else
+                    {
+                        interfaceNormalX[x, y] = 0.0;
+                        interfaceNormalY[x, y] = 0.0;
+                    }
+                }
+
+            // Impose the specified static contact angle at vertical glass walls. The
+            // original vertical normal selects whether the interface rises or falls there.
+            double theta = Clamp(contactAngleDegrees, 0.0, 180.0) * System.Math.PI / 180.0;
+            double cosTheta = System.Math.Cos(theta);
+            double sinTheta = System.Math.Sin(theta);
+            for (int y = 0; y < height; y++)
+            {
+                ApplyWallContactAngle(0, y, 1.0, cosTheta, sinTheta);
+                ApplyWallContactAngle(width - 1, y, -1.0, cosTheta, sinTheta);
+            }
+
+            // Curvature is minus the divergence of the gas-to-liquid unit normal.
+            // Clamp edge samples by replication; wall normals have already been adjusted.
+            for (int y = 0; y < height; y++)
+                for (int x = 0; x < width; x++)
+                {
+                    double dNxDx = (NormalXAt(x + 1, y) - NormalXAt(x - 1, y)) / (2.0 * dx);
+                    double dNyDy = (NormalYAt(x, y + 1) - NormalYAt(x, y - 1)) / (2.0 * dy);
+                    interfaceCurvature[x, y] = -(dNxDx + dNyDy);
+                }
+        }
+
+        private void ApplyWallContactAngle(int x, int y, double inwardNormalX,
+            double cosTheta, double sinTheta)
+        {
+            double oldY = interfaceNormalY[x, y];
+            if (System.Math.Abs(oldY) < 0.1) return;
+            interfaceNormalX[x, y] = inwardNormalX * cosTheta;
+            interfaceNormalY[x, y] = System.Math.Sign(oldY) * sinTheta;
+        }
+
+        private double FractionAt(double[,] fraction, int x, int y)
+        {
+            if (y >= height) return 0.0; // open top is adjacent to gas
+            if (y < 0) y = 0;             // bottom is a solid wall
+            x = System.Math.Max(0, System.Math.Min(width - 1, x));
+            return Clamp(fraction[x, y], 0.0, 1.0);
+        }
+
+        private double NormalXAt(int x, int y)
+        {
+            x = System.Math.Max(0, System.Math.Min(width - 1, x));
+            y = System.Math.Max(0, System.Math.Min(height - 1, y));
+            return interfaceNormalX[x, y];
+        }
+
+        private double NormalYAt(int x, int y)
+        {
+            x = System.Math.Max(0, System.Math.Min(width - 1, x));
+            y = System.Math.Max(0, System.Math.Min(height - 1, y));
+            return interfaceNormalY[x, y];
         }
 
         private void BuildMasks(double[,] liquidFraction, double[,] iceFraction)
@@ -118,7 +208,8 @@ namespace PhaseTransition.Physics
             Copy(vNext, v);
         }
 
-        private void ApplyForcesAndViscosity(double[,] temperatureC, double dx, double dy, double dt)
+        private void ApplyForcesAndViscosity(double[,] temperatureC, double dx, double dy, double dt,
+            double surfaceTensionNPerM)
         {
             for (int y = 0; y < height; y++)
                 for (int x = 0; x < width; x++)
@@ -126,7 +217,7 @@ namespace PhaseTransition.Physics
                     if (fluid[x, y])
                     {
                         double t = Clamp(temperatureC[x, y], 0.0, 100.0);
-                        density[x, y] = LiquidWaterDensityKgPerM3(t);
+                        density[x, y] = WaterThermodynamicsSI.LiquidDensityKgPerM3(t);
                     }
                     else density[x, y] = ReferenceDensityKgPerM3;
                 }
@@ -144,6 +235,22 @@ namespace PhaseTransition.Physics
                     double buoyancy = GravityMPerS2 *
                         (ReferenceDensityKgPerM3 - rho) / ReferenceDensityKgPerM3;
                     v[x, y] += (-GravityMPerS2 + buoyancy) * dt;
+                    if (surfaceTensionNPerM > 0.0)
+                    {
+                        double capillaryAcceleration = surfaceTensionNPerM / rho *
+                            AverageCurvatureY(x, y) * (FractionAtCurrent(x, y) - FractionAtCurrent(x, y - 1)) / dy;
+                        v[x, y] += capillaryAcceleration * dt;
+                    }
+                }
+
+            for (int y = 0; y < height; y++)
+                for (int x = 1; x < width; x++)
+                {
+                    if (!IsUFaceActive(x, y) || surfaceTensionNPerM <= 0.0) continue;
+                    double rho = AverageFaceDensityX(x, y);
+                    double gradAlpha = (FractionAtCurrent(x, y) - FractionAtCurrent(x - 1, y)) / dx;
+                    double acceleration = surfaceTensionNPerM / rho * AverageCurvatureX(x, y) * gradAlpha;
+                    u[x, y] += acceleration * dt;
                 }
 
             // Explicit viscous diffusion; the caller limits dt against the cell-scale CFL.
@@ -169,6 +276,21 @@ namespace PhaseTransition.Physics
                 }
             Copy(uNext, u);
             Copy(vNext, v);
+        }
+
+        private double FractionAtCurrent(int x, int y)
+        {
+            if (x < 0 || x >= width || y < 0 || y >= height) return 0.0;
+            return liquidFractionField[x, y];
+        }
+
+        private double AverageCurvatureX(int faceX, int y) =>
+            0.5 * (interfaceCurvature[faceX - 1, y] + interfaceCurvature[faceX, y]);
+
+        private double AverageCurvatureY(int x, int faceY)
+        {
+            if (faceY <= 0 || faceY >= height) return 0.0;
+            return 0.5 * (interfaceCurvature[x, faceY - 1] + interfaceCurvature[x, faceY]);
         }
 
         private void Project(double dx, double dy, double dt)
@@ -253,6 +375,7 @@ namespace PhaseTransition.Physics
                     if (!IsVFaceActive(x, y)) v[x, y] = 0.0;
                 if (!fluid[x, height - 1]) v[x, height] = 0.0;
             }
+
         }
 
         private bool IsUFaceActive(int x, int y)
@@ -295,11 +418,24 @@ namespace PhaseTransition.Physics
             return a * (1.0 - ty) + b * ty;
         }
 
-        private double UAt(int x, int y, int fallbackX, int fallbackY) =>
-            x >= 0 && x <= width && y >= 0 && y < height && IsUFaceActive(x, y) ? u[x, y] : u[fallbackX, fallbackY];
+        private double UAt(int x, int y, int fallbackX, int fallbackY)
+        {
+            // Tangential velocity is half a cell above the bottom. Its reflected ghost
+            // gives zero velocity at the wall without zeroing an interior face after projection.
+            if (y < 0) return -u[fallbackX, fallbackY];
+            if (x == 0 || x == width) return 0.0;
+            return x > 0 && x < width && y < height && IsUFaceActive(x, y)
+                ? u[x, y] : u[fallbackX, fallbackY];
+        }
 
-        private double VAt(int x, int y, int fallbackX, int fallbackY) =>
-            x >= 0 && x < width && y >= 0 && y <= height && IsVFaceActive(x, y) ? v[x, y] : v[fallbackX, fallbackY];
+        private double VAt(int x, int y, int fallbackX, int fallbackY)
+        {
+            // The same reflection enforces no-slip tangential velocity at the side walls.
+            if (x < 0 || x >= width) return -v[fallbackX, fallbackY];
+            if (y == 0) return 0.0;
+            return y > 0 && y <= height && IsVFaceActive(x, y)
+                ? v[x, y] : v[fallbackX, fallbackY];
+        }
 
         private double AverageFaceDensityX(int faceX, int y)
         {
@@ -339,13 +475,6 @@ namespace PhaseTransition.Physics
                     if (absoluteDivergence > MaximumDivergencePerS)
                         MaximumDivergencePerS = absoluteDivergence;
                 }
-        }
-
-        private static double LiquidWaterDensityKgPerM3(double temperatureC)
-        {
-            double delta = temperatureC - 3.9863;
-            return 999.972 * (1.0 - ((temperatureC + 288.9414) /
-                (508929.2 * (temperatureC + 68.12963))) * delta * delta);
         }
 
         private static double Clamp(double value, double min, double max) =>

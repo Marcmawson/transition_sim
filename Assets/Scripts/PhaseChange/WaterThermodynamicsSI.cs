@@ -21,6 +21,31 @@ namespace PhaseTransition.Physics
         private static readonly double[] SatVaporizationJPerKg =
             { 2500900, 2453500, 2406000, 2357700, 2308100, 2256400 };
 
+        /// <summary>
+        /// IAPWS R1-76(2014) surface tension of pure water in equilibrium with its vapour.
+        /// Returns N/m; valid from the triple point to the critical point (and reasonably
+        /// extrapolatable to -25 C for supercooled water).
+        /// </summary>
+        public static double WaterSurfaceTensionNPerM(double temperatureK)
+        {
+            const double criticalTemperatureK = 647.096;
+            const double b = -0.625;
+            const double exponent = 1.256;
+            const double coefficientNPerM = 0.2358;
+            double tau = 1.0 - temperatureK / criticalTemperatureK;
+            if (tau <= 0.0) return 0.0;
+            return coefficientNPerM * Math.Pow(tau, exponent) * (1.0 + b * tau);
+        }
+
+        /// <summary>Near-atmospheric liquid-water density correlation, kg/m^3, for 0..100 C.</summary>
+        public static double LiquidDensityKgPerM3(double temperatureC)
+        {
+            double t = Math.Max(0.0, Math.Min(100.0, temperatureC));
+            double delta = t - 3.9863;
+            return 999.972 * (1.0 - ((t + 288.9414) /
+                (508929.2 * (t + 68.12963))) * delta * delta);
+        }
+
         public enum Phase
         {
             SolidIce,

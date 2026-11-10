@@ -34,6 +34,9 @@ namespace PhaseTransition.Physics
         [Min(0.0005f)] public float vapourBubbleDiameterM = 0.005f;
         [Min(0.1f)] public float vapourBubbleDragCoefficient = 1.0f;
 
+        [Header("Liquid-air interface")]
+        [Range(0f, 180f)] public float glassWaterContactAngleDegrees = 90f;
+
         public struct CellState
         {
             public bool containsSample;
@@ -78,6 +81,7 @@ namespace PhaseTransition.Physics
         private int[] bottomContactRows;
         private LiquidConvection2D liquidFlow;
         private double[,] liquidFractionBuffer;
+        private double[,] liquidVolumeFractionBuffer;
         private double[,] iceFractionBuffer;
         private double[,] temperatureBuffer;
         private bool initialized;
@@ -99,10 +103,17 @@ namespace PhaseTransition.Physics
             double minimumCellSize = System.Math.Min(dx, dy);
             double gravityStep = System.Math.Sqrt(0.5 * minimumCellSize /
                 WaterThermodynamicsSI.StandardGravity);
+            // Explicit capillary-force stability limit for the finest water interface.
+            // 0.076 N/m is a conservative upper bound for pure water over this experiment's range.
+            const double maximumWaterSurfaceTensionNPerM = 0.076;
+            double capillaryStep = System.Math.Sqrt(
+                LiquidDensityKgPerM3 * minimumCellSize * minimumCellSize * minimumCellSize /
+                (System.Math.PI * maximumWaterSurfaceTensionNPerM));
             double timeRemaining = Time.deltaTime;
             while (timeRemaining > 0.0)
             {
                 double dt = System.Math.Min(timeRemaining, System.Math.Min(0.025, gravityStep));
+                dt = System.Math.Min(dt, capillaryStep);
                 double maximumSpeed = liquidFlow != null ? liquidFlow.MaximumSpeedMS : 0.0;
                 if (maximumSpeed > 1e-8)
                     dt = System.Math.Min(dt, 0.4 * minimumCellSize / maximumSpeed);
@@ -147,6 +158,7 @@ namespace PhaseTransition.Physics
             buoyancyIceEnergyJ = new double[gridWidth, gridHeight];
             bottomContactRows = new int[gridWidth];
             liquidFractionBuffer = new double[gridWidth, gridHeight];
+            liquidVolumeFractionBuffer = new double[gridWidth, gridHeight];
             iceFractionBuffer = new double[gridWidth, gridHeight];
             temperatureBuffer = new double[gridWidth, gridHeight];
             liquidFlow = new LiquidConvection2D(gridWidth, gridHeight);
@@ -201,17 +213,27 @@ namespace PhaseTransition.Physics
         private void AdvanceThermalStep(double dt)
         {
             RebuildCellStatesAndTotals();
+            double dx = beakerWidthM / gridWidth;
+            double dy = beakerHeightM / gridHeight;
             for (int y = 0; y < gridHeight; y++)
                 for (int x = 0; x < gridWidth; x++)
                 {
                     liquidFractionBuffer[x, y] = cellThermo[x, y].liquidMassFraction;
+                    double flowCellVolume = dx * dy * beakerDepthM;
+                    double liquidMass = cellMassKg[x, y] * cellThermo[x, y].liquidMassFraction;
+                    double liquidDensity = WaterThermodynamicsSI.LiquidDensityKgPerM3(
+                        cellThermo[x, y].temperatureC);
+                    liquidVolumeFractionBuffer[x, y] = System.Math.Min(1.0,
+                        liquidMass / (liquidDensity * flowCellVolume));
                     iceFractionBuffer[x, y] = cellThermo[x, y].iceMassFraction;
                     temperatureBuffer[x, y] = cellThermo[x, y].temperatureC;
                 }
 
-            double dx = beakerWidthM / gridWidth;
-            double dy = beakerHeightM / gridHeight;
-            liquidFlow.Advance(liquidFractionBuffer, iceFractionBuffer, temperatureBuffer, dx, dy, dt);
+            double interfaceTemperatureC = EstimateInterfaceTemperatureC();
+            double surfaceTension = WaterThermodynamicsSI.WaterSurfaceTensionNPerM(
+                interfaceTemperatureC + 273.15);
+            liquidFlow.Advance(liquidVolumeFractionBuffer, iceFractionBuffer, temperatureBuffer,
+                dx, dy, dt, surfaceTension, glassWaterContactAngleDegrees);
             MaximumLiquidSpeedMS = 0.0;
             MaximumLiquidDivergencePerS = liquidFlow.MaximumDivergencePerS;
             for (int y = 0; y < gridHeight; y++)
@@ -292,6 +314,26 @@ namespace PhaseTransition.Physics
             RebuildCellStatesAndTotals();
             ApplyIceBuoyancy();
             RebuildCellStatesAndTotals();
+        }
+
+        private double EstimateInterfaceTemperatureC()
+        {
+            double sum = 0.0;
+            int count = 0;
+            for (int y = 0; y < gridHeight; y++)
+                for (int x = 0; x < gridWidth; x++)
+                {
+                    double alpha = liquidVolumeFractionBuffer[x, y];
+                    bool nearInterface = alpha > 0.0 && alpha < 1.0;
+                    if (x > 0) nearInterface |= System.Math.Abs(alpha - liquidVolumeFractionBuffer[x - 1, y]) > 0.0;
+                    if (x + 1 < gridWidth) nearInterface |= System.Math.Abs(alpha - liquidVolumeFractionBuffer[x + 1, y]) > 0.0;
+                    if (y > 0) nearInterface |= System.Math.Abs(alpha - liquidVolumeFractionBuffer[x, y - 1]) > 0.0;
+                    if (y + 1 < gridHeight) nearInterface |= System.Math.Abs(alpha - liquidVolumeFractionBuffer[x, y + 1]) > 0.0;
+                    if (!nearInterface || alpha <= 0.0) continue;
+                    sum += temperatureBuffer[x, y];
+                    count++;
+                }
+            return count > 0 ? sum / count : 20.0;
         }
 
         private void AdvectLiquidMassAndEnthalpy(double dt, double dx, double dy)
