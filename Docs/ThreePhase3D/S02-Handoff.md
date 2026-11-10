@@ -2,7 +2,7 @@
 
 Branch: `physics3d/s02-materials`, based on S01 `260f9a4a376b4eb81a3e188a944eb573eb75e1cd`.
 
-**S02 is incomplete.** This checkpoint rebuilds the material layer after the previous unsaved work was lost. It supplies CPU references, bounded FP32 water tables and a GPU verification command. It does not advance fluid, thermal or phase geometry in the scene. Existing scenes, renderer settings, packages and legacy solvers are preserved.
+**S02 is incomplete.** Latest material additions and current limits: [S02-Expanded-Materials.md](S02-Expanded-Materials.md). This checkpoint rebuilds the material layer after the previous unsaved work was lost. It supplies CPU references, bounded FP32 water tables and a GPU verification command. It does not advance fluid, thermal or phase geometry in the scene. Existing scenes, renderer settings, packages and legacy solvers are preserved.
 
 ## Implemented
 
@@ -25,13 +25,14 @@ Branch: `physics3d/s02-materials`, based on S01 `260f9a4a376b4eb81a3e188a944eb57
 | Homogeneous water reference seam | 273.15–1273 K, density 1e-12–1300 kg/m3 | Not a global stable-phase selector; unstable states and immediate critical singular region rejected |
 | Water viscosity/conductivity | 273.16–600 K, 611.66 Pa–5 MPa | Requires a thermodynamic state; wider background routines exist for official checks only |
 | Ice T,p | 200–273.16 K, 611.657 Pa–5 MPa | Below Ice Ih melting curve; broader reference seam is separately named |
+| Yen pure-polycrystalline conductivity | 200-273.15 K | Explicit model selection; broad sourced regression, not sample-specific validation |
 | Bonales conductivity | 233.15–268.15 K | Explicit `BonalesSlowFrozenCorrected2018` selection; no extrapolation |
 | Humid-gas T,p,Y | 273.16–473 K, 80 kPa–1 MPa, Y in [0,1] | Stable gas tested against the liquid chemical potential; liquid-contact equilibrium is solved directly. Mixture transport is more restricted: 80–120 kPa and Y<=0.10 or pure vapour. |
 | Massman dilute-air diffusion | 273.16–373.15 K, 80–101.325 kPa, Y at most 0.02 | Composition and pressure bounds are conservative project restrictions, not new measured source limits; no steam-rich-plume claim |
 | FP32 water tables | 101325 Pa exactly | Liquid 274–373 K, vapour 374–600 K; no pressure interpolation and no interpolation across phase gap |
 | DURAN | Published single-state density and conductivity only | Heat capacity, enthalpy and entropy throw rather than borrowing another glass's data |
 
-Homogeneous reference seams are for fixed named checks. They must not be used to bypass production validity checks in a coupled solver. The near-melting sub-273.16 K liquid branch, ice-contact humid equilibrium and steam-rich transport still need explicit support before the full experiment is enabled. Background transport routines do not claim that an omitted critical enhancement is zero at arbitrary states.
+Homogeneous reference seams are for fixed named checks. They must not be used to bypass production validity checks in a coupled solver. The near-melting sub-273.16 K liquid branch and production steam-rich transport still need explicit support before the full experiment is enabled. Background transport routines do not claim that an omitted critical enhancement is zero at arbitrary states.
 
 ## Sources, equations and licences
 
@@ -65,9 +66,9 @@ The current evidence index demotes stale linked S01 run claims rather than weake
 ## Remaining work before S02 acceptance
 
 1. Improve steam-rich humid-mixture transport. Dry-air reference transport and bounded mixture transport are implemented in the continuation; production Y>0.10 (except pure vapour) is rejected because modern reference comparisons expose material model disagreement.
-2. Add ice-contact humid equilibrium and an independent G11 fugacity cross-check. Liquid-contact nonideal equilibrium and supersaturation guards now use G8-10 chemical potentials. Extend diffusion beyond the restricted dilute, near-STP regime only with evidence.
-3. Source an ice-conductivity model covering the chosen initial state through melting, with preparation and uncertainty recorded. The corrected Bonales option covers only its measured subrange.
-4. Extend water-table pressure/temperature coverage and add ice/gas tables with independent error checks. The user's original two-water-table GPU run passed 1742 comparisons on RTX 5060/Direct3D11 and is preserved in ValidationRuns/s02-gpu-user-20261110T230708. It does not validate future tables or gas/continuum solvers.
+2. Ice-contact humid equilibrium and G11 official/cross-model checks are implemented. Explicitly selected ASHRAE diffusion tables extend temperature coverage to 203.15-473 K, while composition remains dilute (Y<=0.02). Steam-rich diffusion remains open.
+3. Explicit Yen1981 pure-polycrystalline ice conductivity now covers 200-273.15 K. Preparation scatter and the absence of a supplied uncertainty bound remain documented; the Bonales option keeps its original subrange.
+4. Seven additional T,p water/ice/fixed-composition gas surfaces pass CPU interpolation checks; measured execution of the new GPU shader remains pending because batch Unity licensing failed. The user's original two-water-table GPU run passed 1742 comparisons on RTX 5060/Direct3D11 and is preserved in ValidationRuns/s02-gpu-user-20261110T230708. It does not validate future tables or gas/continuum solvers.
 5. Complete derivative/transport-enhancement check coverage, coherent phase enthalpy-difference checks at the required interfaces and reviewed evidence mappings. DURAN and tripod apparatus data remain separately blocked.
 
 Rollback: switch to `physics3d/s01-evidence`. This branch introduces no scene wiring or runtime water. S03 geometry/resource work can be designed independently, but S02 acceptance is not claimed.
