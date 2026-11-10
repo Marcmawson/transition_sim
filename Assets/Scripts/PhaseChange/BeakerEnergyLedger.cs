@@ -216,20 +216,23 @@ namespace PhaseTransition.Physics
             {
                 condensedVolume = 0.0;
                 for (int y = 0; y < gridHeight; y++)
+                {
+                    double cellCentreHeight = (y + 0.5) * dy;
+                    double depthBelowSurface = System.Math.Max(0.0, estimatedLevel - cellCentreHeight);
+                    double localPressure = WaterThermodynamicsSI.HydrostaticPressurePa(
+                        AmbientPressurePa, depthBelowSurface, LiquidDensityKgPerM3);
+                    double localSaturationTemperature = WaterThermodynamicsSI.SaturationTemperatureK(localPressure);
                     for (int x = 0; x < gridWidth; x++)
                     {
                         double m = cellMassKg[x, y];
                         if (m <= 0.0) continue;
-                        double cellCentreHeight = (y + 0.5) * dy;
-                        double depthBelowSurface = System.Math.Max(0.0, estimatedLevel - cellCentreHeight);
-                        double localPressure = WaterThermodynamicsSI.HydrostaticPressurePa(
-                            AmbientPressurePa, depthBelowSurface, LiquidDensityKgPerM3);
                         var s = WaterThermodynamicsSI.StateFromSpecificEnthalpy(
-                            cellEnthalpyJPerKg[x, y], localPressure);
+                            cellEnthalpyJPerKg[x, y], localPressure, localSaturationTemperature);
                         cellThermo[x, y] = s;
                         condensedVolume += m * (s.iceMassFraction / IceDensityKgPerM3 +
                                                   s.liquidMassFraction / LiquidDensityKgPerM3);
                     }
+                }
                 estimatedLevel = System.Math.Min(beakerHeightM,
                     condensedVolume / (beakerWidthM * beakerDepthM));
             }

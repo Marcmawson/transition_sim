@@ -123,7 +123,15 @@ namespace PhaseTransition.Physics
         /// </summary>
         public static EquilibriumState StateFromSpecificEnthalpy(double enthalpyJPerKg, double pressurePa)
         {
-            double tsatK = SaturationTemperatureK(pressurePa);
+            return StateFromSpecificEnthalpy(enthalpyJPerKg, pressurePa,
+                SaturationTemperatureK(pressurePa));
+        }
+
+        /// <summary>Cell overload for callers that share one saturation state across a row or region.</summary>
+        public static EquilibriumState StateFromSpecificEnthalpy(double enthalpyJPerKg,
+            double pressurePa, double saturationTemperatureK)
+        {
+            double tsatK = saturationTemperatureK;
             double tsatC = tsatK - 273.15;
             if (tsatC < 0.0 || tsatC > 110.0)
                 throw new ArgumentOutOfRangeException(nameof(pressurePa), "The beaker approximation supports saturation temperatures from 0 to 110 C.");
@@ -139,7 +147,7 @@ namespace PhaseTransition.Physics
                 // Invert the monotonic ice enthalpy correlation with bisection.
                 double target = enthalpyJPerKg;
                 double lo = 170.0, hi = 273.15;
-                for (int i = 0; i < 64; i++)
+                for (int i = 0; i < 40; i++)
                 {
                     double mid = 0.5 * (lo + hi);
                     if (IceSpecificEnthalpyJPerKg(mid) < target) lo = mid;
