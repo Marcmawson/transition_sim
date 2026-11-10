@@ -19,6 +19,7 @@ StructuredBuffer<float> UAdvected;
 StructuredBuffer<float> VAdvected;
 RWStructuredBuffer<float> UStar;
 RWStructuredBuffer<float> VStar;
+StructuredBuffer<float> VelocityDampingRate;
 StructuredBuffer<float> PressureRead;
 RWStructuredBuffer<float> PressureInOut;
 RWStructuredBuffer<float> FluxX;
@@ -33,7 +34,9 @@ float Dt;
 float Density;
 float Viscosity;
 float Gravity;
+float DampingCurveMaxSpeedMPerS;
 int Colour;
+static const int DampingCurveSamples = 64;
 static const float PressureRelaxation = 1.75;
 
 static const float LiquidCutoff = 0.001;
@@ -123,6 +126,14 @@ float SampleVAdv(float gx, float gy)
     return lerp(a, b, ty);
 }
 
+float DampingRateAtSpeed(float speed)
+{
+    float curvePosition = saturate(speed / max(DampingCurveMaxSpeedMPerS, 0.1)) * (DampingCurveSamples - 1);
+    int lower = (int)floor(curvePosition);
+    int upper = min(DampingCurveSamples - 1, lower + 1);
+    return max(0.0, lerp(VelocityDampingRate[lower], VelocityDampingRate[upper], curvePosition - lower));
+}
+
 [numthreads(8, 8, 1)]
 void AdvectU(uint3 id : SV_DispatchThreadID)
 {
@@ -136,7 +147,7 @@ void AdvectU(uint3 id : SV_DispatchThreadID)
     }
     float vx = URead[index];
     float vy = SampleV((float)x - 0.5, (float)y + 0.5);
-    UWrite[index] = SampleU(x - vx * Dt / Dx, y - vy * Dt / Dy - 0.5);
+    UWrite[index] = SampleU(x - vx * Dt / Dx, y - vy * Dt / Dy);
 }
 
 [numthreads(8, 8, 1)]
@@ -169,7 +180,10 @@ void ApplyForces(uint3 id : SV_DispatchThreadID)
             float c = UAdvected[index];
             float lap = (UAdvAt(x - 1, y, c) - 2.0 * c + UAdvAt(x + 1, y, c)) / (Dx * Dx) +
                         (UAdvAt(x, y - 1, c) - 2.0 * c + UAdvAt(x, y + 1, c)) / (Dy * Dy);
-            UStar[index] = c + Viscosity * Dt * lap;
+            float viscousU = c + Viscosity * Dt * lap;
+            float localV = SampleVAdv((float)x - 0.5, (float)y + 0.5);
+            float decay = exp(-DampingRateAtSpeed(length(float2(viscousU, localV))) * Dt);
+            UStar[index] = viscousU * decay;
         }
     }
     if (x < Width && y <= Height)
@@ -184,7 +198,10 @@ void ApplyForces(uint3 id : SV_DispatchThreadID)
             float c = VAdvected[index];
             float lap = (VAdvAt(x - 1, y, c) - 2.0 * c + VAdvAt(x + 1, y, c)) / (Dx * Dx) +
                         (VAdvAt(x, y - 1, c) - 2.0 * c + VAdvAt(x, y + 1, c)) / (Dy * Dy);
-            VStar[index] = c + Viscosity * Dt * lap - Gravity * Dt;
+            float viscousV = c + Viscosity * Dt * lap - Gravity * Dt;
+            float localU = SampleUAdv((float)x + 0.5, (float)y - 0.5);
+            float decay = exp(-DampingRateAtSpeed(length(float2(localU, viscousV))) * Dt);
+            VStar[index] = viscousV * decay;
         }
     }
 }

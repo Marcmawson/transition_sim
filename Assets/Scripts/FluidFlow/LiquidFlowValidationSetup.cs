@@ -31,11 +31,19 @@ namespace PhaseTransition.FluidFlow
         [Range(1, 16)] public int maxSubstepsPerFrame = 8;
         [Range(10, 100)] public int pressureIterations = 40;
 
+        [Header("Velocity damping curve")]
+        [Tooltip("Speed in m/s (x) mapped to additional velocity decay rate in 1/s (y). Zero preserves the solver's existing viscosity and numerical damping only.")]
+        public AnimationCurve velocityDampingRatePerSecond = new AnimationCurve(
+            new Keyframe(0f, 0f), new Keyframe(5f, 0f));
+        [Min(0.1f)] public float dampingCurveMaxSpeedMPerS = 5f;
+
         private const float Gravity = 9.80665f;
         private const int Threads = 8;
+        private const int DampingCurveSamples = 64;
         private ComputeBuffer liquid, liquidNext;
         private ComputeBuffer u, v, uAdvected, vAdvected, uStar, vStar;
         private ComputeBuffer pressureA, pressureB, fluxX, fluxY;
+        private ComputeBuffer dampingCurveLut;
         private RenderTexture display;
         private int kAdvectU, kAdvectV, kApplyForces, kPressure, kProjectU, kProjectV;
         private int kFluxX, kFluxY, kUpdateLiquid, kRender;
@@ -45,6 +53,7 @@ namespace PhaseTransition.FluidFlow
         private float maximumU, maximumV, maximumDivergence;
         private float liquidVolumeM3;
         private Case lastCase;
+        private int dampingCurveHash = int.MinValue;
 
         private int CellCount => gridWidth * gridHeight;
         private int UCount => (gridWidth + 1) * gridHeight;
@@ -67,6 +76,7 @@ namespace PhaseTransition.FluidFlow
         {
             if (!initialized) return;
             if (lastCase != validationCase) ResetSolver();
+            UpdateDampingCurveLut();
             if (!isPaused) AdvanceFrame(Time.unscaledDeltaTime * simulationRate);
             MeasureDiagnostics();
             RenderLiquid();
@@ -88,6 +98,7 @@ namespace PhaseTransition.FluidFlow
             pressureB = Buffer(CellCount);
             fluxX = Buffer((gridWidth + 1) * gridHeight);
             fluxY = Buffer(gridWidth * (gridHeight + 1));
+            dampingCurveLut = Buffer(DampingCurveSamples);
 
             display = new RenderTexture(gridWidth, gridHeight, 0, RenderTextureFormat.ARGB32)
             {
@@ -128,6 +139,7 @@ namespace PhaseTransition.FluidFlow
             fluidSolver.SetBuffer(kApplyForces, "VAdvected", vAdvected);
             fluidSolver.SetBuffer(kApplyForces, "UStar", uStar);
             fluidSolver.SetBuffer(kApplyForces, "VStar", vStar);
+            fluidSolver.SetBuffer(kApplyForces, "VelocityDampingRate", dampingCurveLut);
             fluidSolver.SetBuffer(kPressure, "LiquidRead", liquid);
             fluidSolver.SetBuffer(kPressure, "UStar", uStar);
             fluidSolver.SetBuffer(kPressure, "VStar", vStar);
@@ -153,6 +165,7 @@ namespace PhaseTransition.FluidFlow
             fluidSolver.SetTexture(kRender, "Output", display);
 
             initialized = true;
+            UpdateDampingCurveLut();
             ResetSolver();
         }
 
@@ -213,6 +226,7 @@ namespace PhaseTransition.FluidFlow
         private void AdvanceStep(float dt)
         {
             fluidSolver.SetFloat("Dt", dt);
+            fluidSolver.SetFloat("DampingCurveMaxSpeedMPerS", dampingCurveMaxSpeedMPerS);
             Dispatch(kAdvectU, gridWidth + 1, gridHeight);
             Dispatch(kAdvectV, gridWidth, gridHeight + 1);
             Dispatch(kApplyForces, gridWidth + 1, gridHeight + 1);
@@ -254,6 +268,36 @@ namespace PhaseTransition.FluidFlow
         private void Dispatch(int kernel, int width, int height) =>
             fluidSolver.Dispatch(kernel, Mathf.CeilToInt(width / (float)Threads),
                 Mathf.CeilToInt(height / (float)Threads), 1);
+
+        private void UpdateDampingCurveLut()
+        {
+            if (velocityDampingRatePerSecond == null)
+                velocityDampingRatePerSecond = new AnimationCurve(new Keyframe(0f, 0f), new Keyframe(5f, 0f));
+            if (dampingCurveLut == null) return;
+            var keys = velocityDampingRatePerSecond.keys;
+            unchecked
+            {
+                int hash = dampingCurveMaxSpeedMPerS.GetHashCode();
+                for (int i = 0; i < keys.Length; i++)
+                {
+                    hash = hash * 31 + keys[i].time.GetHashCode();
+                    hash = hash * 31 + keys[i].value.GetHashCode();
+                    hash = hash * 31 + keys[i].inTangent.GetHashCode();
+                    hash = hash * 31 + keys[i].outTangent.GetHashCode();
+                }
+                if (hash == dampingCurveHash) return;
+                dampingCurveHash = hash;
+            }
+
+            var samples = new float[DampingCurveSamples];
+            float maxSpeed = Mathf.Max(0.1f, dampingCurveMaxSpeedMPerS);
+            for (int i = 0; i < samples.Length; i++)
+            {
+                float speed = maxSpeed * i / (samples.Length - 1f);
+                samples[i] = Mathf.Max(0f, velocityDampingRatePerSecond.Evaluate(speed));
+            }
+            dampingCurveLut.SetData(samples);
+        }
 
         private void MeasureDiagnostics()
         {
@@ -361,6 +405,7 @@ namespace PhaseTransition.FluidFlow
         {
             Release(liquid); Release(liquidNext); Release(u); Release(v); Release(uAdvected); Release(vAdvected);
             Release(uStar); Release(vStar); Release(pressureA); Release(pressureB); Release(fluxX); Release(fluxY);
+            Release(dampingCurveLut);
             if (display != null) { display.Release(); Destroy(display); }
         }
 
