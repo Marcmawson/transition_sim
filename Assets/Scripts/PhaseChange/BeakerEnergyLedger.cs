@@ -13,13 +13,14 @@ namespace PhaseTransition.Physics
     public sealed class BeakerEnergyLedger : MonoBehaviour
     {
         [Header("Initial sample")]
-        [Min(0.001f)] public float sampleMassKg = 0.10f;
+        [Min(0.001f)] public float sampleMassKg = 0.25f;
+        [Range(0.5f, 1f)] public float initialIceWidthFraction = 0.65f;
         [Range(-100f, 0f)] public float initialIceTemperatureC = -50f;
 
         [Header("Beaker geometry (SI)")]
         [Min(0.01f)] public float beakerWidthM = 0.10f;
         [Min(0.005f)] public float beakerDepthM = 0.025f;
-        [Min(0.02f)] public float beakerHeightM = 0.12f;
+        [Min(0.02f)] public float beakerHeightM = 0.24f;
         [Range(4, 64)] public int gridWidth = 20;
         [Range(4, 96)] public int gridHeight = 24;
 
@@ -135,18 +136,21 @@ namespace PhaseTransition.Physics
             double dy = beakerHeightM / gridHeight;
             double cellVolumeM3 = dx * dy * beakerDepthM;
             double iceMassPerFullCell = IceDensityKgPerM3 * cellVolumeM3;
-            double maximumMass = iceMassPerFullCell * gridWidth * gridHeight;
+            int occupiedColumns = Mathf.Clamp(Mathf.RoundToInt(gridWidth * initialIceWidthFraction), 1, gridWidth);
+            double maximumMass = iceMassPerFullCell * occupiedColumns * gridHeight;
             sampleMassKg = (float)System.Math.Min(System.Math.Max(0.001, sampleMassKg), maximumMass);
 
+            int firstOccupiedColumn = (gridWidth - occupiedColumns) / 2;
             double numberOfFullCellEquivalents = sampleMassKg / iceMassPerFullCell;
-            int fullRows = Mathf.Min(gridHeight, (int)(numberOfFullCellEquivalents / gridWidth));
-            double partialRowFraction = numberOfFullCellEquivalents / gridWidth - fullRows;
+            int fullRows = Mathf.Min(gridHeight, (int)(numberOfFullCellEquivalents / occupiedColumns));
+            double partialRowFraction = numberOfFullCellEquivalents / occupiedColumns - fullRows;
             double initialEnthalpy = WaterThermodynamicsSI.IceSpecificEnthalpyJPerKg(
                 initialIceTemperatureC + 273.15);
 
             for (int y = 0; y < gridHeight; y++)
                 for (int x = 0; x < gridWidth; x++)
                 {
+                    if (x < firstOccupiedColumn || x >= firstOccupiedColumn + occupiedColumns) continue;
                     double rowFill = y < fullRows ? 1.0 : (y == fullRows ? partialRowFraction : 0.0);
                     if (rowFill <= 0.0) continue;
                     cellMassKg[x, y] = iceMassPerFullCell * rowFill;

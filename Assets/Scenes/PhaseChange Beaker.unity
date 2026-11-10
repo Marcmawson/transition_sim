@@ -259,8 +259,10 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7af4e8b77b9a4d5b8cf544b38a5a1011, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  sampleMassKg: 0.1
+  sampleMassKg: 0.25
+  initialIceWidthFraction: 0.65
   initialIceTemperatureC: -50
+  beakerHeightM: 0.24
   heaterPowerW: 500
   heaterEnabled: 1
   altitudeM: 0
