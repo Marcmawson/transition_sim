@@ -1,0 +1,327 @@
+#pragma kernel AdvectU
+#pragma kernel AdvectV
+#pragma kernel ApplyForces
+#pragma kernel PressureSOR
+#pragma kernel ProjectU
+#pragma kernel ProjectV
+#pragma kernel ComputeFluxX
+#pragma kernel ComputeFluxY
+#pragma kernel UpdateLiquid
+#pragma kernel RenderLiquid
+
+StructuredBuffer<float> LiquidRead;
+RWStructuredBuffer<float> LiquidWrite;
+StructuredBuffer<float> URead;
+StructuredBuffer<float> VRead;
+RWStructuredBuffer<float> UWrite;
+RWStructuredBuffer<float> VWrite;
+StructuredBuffer<float> UAdvected;
+StructuredBuffer<float> VAdvected;
+RWStructuredBuffer<float> UStar;
+RWStructuredBuffer<float> VStar;
+StructuredBuffer<float> PressureRead;
+RWStructuredBuffer<float> PressureInOut;
+RWStructuredBuffer<float> FluxX;
+RWStructuredBuffer<float> FluxY;
+RWTexture2D<float4> Output;
+
+int Width;
+int Height;
+float Dx;
+float Dy;
+float Dt;
+float Density;
+float Viscosity;
+float Gravity;
+int Colour;
+static const float PressureRelaxation = 1.75;
+
+static const float LiquidCutoff = 0.001;
+static const float FluxCutoff = 0.01;
+
+int CellIndex(int x, int y) { return x + y * Width; }
+int UIndex(int x, int y) { return x + y * (Width + 1); }
+int VIndex(int x, int y) { return x + y * Width; }
+
+float FAt(int x, int y)
+{
+    if (x < 0 || x >= Width || y < 0 || y >= Height) return 0.0;
+    return LiquidRead[CellIndex(x, y)];
+}
+
+float UAt(int x, int y)
+{
+    if (x < 0 || x > Width || y < 0 || y >= Height) return 0.0;
+    return URead[UIndex(x, y)];
+}
+
+float VAt(int x, int y)
+{
+    if (x < 0 || x >= Width || y < 0 || y > Height) return 0.0;
+    return VRead[VIndex(x, y)];
+}
+
+float UAdvAt(int x, int y, float centre)
+{
+    if (x < 0 || x > Width || y < 0 || y >= Height) return centre;
+    if (x > 0 && x < Width && FAt(x - 1, y) <= FluxCutoff && FAt(x, y) <= FluxCutoff) return centre;
+    return UAdvected[UIndex(x, y)];
+}
+
+float VAdvAt(int x, int y, float centre)
+{
+    if (x < 0 || x >= Width || y < 0 || y > Height) return centre;
+    if (y > 0 && y < Height && FAt(x, y - 1) <= FluxCutoff && FAt(x, y) <= FluxCutoff) return centre;
+    return VAdvected[VIndex(x, y)];
+}
+
+float SampleU(float gx, float gy)
+{
+    gx = clamp(gx, 0.0, (float)Width);
+    gy = clamp(gy, 0.0, (float)Height - 1.0);
+    int x0 = (int)floor(gx), y0 = (int)floor(gy);
+    int x1 = min(Width, x0 + 1), y1 = min(Height - 1, y0 + 1);
+    float tx = gx - x0, ty = gy - y0;
+    float a = lerp(UAt(x0, y0), UAt(x1, y0), tx);
+    float b = lerp(UAt(x0, y1), UAt(x1, y1), tx);
+    return lerp(a, b, ty);
+}
+
+float SampleV(float gx, float gy)
+{
+    gx = clamp(gx, 0.0, (float)Width - 1.0);
+    gy = clamp(gy, 0.0, (float)Height);
+    int x0 = (int)floor(gx), y0 = (int)floor(gy);
+    int x1 = min(Width - 1, x0 + 1), y1 = min(Height, y0 + 1);
+    float tx = gx - x0, ty = gy - y0;
+    float a = lerp(VAt(x0, y0), VAt(x1, y0), tx);
+    float b = lerp(VAt(x0, y1), VAt(x1, y1), tx);
+    return lerp(a, b, ty);
+}
+
+float SampleUAdv(float gx, float gy)
+{
+    gx = clamp(gx, 0.0, (float)Width);
+    gy = clamp(gy, 0.0, (float)Height - 1.0);
+    int x0 = (int)floor(gx), y0 = (int)floor(gy);
+    int x1 = min(Width, x0 + 1), y1 = min(Height - 1, y0 + 1);
+    float tx = gx - x0, ty = gy - y0;
+    float a = lerp(UAdvAt(x0, y0, 0.0), UAdvAt(x1, y0, 0.0), tx);
+    float b = lerp(UAdvAt(x0, y1, 0.0), UAdvAt(x1, y1, 0.0), tx);
+    return lerp(a, b, ty);
+}
+
+float SampleVAdv(float gx, float gy)
+{
+    gx = clamp(gx, 0.0, (float)Width - 1.0);
+    gy = clamp(gy, 0.0, (float)Height);
+    int x0 = (int)floor(gx), y0 = (int)floor(gy);
+    int x1 = min(Width - 1, x0 + 1), y1 = min(Height, y0 + 1);
+    float tx = gx - x0, ty = gy - y0;
+    float a = lerp(VAdvAt(x0, y0, 0.0), VAdvAt(x1, y0, 0.0), tx);
+    float b = lerp(VAdvAt(x0, y1, 0.0), VAdvAt(x1, y1, 0.0), tx);
+    return lerp(a, b, ty);
+}
+
+[numthreads(8, 8, 1)]
+void AdvectU(uint3 id : SV_DispatchThreadID)
+{
+    int x = id.x, y = id.y;
+    if (x > Width || y >= Height) return;
+    int index = UIndex(x, y);
+    if (x == 0 || x == Width || (FAt(x - 1, y) <= FluxCutoff && FAt(x, y) <= FluxCutoff))
+    {
+        UWrite[index] = 0.0;
+        return;
+    }
+    float vx = URead[index];
+    float vy = SampleV((float)x - 0.5, (float)y + 0.5);
+    UWrite[index] = SampleU(x - vx * Dt / Dx, y - vy * Dt / Dy - 0.5);
+}
+
+[numthreads(8, 8, 1)]
+void AdvectV(uint3 id : SV_DispatchThreadID)
+{
+    int x = id.x, y = id.y;
+    if (x >= Width || y > Height) return;
+    int index = VIndex(x, y);
+    if (y == 0 || ((y < Height ? FAt(x, y) : 0.0) <= FluxCutoff && (y > 0 ? FAt(x, y - 1) : 0.0) <= FluxCutoff))
+    {
+        VWrite[index] = 0.0;
+        return;
+    }
+    float vx = SampleU((float)x + 0.5, (float)y - 0.5);
+    float vy = VRead[index];
+    VWrite[index] = SampleV(x - vx * Dt / Dx, y - vy * Dt / Dy);
+}
+
+[numthreads(8, 8, 1)]
+void ApplyForces(uint3 id : SV_DispatchThreadID)
+{
+    int x = id.x, y = id.y;
+    if (x <= Width && y < Height)
+    {
+        int index = UIndex(x, y);
+        if (x == 0 || x == Width || (FAt(x - 1, y) <= FluxCutoff && FAt(x, y) <= FluxCutoff))
+            UStar[index] = 0.0;
+        else
+        {
+            float c = UAdvected[index];
+            float lap = (UAdvAt(x - 1, y, c) - 2.0 * c + UAdvAt(x + 1, y, c)) / (Dx * Dx) +
+                        (UAdvAt(x, y - 1, c) - 2.0 * c + UAdvAt(x, y + 1, c)) / (Dy * Dy);
+            UStar[index] = c + Viscosity * Dt * lap;
+        }
+    }
+    if (x < Width && y <= Height)
+    {
+        int index = VIndex(x, y);
+        float below = y > 0 ? FAt(x, y - 1) : 0.0;
+        float above = y < Height ? FAt(x, y) : 0.0;
+        if (y == 0 || (below <= FluxCutoff && above <= FluxCutoff))
+            VStar[index] = 0.0;
+        else
+        {
+            float c = VAdvected[index];
+            float lap = (VAdvAt(x - 1, y, c) - 2.0 * c + VAdvAt(x + 1, y, c)) / (Dx * Dx) +
+                        (VAdvAt(x, y - 1, c) - 2.0 * c + VAdvAt(x, y + 1, c)) / (Dy * Dy);
+            VStar[index] = c + Viscosity * Dt * lap - Gravity * Dt;
+        }
+    }
+}
+
+[numthreads(8, 8, 1)]
+void PressureSOR(uint3 id : SV_DispatchThreadID)
+{
+    int x = id.x, y = id.y;
+    if (x >= Width || y >= Height) return;
+    if (((x + y) & 1) != Colour) return;
+    int cell = CellIndex(x, y);
+    if (LiquidRead[cell] <= LiquidCutoff)
+    {
+        PressureInOut[cell] = 0.0;
+        return;
+    }
+
+    float sum = 0.0, diagonal = 0.0;
+    float ix2 = 1.0 / (Dx * Dx), iy2 = 1.0 / (Dy * Dy);
+    if (x > 0)
+    {
+        diagonal += ix2;
+        if (FAt(x - 1, y) > LiquidCutoff) sum += PressureInOut[CellIndex(x - 1, y)] * ix2;
+    }
+    if (x + 1 < Width)
+    {
+        diagonal += ix2;
+        if (FAt(x + 1, y) > LiquidCutoff) sum += PressureInOut[CellIndex(x + 1, y)] * ix2;
+    }
+    if (y > 0)
+    {
+        diagonal += iy2;
+        if (FAt(x, y - 1) > LiquidCutoff) sum += PressureInOut[CellIndex(x, y - 1)] * iy2;
+    }
+    if (y + 1 < Height)
+    {
+        diagonal += iy2;
+        if (FAt(x, y + 1) > LiquidCutoff) sum += PressureInOut[CellIndex(x, y + 1)] * iy2;
+    }
+    else diagonal += iy2; // open top: atmospheric gauge pressure
+
+    float divergence = (UStar[UIndex(x + 1, y)] - UStar[UIndex(x, y)]) / Dx +
+                       (VStar[VIndex(x, y + 1)] - VStar[VIndex(x, y)]) / Dy;
+    float rhs = Density * divergence / Dt;
+    float solved = diagonal > 0.0 ? (sum - rhs) / diagonal : 0.0;
+    PressureInOut[cell] = lerp(PressureInOut[cell], solved, PressureRelaxation);
+}
+
+[numthreads(8, 8, 1)]
+void ProjectU(uint3 id : SV_DispatchThreadID)
+{
+    int x = id.x, y = id.y;
+    if (x > Width || y >= Height) return;
+    int index = UIndex(x, y);
+    if (x == 0 || x == Width)
+    {
+        UWrite[index] = 0.0;
+        return;
+    }
+    float fl = FAt(x - 1, y), fr = FAt(x, y);
+    if (fl <= FluxCutoff && fr <= FluxCutoff)
+    {
+        UWrite[index] = 0.0;
+        return;
+    }
+    float pl = fl > LiquidCutoff ? PressureRead[CellIndex(x - 1, y)] : 0.0;
+    float pr = fr > LiquidCutoff ? PressureRead[CellIndex(x, y)] : 0.0;
+    UWrite[index] = UStar[index] - Dt / Density * (pr - pl) / Dx;
+}
+
+[numthreads(8, 8, 1)]
+void ProjectV(uint3 id : SV_DispatchThreadID)
+{
+    int x = id.x, y = id.y;
+    if (x >= Width || y > Height) return;
+    int index = VIndex(x, y);
+    if (y == 0)
+    {
+        VWrite[index] = 0.0;
+        return;
+    }
+    float fb = FAt(x, y - 1), fa = y < Height ? FAt(x, y) : 0.0;
+    if (fb <= FluxCutoff && fa <= FluxCutoff)
+    {
+        VWrite[index] = 0.0;
+        return;
+    }
+    float pb = fb > LiquidCutoff ? PressureRead[CellIndex(x, y - 1)] : 0.0;
+    float pa = y < Height && fa > LiquidCutoff ? PressureRead[CellIndex(x, y)] : 0.0;
+    VWrite[index] = VStar[index] - Dt / Density * (pa - pb) / Dy;
+}
+
+[numthreads(8, 8, 1)]
+void ComputeFluxX(uint3 id : SV_DispatchThreadID)
+{
+    int x = id.x, y = id.y;
+    if (x > Width || y >= Height) return;
+    int index = x + y * (Width + 1);
+    if (x == 0 || x == Width) { FluxX[index] = 0.0; return; }
+    float speed = URead[UIndex(x, y)];
+    float donor = speed >= 0.0 ? FAt(x - 1, y) : FAt(x, y);
+    FluxX[index] = speed * Dt / Dx * donor;
+}
+
+[numthreads(8, 8, 1)]
+void ComputeFluxY(uint3 id : SV_DispatchThreadID)
+{
+    int x = id.x, y = id.y;
+    if (x >= Width || y > Height) return;
+    int index = x + y * Width;
+    if (y == 0) { FluxY[index] = 0.0; return; }
+    float speed = VRead[VIndex(x, y)];
+    float below = FAt(x, y - 1), above = y < Height ? FAt(x, y) : 0.0;
+    float donor = speed >= 0.0 ? below : above;
+    FluxY[index] = speed * Dt / Dy * donor;
+}
+
+[numthreads(8, 8, 1)]
+void UpdateLiquid(uint3 id : SV_DispatchThreadID)
+{
+    int x = id.x, y = id.y;
+    if (x >= Width || y >= Height) return;
+    float left = FluxX[x + y * (Width + 1)];
+    float right = FluxX[x + 1 + y * (Width + 1)];
+    float bottom = FluxY[x + y * Width];
+    float top = FluxY[x + (y + 1) * Width];
+    float value = LiquidRead[CellIndex(x, y)] - (right - left) - (top - bottom);
+    LiquidWrite[CellIndex(x, y)] = saturate(value);
+}
+
+[numthreads(8, 8, 1)]
+void RenderLiquid(uint3 id : SV_DispatchThreadID)
+{
+    int x = id.x, y = id.y;
+    if (x >= Width || y >= Height) return;
+    float f = saturate(LiquidRead[CellIndex(x, y)]);
+    float3 dry = float3(0.015, 0.023, 0.035);
+    float3 water = lerp(float3(0.025, 0.24, 0.72), float3(0.18, 0.68, 1.0), saturate((f - 0.3) * 1.8));
+    Output[int2(x, y)] = float4(lerp(dry, water, f), 1.0);
+}

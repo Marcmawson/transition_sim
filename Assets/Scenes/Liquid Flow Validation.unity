@@ -255,15 +255,21 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 9dc2a13c96cc4c74a0d264cf52d0b27f, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  fluidSolver: {fileID: 7200000, guid: c819d2b3a50f4cc2a6dd6abfb9d40f57, type: 3}
   domainWidthM: 0.1
   domainHeightM: 0.24
   sliceDepthM: 0.025
   gridWidth: 64
   gridHeight: 96
-  validationCase: 0
+  validationCase: 1
   initialFillHeightFraction: 0.5
   damInitialWidthFraction: 0.35
   damInitialHeightFraction: 0.7
+  liquidDensityKgPerM3: 998.2
+  kinematicViscosityM2PerS: 1.004e-06
+  simulationRate: 1
+  maxSubstepsPerFrame: 8
+  pressureIterations: 40
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0
