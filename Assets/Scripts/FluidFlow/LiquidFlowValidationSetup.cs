@@ -91,16 +91,20 @@ namespace PhaseTransition.FluidFlow
             Rect fluid = new Rect(vessel.x + 2f, vessel.yMax - vessel.height * fillHeight,
                 (vessel.width - 4f) * fillWidth, vessel.height * fillHeight - 2f);
 
-            GUI.color = new Color(0.025f, 0.035f, 0.05f, 1f);
-            GUI.Box(vessel, GUIContent.none);
-            GUI.color = new Color(0.10f, 0.42f, 0.92f, 0.88f);
-            GUI.Box(fluid, GUIContent.none);
-            GUI.color = new Color(0.65f, 0.88f, 1f, 1f);
+            DrawSolidRect(vessel, new Color(0.025f, 0.035f, 0.05f, 1f));
+            DrawSolidRect(fluid, new Color(0.08f, 0.40f, 0.95f, 1f));
+            Color wallColour = new Color(0.65f, 0.88f, 1f, 1f);
             float wall = Mathf.Max(3f, 4f * scale);
-            GUI.Box(new Rect(vessel.x - wall, vessel.y, wall, vessel.height), GUIContent.none);
-            GUI.Box(new Rect(vessel.xMax, vessel.y, wall, vessel.height), GUIContent.none);
-            GUI.Box(new Rect(vessel.x - wall, vessel.yMax, vessel.width + 2f * wall, wall), GUIContent.none);
+            DrawSolidRect(new Rect(vessel.x - wall, vessel.y, wall, vessel.height), wallColour);
+            DrawSolidRect(new Rect(vessel.xMax, vessel.y, wall, vessel.height), wallColour);
+            DrawSolidRect(new Rect(vessel.x - wall, vessel.yMax, vessel.width + 2f * wall, wall), wallColour);
             GUI.color = Color.white;
+        }
+
+        private static void DrawSolidRect(Rect rect, Color colour)
+        {
+            GUI.color = colour;
+            GUI.DrawTexture(rect, Texture2D.whiteTexture, ScaleMode.StretchToFill, false);
         }
     }
 }
