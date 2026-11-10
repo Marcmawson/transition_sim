@@ -46,7 +46,7 @@ namespace PhaseTransition.FluidFlow
         private bool isPaused;
         private double simulatedTimeS;
         private float maximumU, maximumV, maximumDivergence;
-        private float liquidVolumeM3;
+        private float liquidVolumeM3, initialLiquidVolumeM3;
         private float kineticEnergyJ, mechanicalEnergyJ;
         private readonly float[] energyTimes = new float[EnergyHistoryCapacity];
         private readonly float[] kineticEnergyHistory = new float[EnergyHistoryCapacity];
@@ -177,6 +177,7 @@ namespace PhaseTransition.FluidFlow
         private void ResetSolver()
         {
             var fractions = new float[CellCount];
+            initialLiquidVolumeM3 = 0f;
             for (int y = 0; y < gridHeight; y++)
                 for (int x = 0; x < gridWidth; x++)
                 {
@@ -185,7 +186,9 @@ namespace PhaseTransition.FluidFlow
                     bool occupied = validationCase == Case.HydrostaticRest
                         ? yCentre < initialFillHeightFraction
                         : xCentre < damInitialWidthFraction && yCentre < damInitialHeightFraction;
-                    fractions[x + y * gridWidth] = occupied ? 1f : 0f;
+                    float fraction = occupied ? 1f : 0f;
+                    fractions[x + y * gridWidth] = fraction;
+                    initialLiquidVolumeM3 += fraction * Dx * Dy * sliceDepthM;
                 }
             liquid.SetData(fractions);
             liquidNext.SetData(new float[CellCount]);
@@ -332,7 +335,7 @@ namespace PhaseTransition.FluidFlow
             float scale = Mathf.Clamp(Screen.height / 720f, 0.65f, 1.35f);
             float pad = 16f * scale;
             float panelWidth = 350f * scale;
-            float panelHeight = 360f * scale;
+            float panelHeight = 430f * scale;
             GUI.color = new Color(0.035f, 0.045f, 0.06f, 0.96f);
             GUI.Box(new Rect(pad, pad, panelWidth, panelHeight), GUIContent.none);
             GUI.color = Color.white;
@@ -364,6 +367,11 @@ namespace PhaseTransition.FluidFlow
             GUILayout.Label($"Peak speed: {Mathf.Sqrt(maximumU * maximumU + maximumV * maximumV):0.000} m/s");
             GUILayout.Label($"Maximum divergence: {maximumDivergence:0.000} 1/s");
             GUILayout.Label($"Water volume: {liquidVolumeM3:0.000000} m3");
+            float volumeChange = initialLiquidVolumeM3 > 0f
+                ? 100f * (liquidVolumeM3 - initialLiquidVolumeM3) / initialLiquidVolumeM3 : 0f;
+            GUILayout.Label($"Initial volume: {initialLiquidVolumeM3:0.000000} m3 | change: {volumeChange:+0.00;-0.00;0.00}%");
+            float expectedPoolDepthM = initialLiquidVolumeM3 / (domainWidthM * sliceDepthM);
+            GUILayout.Label($"Still-pool estimate: {expectedPoolDepthM:0.000} m ({100f * expectedPoolDepthM / domainHeightM:0.0}% of tank height)");
             GUILayout.Label($"Kinetic energy: {kineticEnergyJ:0.000000} J");
             GUILayout.Label($"Kinetic + gravitational energy: {mechanicalEnergyJ:0.000000} J");
             GUILayout.EndArea();
