@@ -338,6 +338,9 @@ namespace PhaseTransition.FluidFlow
             GUI.color = Color.white;
             GUI.Label(new Rect(x, y - 28f * scale, width + 50f, 24f * scale), "2D LIQUID DOMAIN | OPEN TOP");
             DrawSolidRect(vessel, new Color(0.025f, 0.035f, 0.05f, 1f));
+            // DrawSolidRect sets GUI.color; restore neutral tint or the render
+            // texture is multiplied by the near-black vessel background colour.
+            GUI.color = Color.white;
             if (display != null)
                 GUI.DrawTextureWithTexCoords(vessel, display, new Rect(0f, 1f, 1f, -1f), false);
             Color wallColour = new Color(0.65f, 0.88f, 1f, 1f);
