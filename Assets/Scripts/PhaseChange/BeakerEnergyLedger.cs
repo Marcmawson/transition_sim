@@ -55,6 +55,7 @@ namespace PhaseTransition.Physics
         public double WaterLevelM { get; private set; }
         public double TotalSampleMassKg { get; private set; }
         public double MaximumLiquidSpeedMS { get; private set; }
+        public double MaximumLiquidDivergencePerS { get; private set; }
         public double MaximumBubbleRiseSpeedMS { get; private set; }
         public double VentedVapourMassKg { get; private set; }
 
@@ -92,11 +93,19 @@ namespace PhaseTransition.Physics
             AmbientPressurePa = WaterThermodynamicsSI.AmbientPressureAtAltitudePa(altitudeM);
 
             // Explicit Fourier conduction is stable at this SI cell size for ice and water.
-            // Substeps avoid losing energy when a rendered frame takes longer than this bound.
+            // The flow CFL and acceleration limits also constrain the momentum step at finer grids.
+            double dx = beakerWidthM / gridWidth;
+            double dy = beakerHeightM / gridHeight;
+            double minimumCellSize = System.Math.Min(dx, dy);
+            double gravityStep = System.Math.Sqrt(0.5 * minimumCellSize /
+                WaterThermodynamicsSI.StandardGravity);
             double timeRemaining = Time.deltaTime;
             while (timeRemaining > 0.0)
             {
-                double dt = System.Math.Min(timeRemaining, 0.025);
+                double dt = System.Math.Min(timeRemaining, System.Math.Min(0.025, gravityStep));
+                double maximumSpeed = liquidFlow != null ? liquidFlow.MaximumSpeedMS : 0.0;
+                if (maximumSpeed > 1e-8)
+                    dt = System.Math.Min(dt, 0.4 * minimumCellSize / maximumSpeed);
                 AdvanceThermalStep(dt);
                 timeRemaining -= dt;
             }
@@ -172,6 +181,7 @@ namespace PhaseTransition.Physics
             liquidFlow.Reset();
             VentedVapourMassKg = 0.0;
             MaximumLiquidSpeedMS = 0.0;
+            MaximumLiquidDivergencePerS = 0.0;
             MaximumBubbleRiseSpeedMS = 0.0;
             RebuildCellStatesAndTotals();
         }
@@ -203,6 +213,7 @@ namespace PhaseTransition.Physics
             double dy = beakerHeightM / gridHeight;
             liquidFlow.Advance(liquidFractionBuffer, iceFractionBuffer, temperatureBuffer, dx, dy, dt);
             MaximumLiquidSpeedMS = 0.0;
+            MaximumLiquidDivergencePerS = liquidFlow.MaximumDivergencePerS;
             for (int y = 0; y < gridHeight; y++)
                 for (int x = 0; x < gridWidth; x++)
                 {
@@ -294,16 +305,14 @@ namespace PhaseTransition.Physics
                 {
                     if (x + 1 < gridWidth)
                     {
-                        double faceVelocity = 0.5 * (liquidFlow.GetVelocityX(x, y) +
-                                                      liquidFlow.GetVelocityX(x + 1, y));
+                        double faceVelocity = liquidFlow.GetFaceVelocityX(x + 1, y);
                         TransferLiquidAlongVelocity(x, y, x + 1, y, faceVelocity,
                             xFaceArea, cellVolume, dt);
                     }
 
                     if (y + 1 < gridHeight)
                     {
-                        double faceVelocity = 0.5 * (liquidFlow.GetVelocityY(x, y) +
-                                                      liquidFlow.GetVelocityY(x, y + 1));
+                        double faceVelocity = liquidFlow.GetFaceVelocityY(x, y + 1);
                         TransferLiquidAlongVelocity(x, y, x, y + 1, faceVelocity,
                             yFaceArea, cellVolume, dt);
                     }
@@ -340,7 +349,7 @@ namespace PhaseTransition.Physics
 
             double signedMassFlux = liquidDensity * faceVelocityMS * faceAreaM2 * dtS * donorFraction;
             double movedMass = System.Math.Min(System.Math.Abs(signedMassFlux),
-                System.Math.Min(0.05 * donorLiquidMass, receiverCapacityKg));
+                System.Math.Min(donorLiquidMass, receiverCapacityKg));
             if (movedMass <= 0.0) return;
 
             double energyFlux = movedMass * liquidHeatCapacity * temperatureBuffer[donorX, donorY];

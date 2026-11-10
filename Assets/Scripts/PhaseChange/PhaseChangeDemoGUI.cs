@@ -80,6 +80,7 @@ namespace PhaseTransition.Physics
             GUILayout.Label($"Ice: {ledger.IceMassFraction:P1}   liquid: {ledger.LiquidMassFraction:P1}   vapour: {ledger.VapourMassFraction:P1}");
             GUILayout.Label($"Specific enthalpy: {ledger.SpecificEnthalpyJPerKg / 1000.0:0.0} kJ/kg");
             GUILayout.Label($"Peak liquid speed: {ledger.MaximumLiquidSpeedMS:0.000} m/s");
+            GUILayout.Label($"Peak velocity divergence: {ledger.MaximumLiquidDivergencePerS:0.000} 1/s");
             GUILayout.Label($"Bubble rise estimate: {ledger.MaximumBubbleRiseSpeedMS:0.000} m/s  |  diameter: {ledger.vapourBubbleDiameterM * 1000f:0.0} mm");
             ledger.vapourBubbleDiameterM = GUILayout.HorizontalSlider(ledger.vapourBubbleDiameterM, 0.001f, 0.010f);
             showFlowVectors = GUILayout.Toggle(showFlowVectors, "Show liquid flow direction");

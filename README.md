@@ -8,4 +8,4 @@ The repository is being initialized from the existing Unity project baseline; th
 
 ## Phase-change prototype
 
-Open `Assets/Scenes/PhaseChange Beaker.unity` and press Play to see the SI thermal grid and the separate lattice-gas teaching view. The beaker includes a first 2-D liquid convection approximation with a free surface, an Archimedean ice-flotation closure, and buoyant bubble rise and venting. Full gas flow, beaker heat capacity, and ambient heat exchange remain future work; see `Assets/Scripts/PhaseChange/ModelNotes.md` for assumptions and limits.
+Open `Assets/Scenes/PhaseChange Beaker.unity` and press Play to see the SI thermal grid and the separate lattice-gas teaching view. The beaker uses a staggered-grid 2-D incompressible liquid-flow approximation with a free surface, an Archimedean ice-flotation closure, and buoyant bubble rise and venting. Full gas flow, beaker heat capacity, and ambient heat exchange remain future work; see `Assets/Scripts/PhaseChange/ModelNotes.md` for assumptions and limits.
