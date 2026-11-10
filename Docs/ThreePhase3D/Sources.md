@@ -358,6 +358,24 @@ Unity 2022.3 scripting API, *AsyncGPUReadback*.
 
 Use to obtain diagnostics without mandatory synchronous full-field reads. Capability and error handling remain required. Official documentation inspected.
 
+### D16 Humid mixture transport and comparison data
+
+A. Melling, S. Noppenberger, M. Still and H. Venzke (1997), *Interpolation Correlations for Fluid Properties of Humid Air in the Temperature Range 100 C to 200 C*, Journal of Physical and Chemical Reference Data 26, 1111.
+
+[Primary paper hosted by NIST](https://srd.nist.gov/jpcrdreprint/1.555998.pdf) · [DOI](https://doi.org/10.1063/1.555998).
+
+Full primary text inspected. Viscosity Eq 13/Table 8 fits the reported Studnikow data in the 100-150 C interval; extension to 200 C is discussed explicitly. Conductivity Eqs 14-19 use a Mason-Saxena form with the paper's selected g=0.80 for polar/nonpolar gas mixtures. The model is not an exact universal reference. Tables 5-6 reproduce other low-temperature viscosity measurements and Table 9 gives conductivity-ratio data used to select the interaction factor.
+
+The S02 continuation retains Eq 13's composition curvature while rebasing the endpoints to modern IAPWS water and Lemmon/Jacobsen air transport. This is a documented project adaptation, including a checked low-temperature extension; it is not represented as the unchanged published correlation. Production transport is restricted to Y_water<=0.10 or pure vapour. Wider reference predictions are retained to expose disagreement, not certify steam-rich transport. No third-party source code or PDF is redistributed.
+
+### D17 Modern moist-air reference comparisons
+
+ASHRAE (2025), *Fundamentals*, Chapter 1, section 11, Table 5.
+
+[Official table](https://handbook.ashrae.org/handbooks/F25/SI/F25_Ch01/F25_Ch01_si.aspx).
+
+The table provides calculated dry/saturated moist-air transport at 101325 Pa, based on LibHuAirProp/RP-1767. It is an independent modern calculated reference, not a new experimental dataset. Comparisons at 10-90 C expose increasing disagreement of the historical transport shape at high humidity. These differences are recorded separately from numerical assertions; no tolerance is increased to turn them into passing numerical checks.
+
 ## 7 Work still needed before claiming physical completion
 
 Extract and independently verify the full coefficients and detailed numerical stencils from the selected pinned sources. Acquire missing glass/tripod/contact/wetting/heat-input data. Derive and review the coupled discrete balances rather than assuming independent published components can simply be concatenated.
