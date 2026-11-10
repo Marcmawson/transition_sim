@@ -12,6 +12,7 @@ namespace PhaseTransition.Physics
         private float latticeTemperatureK = 300f;
         private GUIStyle titleStyle;
         private GUIStyle noteStyle;
+        private GUIStyle flowArrowStyle;
         private Texture2D particleTexture;
         private bool showFlowVectors = true;
 
@@ -151,8 +152,8 @@ namespace PhaseTransition.Physics
                     Matrix4x4 oldMatrix = GUI.matrix;
                     GUIUtility.RotateAroundPivot(angle, new Vector2(centreX, centreY));
                     GUI.color = new Color(0.92f, 0.96f, 1f, 0.8f);
-                    GUI.DrawTexture(new Rect(centreX - cellWidth * 0.32f, centreY - 1f,
-                        cellWidth * 0.64f, 2f), Texture2D.whiteTexture);
+                    GUI.Label(new Rect(centreX - cellWidth * 0.45f, centreY - cellHeight * 0.45f,
+                        cellWidth * 0.90f, cellHeight * 0.90f), "→", flowArrowStyle);
                     GUI.matrix = oldMatrix;
                     GUI.color = Color.white;
                 }
@@ -236,6 +237,13 @@ namespace PhaseTransition.Physics
             if (titleStyle != null) return;
             titleStyle = new GUIStyle(GUI.skin.label) { fontSize = 19, fontStyle = FontStyle.Bold };
             noteStyle = new GUIStyle(GUI.skin.label) { wordWrap = true, fontSize = 12 };
+            flowArrowStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 16,
+                fontStyle = FontStyle.Bold,
+                alignment = TextAnchor.MiddleCenter,
+                wordWrap = false
+            };
         }
     }
 }
