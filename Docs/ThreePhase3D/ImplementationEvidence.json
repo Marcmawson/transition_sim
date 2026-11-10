@@ -255,6 +255,11 @@
           "path": "Assets/Scripts/ThreePhase3D/Materials/HumidGas.cs",
           "symbol": "PhysicsSim.ThreePhase3D.Materials.HumidGas.Evaluate",
           "source_sha256": null
+        },
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Materials/HumidGas.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Materials.HumidGas.EquilibriumWithLiquid",
+          "source_sha256": null
         }
       ],
       "source_ids": [
@@ -279,6 +284,16 @@
           "path": "Assets/Scripts/ThreePhase3D/Materials/WaterTransport.cs",
           "symbol": "PhysicsSim.ThreePhase3D.Materials.WaterTransport.Conductivity",
           "source_sha256": null
+        },
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Materials/HumidGasTransport.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Materials.DryAirTransport.Viscosity",
+          "source_sha256": null
+        },
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Materials/HumidGasTransport.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Materials.HumidGasTransport.Conductivity",
+          "source_sha256": null
         }
       ],
       "source_ids": [
@@ -288,7 +303,9 @@
         "D09",
         "D12",
         "D13",
-        "D14"
+        "D14",
+        "D16",
+        "D17"
       ],
       "source_locators": [
         "Docs/ThreePhase3D/S02-Handoff.md"
