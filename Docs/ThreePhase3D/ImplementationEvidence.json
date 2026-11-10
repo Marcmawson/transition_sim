@@ -210,13 +210,19 @@
           "path": "Assets/Scripts/ThreePhase3D/Materials/Water95.cs",
           "symbol": "PhysicsSim.ThreePhase3D.Materials.Water95.Evaluate",
           "source_sha256": null
+        },
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Materials/MaterialSurfaceTable.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Materials.MaterialSurfaceTable.Generate",
+          "source_sha256": null
         }
       ],
       "source_ids": [
         "D01"
       ],
       "source_locators": [
-        "Docs/ThreePhase3D/S02-Handoff.md"
+        "Docs/ThreePhase3D/S02-Handoff.md",
+        "Docs/ThreePhase3D/S02-Expanded-Materials.md"
       ],
       "validation_ids": [
         "V03"
@@ -232,14 +238,21 @@
           "path": "Assets/Scripts/ThreePhase3D/Materials/IceIh.cs",
           "symbol": "PhysicsSim.ThreePhase3D.Materials.IceIh.Evaluate",
           "source_sha256": null
+        },
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Materials/IceIh.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Materials.IceIh.ConductivityWmK",
+          "source_sha256": null
         }
       ],
       "source_ids": [
         "D02",
-        "D03"
+        "D03",
+        "D18"
       ],
       "source_locators": [
-        "Docs/ThreePhase3D/S02-Handoff.md"
+        "Docs/ThreePhase3D/S02-Handoff.md",
+        "Docs/ThreePhase3D/S02-Expanded-Materials.md"
       ],
       "validation_ids": [
         "V04"
@@ -260,14 +273,26 @@
           "path": "Assets/Scripts/ThreePhase3D/Materials/HumidGas.cs",
           "symbol": "PhysicsSim.ThreePhase3D.Materials.HumidGas.EquilibriumWithLiquid",
           "source_sha256": null
+        },
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Materials/HumidGasIce.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Materials.HumidGas.EquilibriumWithIce",
+          "source_sha256": null
+        },
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Materials/HumidFugacity.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Materials.HumidFugacity.ReferenceFugacity",
+          "source_sha256": null
         }
       ],
       "source_ids": [
         "D06",
-        "D07"
+        "D07",
+        "D02"
       ],
       "source_locators": [
-        "Docs/ThreePhase3D/S02-Handoff.md"
+        "Docs/ThreePhase3D/S02-Handoff.md",
+        "Docs/ThreePhase3D/S02-Expanded-Materials.md"
       ],
       "validation_ids": [
         "V05",
@@ -294,6 +319,16 @@
           "path": "Assets/Scripts/ThreePhase3D/Materials/HumidGasTransport.cs",
           "symbol": "PhysicsSim.ThreePhase3D.Materials.HumidGasTransport.Conductivity",
           "source_sha256": null
+        },
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Materials/HumidGas.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Materials.HumidGas.ReferenceTabulatedDiffusivity",
+          "source_sha256": null
+        },
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Materials/HumidDiluteTransport.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Materials.HumidDiluteTransport.Reference",
+          "source_sha256": null
         }
       ],
       "source_ids": [
@@ -305,10 +340,13 @@
         "D13",
         "D14",
         "D16",
-        "D17"
+        "D17",
+        "D19",
+        "D20"
       ],
       "source_locators": [
-        "Docs/ThreePhase3D/S02-Handoff.md"
+        "Docs/ThreePhase3D/S02-Handoff.md",
+        "Docs/ThreePhase3D/S02-Expanded-Materials.md"
       ],
       "validation_ids": [
         "V05"
