@@ -37,7 +37,7 @@ namespace PhaseTransition.Physics
             public double iceMassFraction;
             public double liquidMassFraction;
             public double vapourMassFraction;
-            public double saturationPressurePa;
+            public double systemPressurePa;
         }
 
         /// <summary>Standard-atmosphere pressure for altitude in the troposphere (-500 to 11000 m).</summary>
@@ -131,7 +131,7 @@ namespace PhaseTransition.Physics
             double boilStartEnthalpy = LiquidHeatCapacity * tsatC;
             double latentVaporization = Interpolate(SatTemperatureC, SatVaporizationJPerKg, tsatC);
             double boilEndEnthalpy = boilStartEnthalpy + latentVaporization;
-            EquilibriumState state = new EquilibriumState { saturationPressurePa = pressurePa };
+            EquilibriumState state = new EquilibriumState { systemPressurePa = pressurePa };
 
             if (enthalpyJPerKg < -IceFusionEnthalpy)
             {
