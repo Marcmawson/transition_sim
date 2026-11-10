@@ -1,0 +1,33 @@
+#pragma kernel Lookup
+// S02-ISOBAR-FP32-1. Scalar buffers have stride 4; query float2 stride 8.
+// Each invocation owns one complete output row. Separate input/output buffers.
+StructuredBuffer<float> TableValues;
+StructuredBuffer<float2> Queries;
+RWStructuredBuffer<float> Results;
+RWStructuredBuffer<uint> Status;
+uint QueryCount;
+uint TableCount;
+float MinimumK;
+float StepK;
+float PressurePa;
+#define PROPERTY_COUNT 12
+
+[numthreads(64,1,1)]
+void Lookup(uint3 tid : SV_DispatchThreadID)
+{
+    uint q=tid.x;
+    if(q>=QueryCount)return;
+    float2 state=Queries[q];
+    float maximum=MinimumK+(TableCount-1)*StepK;
+    bool valid=TableCount>=2 && StepK>0 && !any(isnan(state)) && !any(isinf(state)) && state.x>=MinimumK && state.x<=maximum && state.y==PressurePa;
+    Status[q]=valid?0:1;
+    if(!valid) {for(uint k=0;k<PROPERTY_COUNT;k++)Results[q*PROPERTY_COUNT+k]=0;return;}
+    float x=(state.x-MinimumK)/StepK;
+    uint i=min((uint)x,TableCount-2);
+    float w=x-i;
+    for(uint j=0;j<PROPERTY_COUNT;j++)
+    {
+        float a=TableValues[i*PROPERTY_COUNT+j],b=TableValues[(i+1)*PROPERTY_COUNT+j];
+        Results[q*PROPERTY_COUNT+j]=a+(b-a)*w;
+    }
+}
