@@ -1,0 +1,28 @@
+#pragma kernel LookupSurface
+// S02-TP-FP32-1: scalar strides 4; query float4 stride16.
+StructuredBuffer<float> TableValues;
+StructuredBuffer<float4> Queries;
+RWStructuredBuffer<float> Results;
+RWStructuredBuffer<uint> Status;
+uint QueryCount, TemperatureCount, PressureCount, PropertyCount;
+float MinimumK, StepK, MinimumPa, StepPa, WaterMassFraction;
+[numthreads(64,1,1)]
+void LookupSurface(uint3 tid:SV_DispatchThreadID)
+{
+    uint q=tid.x;if(q>=QueryCount)return;
+    float3 state=Queries[q].xyz;
+    bool valid=TemperatureCount>=2&&PressureCount>=2&&PropertyCount<=12&&StepK>0&&StepPa>0&&
+        !any(isnan(state))&&!any(isinf(state))&&state.x>=MinimumK&&state.x<=MinimumK+(TemperatureCount-1)*StepK&&
+        state.y>=MinimumPa&&state.y<=MinimumPa+(PressureCount-1)*StepPa&&state.z==WaterMassFraction;
+    Status[q]=valid?0:1;
+    if(!valid){for(uint j=0;j<PropertyCount;j++)Results[q*PropertyCount+j]=0;return;}
+    float tx=(state.x-MinimumK)/StepK,px=(state.y-MinimumPa)/StepPa;
+    uint ti=min((uint)tx,TemperatureCount-2),pi=min((uint)px,PressureCount-2);
+    float tw=tx-ti,pw=px-pi;
+    for(uint k=0;k<PropertyCount;k++)
+    {
+        uint a=(pi*TemperatureCount+ti)*PropertyCount+k,b=a+TemperatureCount*PropertyCount;
+        float low=lerp(TableValues[a],TableValues[a+PropertyCount],tw),high=lerp(TableValues[b],TableValues[b+PropertyCount],tw);
+        Results[q*PropertyCount+k]=lerp(low,high,pw);
+    }
+}
