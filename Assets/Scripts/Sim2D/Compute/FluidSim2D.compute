@@ -1,0 +1,718 @@
+#pragma kernel ExternalForces
+#pragma kernel UpdateSpatialHash
+#pragma kernel Reorder
+#pragma kernel ReorderCopyback
+#pragma kernel CalculateDensities
+#pragma kernel CalculatePressureForce
+#pragma kernel CalculateViscosity
+#pragma kernel UpdatePositions
+#pragma kernel PhaseChange
+#pragma kernel DiffuseThermalEnergy
+#pragma kernel ApplyThermalEnergy
+#pragma kernel UpdateWallTemperature
+#pragma kernel ApplyWallTemperature
+
+// Includes
+#include "./FluidMaths2D.hlsl"
+#include "./SpatialHash.hlsl"
+
+static const int NumThreads = 64;
+
+// Buffers
+RWStructuredBuffer<float2> Positions;
+RWStructuredBuffer<float2> PredictedPositions;
+RWStructuredBuffer<float2> Velocities;
+RWStructuredBuffer<float2> Densities; // Density, Near Density
+RWStructuredBuffer<float> ThermalEnergy;
+RWStructuredBuffer<float> ThermalEnergyNext;
+StructuredBuffer<float> WallTemperatureRead;
+RWStructuredBuffer<float> WallTemperatureNext;
+StructuredBuffer<float> WallTemperatureForFluid;
+RWStructuredBuffer<float> WallTemperatureCurrent;
+RWStructuredBuffer<uint> ParticlePhase; // 0 liquid, 1 vapour
+RWStructuredBuffer<uint> SortTarget_ParticlePhase;
+RWStructuredBuffer<float> SortTarget_ThermalEnergy;
+
+// Read-only views keep the reorder kernels below Unity's per-kernel UAV limit.
+StructuredBuffer<float2> InputPositions;
+StructuredBuffer<float2> InputPredictedPositions;
+StructuredBuffer<float2> InputVelocities;
+StructuredBuffer<float> InputThermalEnergy;
+StructuredBuffer<uint> InputParticlePhase;
+StructuredBuffer<float2> InputSortedPositions;
+StructuredBuffer<float2> InputSortedPredictedPositions;
+StructuredBuffer<float2> InputSortedVelocities;
+StructuredBuffer<float> InputSortedThermalEnergy;
+StructuredBuffer<uint> InputSortedParticlePhase;
+
+// Spatial hashing
+RWStructuredBuffer<uint> SpatialKeys;
+RWStructuredBuffer<uint> SpatialOffsets;
+StructuredBuffer<uint> SortedIndices;
+
+// Settings
+const uint numParticles;
+const float gravity;
+const float deltaTime;
+const float collisionDamping;
+const float smoothingRadius;
+const float targetDensity;
+const float pressureMultiplier;
+const float nearPressureMultiplier;
+const float viscosityStrength;
+const float2 boundsSize;
+const float2 boundsCentre;
+const float2 interactionInputPoint;
+const float interactionInputStrength;
+const float interactionInputRadius;
+
+const uint obstacleEnabled;
+const float2 obstacleSize;
+const float2 obstacleCentre;
+const float boundsRotationRadians;
+const float burnerPower;
+const float burnerFocus;
+const float burnerLocalX;
+const uint wallSegmentCount;
+const float wallSegmentWidth;
+const float wallHeatCapacityScale;
+const float wallThermalDiffusivity;
+const float wallWaterTransferRate;
+const float wallAmbientCoolingRate;
+const float ambientTemperatureC;
+const uint wallSpatialReady;
+const float thermalCooling;
+const float vapourCoolingMultiplier;
+const float thermalDiffusionRate;
+const float metresPerSimulationUnit;
+const float liquidThermalDiffusivity;
+const float vapourThermalDiffusivity;
+const float evaporationThreshold;
+const float condensationThreshold;
+const float nucleationSiteSpacing;
+const float latentHeat;
+const float surfaceDensityFraction;
+const float nearSurfaceDensityFraction;
+const float liquidThermalBuoyancy;
+const float vapourBuoyancy;
+const float vapourDensityRatio;
+const float vapourPressureScale;
+const float vapourViscosityScale;
+const float interphaseRepulsion;
+const float interphaseDrag;
+const uint pressureVentEnabled;
+const float pressureVentLocalX;
+const float pressureVentWidth;
+const float pressureVentDensityThreshold;
+
+float DensityKernel(float dst, float radius)
+{
+	return SpikyKernelPow2(dst, radius);
+}
+
+float NearDensityKernel(float dst, float radius)
+{
+	return SpikyKernelPow3(dst, radius);
+}
+
+float DensityDerivative(float dst, float radius)
+{
+	return DerivativeSpikyPow2(dst, radius);
+}
+
+float NearDensityDerivative(float dst, float radius)
+{
+	return DerivativeSpikyPow3(dst, radius);
+}
+
+float ViscosityKernel(float dst, float radius)
+{
+	return SmoothingKernelPoly6(dst, smoothingRadius);
+}
+
+float2 CalculateDensity(float2 pos, uint selfPhase)
+{
+	int2 originCell = GetCell2D(pos, smoothingRadius);
+	float sqrRadius = smoothingRadius * smoothingRadius;
+	float density = 0;
+	float nearDensity = 0;
+
+	// Neighbour search
+	for (int i = 0; i < 9; i++)
+	{
+		uint hash = HashCell2D(originCell + offsets2D[i]);
+		uint key = KeyFromHash(hash, numParticles);
+		uint currIndex = SpatialOffsets[key];
+
+		while (currIndex < numParticles)
+		{
+			uint neighbourIndex = currIndex;
+			currIndex ++;
+			
+			uint neighbourKey = SpatialKeys[neighbourIndex];
+			// Exit if no longer looking at correct bin
+			if (neighbourKey != key) break;
+			uint neighbourPhase = ParticlePhase[neighbourIndex];
+			if (neighbourPhase != selfPhase) continue;
+
+			float2 neighbourPos = PredictedPositions[neighbourIndex];
+			float2 offsetToNeighbour = neighbourPos - pos;
+			float sqrDstToNeighbour = dot(offsetToNeighbour, offsetToNeighbour);
+
+			// Skip if not within radius
+			if (sqrDstToNeighbour > sqrRadius) continue;
+
+			// Calculate density and near density
+			float dst = sqrt(sqrDstToNeighbour);
+			density += DensityKernel(dst, smoothingRadius);
+			if (selfPhase == 0) nearDensity += NearDensityKernel(dst, smoothingRadius);
+		}
+	}
+
+	return float2(density, nearDensity);
+}
+
+float PressureFromDensity(float density)
+{
+	return (density - targetDensity) * pressureMultiplier;
+}
+
+float NearPressureFromDensity(float nearDensity)
+{
+	return nearPressureMultiplier * nearDensity;
+}
+
+float2 ExternalForces(float2 pos, float2 velocity)
+{
+	// Gravity
+	float2 gravityAccel = float2(0, gravity);
+	
+	// Input interactions modify gravity
+	if (interactionInputStrength != 0) {
+		float2 inputPointOffset = interactionInputPoint - pos;
+		float sqrDst = dot(inputPointOffset, inputPointOffset);
+		if (sqrDst < interactionInputRadius * interactionInputRadius)
+		{
+			float dst = sqrt(sqrDst);
+			float edgeT = (dst / interactionInputRadius);
+			float centreT = 1 - edgeT;
+			float2 dirToCentre = inputPointOffset / dst;
+
+			float gravityWeight = 1 - (centreT * saturate(interactionInputStrength / 10));
+			float2 accel = gravityAccel * gravityWeight + dirToCentre * centreT * interactionInputStrength;
+			accel -= velocity * centreT;
+			return accel;
+		}
+	}
+
+	return gravityAccel;
+}
+
+
+void HandleCollisions(uint particleIndex)
+{
+	float2 worldPos = Positions[particleIndex];
+	float2 worldVel = Velocities[particleIndex];
+
+	// Resolve boundaries in tank-local coordinates so the container can be tilted.
+	float c = cos(boundsRotationRadians);
+	float s = sin(boundsRotationRadians);
+	float2 relativePos = worldPos - boundsCentre;
+	float2 pos = float2(c * relativePos.x + s * relativePos.y, -s * relativePos.x + c * relativePos.y);
+	float2 vel = float2(c * worldVel.x + s * worldVel.y, -s * worldVel.x + c * worldVel.y);
+
+	const float2 halfSize = boundsSize * 0.5;
+	float2 edgeDst = halfSize - abs(pos);
+	if (edgeDst.x <= 0)
+	{
+		pos.x = halfSize.x * sign(pos.x);
+		vel.x *= -collisionDamping;
+	}
+	if (edgeDst.y <= 0)
+	{
+		bool passThroughVent = ParticlePhase[particleIndex] == 1 && pressureVentEnabled != 0 && Densities[particleIndex].x >= pressureVentDensityThreshold && pos.y > 0 && abs(pos.x - pressureVentLocalX) <= pressureVentWidth * 0.5;
+		if (!passThroughVent)
+		{
+			pos.y = halfSize.y * sign(pos.y);
+			vel.y *= -collisionDamping;
+		}
+	}
+
+	// The optional internal test bar rotates with the tank.
+	if (obstacleEnabled != 0)
+	{
+	const float2 obstacleHalfSize = obstacleSize * 0.5;
+	float2 obstacleEdgeDst = obstacleHalfSize - abs(pos - obstacleCentre);
+	if (obstacleEdgeDst.x >= 0 && obstacleEdgeDst.y >= 0)
+	{
+		if (obstacleEdgeDst.x < obstacleEdgeDst.y)
+		{
+			pos.x = obstacleHalfSize.x * sign(pos.x - obstacleCentre.x) + obstacleCentre.x;
+			vel.x *= -collisionDamping;
+		}
+		else
+		{
+			pos.y = obstacleHalfSize.y * sign(pos.y - obstacleCentre.y) + obstacleCentre.y;
+			vel.y *= -collisionDamping;
+		}
+	}
+	}
+
+	// Transform the corrected position and velocity back to world coordinates.
+	Positions[particleIndex] = float2(c * pos.x - s * pos.y, s * pos.x + c * pos.y) + boundsCentre;
+	Velocities[particleIndex] = float2(c * vel.x - s * vel.y, s * vel.x + c * vel.y);
+}
+[numthreads(NumThreads,1,1)]
+void ExternalForces(uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= numParticles) return;
+
+	// Gravity, interaction, and heat converted into particle thermal energy and buoyant motion.
+	float2 accel = ExternalForces(Positions[id.x], Velocities[id.x]);
+	float c = cos(boundsRotationRadians);
+	float s = sin(boundsRotationRadians);
+	float2 relativePos = Positions[id.x] - boundsCentre;
+	float2 localPos = float2(c * relativePos.x + s * relativePos.y, -s * relativePos.x + c * relativePos.y);
+	float heightAboveBase = localPos.y + boundsSize.y * 0.5;
+	float focus = saturate(burnerFocus);
+	// Read the thermally conducting vessel base. Flame energy is applied to this
+	// wall state by UpdateWallTemperature, then conducted into bottom-layer water.
+	float bottomLayerThickness = max(0.08, smoothingRadius * 0.65);
+	float normalizedWallX = saturate((localPos.x + boundsSize.x * 0.5) / max(wallSegmentWidth * max(1u, wallSegmentCount - 1u), 1e-4));
+	float wallPosition = normalizedWallX * max(0.0, (float)wallSegmentCount - 1.0);
+	uint wallLeft = min((uint)round(wallPosition), wallSegmentCount - 1u);
+	float wallTemperature = WallTemperatureForFluid[wallLeft];
+	float energy = ThermalEnergy[id.x];
+	if (ParticlePhase[id.x] == 0 && heightAboveBase >= 0 && heightAboveBase <= bottomLayerThickness)
+	{
+		float contact = 1.0 - heightAboveBase / bottomLayerThickness;
+		float transfer = min(1.0, wallWaterTransferRate * deltaTime * contact);
+		// Signed exchange: hot metal heats water; hotter water returns heat to metal.
+		energy += (wallTemperature - energy) * transfer;
+	}
+	// Heat leaves through the exposed liquid surface and from vapour. Interior
+	// liquid does not lose heat directly; its energy changes by conduction.
+	bool exposedLiquidSurface = ParticlePhase[id.x] == 0
+		&& Densities[id.x].x < targetDensity * surfaceDensityFraction;
+	// Only exposed liquid loses heat directly to ambient. Vapour cools by
+	// exchanging heat with surrounding liquid/air in DiffuseThermalEnergy.
+	float phaseCooling = ParticlePhase[id.x] == 0 && exposedLiquidSurface ? thermalCooling : 0.0;
+	energy += (ambientTemperatureC - energy) * phaseCooling * deltaTime;
+	ThermalEnergy[id.x] = clamp(energy, 0.0, 1000.0);
+	if (ParticlePhase[id.x] == 0)
+		// Boussinesq approximation: warm water is less dense and rises; pressure
+		// forces in the liquid then drive the return flow that forms convection cells.
+		accel.y += max(0.0, energy - ambientTemperatureC) * liquidThermalBuoyancy * max(0.0, -gravity);
+	else
+		accel.y += saturate((energy - condensationThreshold) / max(0.1, evaporationThreshold - condensationThreshold)) * vapourBuoyancy;
+	Velocities[id.x] += accel * deltaTime;
+
+	// Predict
+	const float predictionFactor = 1 / 120.0;
+	PredictedPositions[id.x] = Positions[id.x] + Velocities[id.x] * predictionFactor;
+}
+
+[numthreads(NumThreads, 1, 1)]
+void UpdateWallTemperature(uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= wallSegmentCount) return;
+	float current = WallTemperatureRead[id.x];
+	float left = WallTemperatureRead[id.x > 0 ? id.x - 1 : id.x];
+	float right = WallTemperatureRead[id.x + 1 < wallSegmentCount ? id.x + 1 : id.x];
+	float metresPerUnit = max(metresPerSimulationUnit, 1e-6);
+	float dxMetres = max(wallSegmentWidth * metresPerUnit, 1e-6);
+	float diffusion = wallThermalDiffusivity * deltaTime / (dxMetres * dxMetres);
+	float lateralChange = diffusion * (left - 2.0 * current + right);
+	float localX = -boundsSize.x * 0.5 + id.x * wallSegmentWidth;
+	float focus = saturate(burnerFocus);
+	float burnerRadius = lerp(5.0, 1.5, focus);
+	float xOffset = localX - burnerLocalX;
+	float flameContact = exp(-0.5 * xOffset * xOffset / max(0.1, burnerRadius * burnerRadius));
+	float heatInput = burnerPower * flameContact * deltaTime * 6.4 / max(wallHeatCapacityScale, 1e-4);
+	float ambientLoss = (ambientTemperatureC - current) * wallAmbientCoolingRate * deltaTime;
+	float waterHeatGain = 0.0;
+	if (wallSpatialReady != 0)
+	{
+		float bottomLayerThickness = max(0.08, smoothingRadius * 0.65);
+		float2 localSample = float2(localX, -boundsSize.y * 0.5 + bottomLayerThickness * 0.5);
+		float c = cos(boundsRotationRadians);
+		float s = sin(boundsRotationRadians);
+		float2 samplePos = float2(c * localSample.x - s * localSample.y, s * localSample.x + c * localSample.y) + boundsCentre;
+		int2 originCell = GetCell2D(samplePos, smoothingRadius);
+		for (int cell = 0; cell < 9; cell++)
+		{
+			uint hash = HashCell2D(originCell + offsets2D[cell]);
+			uint key = KeyFromHash(hash, numParticles);
+			uint currIndex = SpatialOffsets[key];
+			while (currIndex < numParticles)
+			{
+				uint particleIndex = currIndex++;
+				if (SpatialKeys[particleIndex] != key) break;
+				if (ParticlePhase[particleIndex] != 0) continue;
+				float2 particlePos = Positions[particleIndex] - boundsCentre;
+				float2 particleLocal = float2(c * particlePos.x + s * particlePos.y, -s * particlePos.x + c * particlePos.y);
+				float particleHeight = particleLocal.y + boundsSize.y * 0.5;
+				if (abs(particleLocal.x - localX) > wallSegmentWidth * 0.5 || particleHeight < 0 || particleHeight > bottomLayerThickness) continue;
+				float contact = 1.0 - particleHeight / bottomLayerThickness;
+				float transfer = min(1.0, wallWaterTransferRate * deltaTime * contact);
+				waterHeatGain += (current - ThermalEnergy[particleIndex]) * transfer;
+			}
+		}
+	}
+	// Subtract the same heat the bottom-layer particles receive. wallHeatCapacityScale
+	// is the base's heat capacity expressed in particle-heat-capacity units.
+	WallTemperatureNext[id.x] = max(ambientTemperatureC, current + lateralChange + heatInput + ambientLoss - waterHeatGain / max(wallHeatCapacityScale, 1e-4));
+}
+
+[numthreads(NumThreads, 1, 1)]
+void ApplyWallTemperature(uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= wallSegmentCount) return;
+	WallTemperatureCurrent[id.x] = WallTemperatureNext[id.x];
+}
+
+[numthreads(NumThreads,1,1)]
+void UpdateSpatialHash (uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= numParticles) return;
+	uint index = id.x;
+	int2 cell = GetCell2D(PredictedPositions[index], smoothingRadius);
+	uint hash = HashCell2D(cell);
+	uint key = KeyFromHash(hash, numParticles);
+	SpatialKeys[id.x] = key;
+}
+
+RWStructuredBuffer<float2> SortTarget_Positions;
+RWStructuredBuffer<float2> SortTarget_PredictedPositions;
+RWStructuredBuffer<float2> SortTarget_Velocities;
+
+[numthreads(NumThreads,1,1)]
+void Reorder (uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= numParticles) return;
+
+	uint sortedIndex = SortedIndices[id.x];
+	SortTarget_Positions[id.x] = InputPositions[sortedIndex];
+	SortTarget_PredictedPositions[id.x] = InputPredictedPositions[sortedIndex];
+	SortTarget_Velocities[id.x] = InputVelocities[sortedIndex];
+	SortTarget_ThermalEnergy[id.x] = InputThermalEnergy[sortedIndex];
+	SortTarget_ParticlePhase[id.x] = InputParticlePhase[sortedIndex];
+}
+
+
+[numthreads(NumThreads,1,1)]
+void ReorderCopyback (uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= numParticles) return;
+	
+	Positions[id.x] = InputSortedPositions[id.x];
+	PredictedPositions[id.x] = InputSortedPredictedPositions[id.x];
+	Velocities[id.x] = InputSortedVelocities[id.x];
+	ThermalEnergy[id.x] = InputSortedThermalEnergy[id.x];
+	ParticlePhase[id.x] = InputSortedParticlePhase[id.x];
+}
+
+
+[numthreads(NumThreads,1,1)]
+void CalculateDensities (uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= numParticles) return;
+
+	float2 pos = PredictedPositions[id.x];
+	Densities[id.x] = CalculateDensity(pos, ParticlePhase[id.x]);
+}
+
+[numthreads(NumThreads,1,1)]
+void CalculatePressureForce (uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= numParticles) return;
+	uint phase = ParticlePhase[id.x];
+	if (phase > 1) return;
+
+	float density = Densities[id.x][0];
+	if (density <= 1e-5) return;
+	float densityNear = Densities[id.x][1];
+	float pressure = phase == 0 ? PressureFromDensity(density) : max(0, density - targetDensity * vapourDensityRatio) * pressureMultiplier * vapourPressureScale;
+	float nearPressure = phase == 0 ? NearPressureFromDensity(densityNear) : 0;
+	float2 pressureForce = 0;
+	
+	float2 pos = PredictedPositions[id.x];
+	int2 originCell = GetCell2D(pos, smoothingRadius);
+	float sqrRadius = smoothingRadius * smoothingRadius;
+
+	// Neighbour search
+	for (int i = 0; i < 9; i ++)
+	{
+		uint hash = HashCell2D(originCell + offsets2D[i]);
+		uint key = KeyFromHash(hash, numParticles);
+		uint currIndex = SpatialOffsets[key];
+
+		while (currIndex < numParticles)
+		{
+			uint neighbourIndex = currIndex;
+			currIndex ++;
+
+			// Skip if looking at self
+			if (neighbourIndex == id.x) continue;
+			
+			uint neighbourKey = SpatialKeys[neighbourIndex];
+			// Exit if no longer looking at correct bin
+			if (neighbourKey != key) break;
+			if (ParticlePhase[neighbourIndex] != phase)
+			{
+				float2 otherPos = PredictedPositions[neighbourIndex];
+				float2 crossOffset = otherPos - pos;
+				float crossDistance = length(crossOffset);
+				if (crossDistance > 1e-5 && crossDistance < smoothingRadius)
+				{
+					float overlap = 1.0 - crossDistance / smoothingRadius;
+					float2 awayFromOtherPhase = -crossOffset / crossDistance;
+					pressureForce += awayFromOtherPhase * interphaseRepulsion * pressureMultiplier * overlap * overlap;
+				}
+				continue;
+			}
+			
+			float2 neighbourPos = PredictedPositions[neighbourIndex];
+			float2 offsetToNeighbour = neighbourPos - pos;
+			float sqrDstToNeighbour = dot(offsetToNeighbour, offsetToNeighbour);
+
+			// Skip if not within radius
+			if (sqrDstToNeighbour > sqrRadius) continue;
+
+			// Calculate pressure force
+			float dst = sqrt(sqrDstToNeighbour);
+			float2 dirToNeighbour = dst > 0 ? offsetToNeighbour / dst : float2(0, 1);
+
+			float neighbourDensity = Densities[neighbourIndex][0];
+			float neighbourNearDensity = Densities[neighbourIndex][1];
+			float neighbourPressure = phase == 0 ? PressureFromDensity(neighbourDensity) : max(0, neighbourDensity - targetDensity * vapourDensityRatio) * pressureMultiplier * vapourPressureScale;
+			float neighbourNearPressure = phase == 0 ? NearPressureFromDensity(neighbourNearDensity) : 0;
+
+			float sharedPressure = (pressure + neighbourPressure) * 0.5;
+			float sharedNearPressure = (nearPressure + neighbourNearPressure) * 0.5;
+
+			pressureForce += dirToNeighbour * DensityDerivative(dst, smoothingRadius) * sharedPressure / max(neighbourDensity, 1e-5);
+			if (phase == 0 && neighbourNearDensity > 1e-5)
+				pressureForce += dirToNeighbour * NearDensityDerivative(dst, smoothingRadius) * sharedNearPressure / neighbourNearDensity;
+		}
+	}
+
+	float2 acceleration = pressureForce / density;
+	Velocities[id.x] += acceleration * deltaTime;//
+}
+
+
+
+[numthreads(NumThreads,1,1)]
+void CalculateViscosity (uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= numParticles) return;
+	uint phase = ParticlePhase[id.x];
+	if (phase > 1) return;
+	
+		
+	float2 pos = PredictedPositions[id.x];
+	int2 originCell = GetCell2D(pos, smoothingRadius);
+	float sqrRadius = smoothingRadius * smoothingRadius;
+
+	float2 viscosityForce = 0;
+	float2 crossPhaseVelocitySum = 0;
+	float crossPhaseWeight = 0;
+	float2 velocity = Velocities[id.x];
+
+	for (int i = 0; i < 9; i ++)
+	{
+		uint hash = HashCell2D(originCell + offsets2D[i]);
+		uint key = KeyFromHash(hash, numParticles);
+		uint currIndex = SpatialOffsets[key];
+
+		while (currIndex < numParticles)
+		{
+			uint neighbourIndex = currIndex;
+			currIndex ++;
+
+			// Skip if looking at self
+			if (neighbourIndex == id.x) continue;
+			
+			uint neighbourKey = SpatialKeys[neighbourIndex];
+			// Exit if no longer looking at correct bin
+			if (neighbourKey != key) break;
+			float2 neighbourPos = PredictedPositions[neighbourIndex];
+			float2 offsetToNeighbour = neighbourPos - pos;
+			float sqrDstToNeighbour = dot(offsetToNeighbour, offsetToNeighbour);
+
+			// Skip if not within radius
+			if (sqrDstToNeighbour > sqrRadius) continue;
+
+			float dst = sqrt(sqrDstToNeighbour);
+			float2 neighbourVelocity = Velocities[neighbourIndex];
+			float weight = ViscosityKernel(dst, smoothingRadius);
+			if (ParticlePhase[neighbourIndex] == phase)
+				viscosityForce += (neighbourVelocity - velocity) * weight;
+			else
+			{
+				crossPhaseVelocitySum += (neighbourVelocity - velocity) * weight;
+				crossPhaseWeight += weight;
+			}
+		}
+
+	}
+	float phaseViscosity = phase == 0 ? 1.0 : vapourViscosityScale;
+	Velocities[id.x] += viscosityForce * viscosityStrength * phaseViscosity * deltaTime;
+	if (crossPhaseWeight > 1e-5)
+	{
+		float blend = 1.0 - exp(-interphaseDrag * deltaTime);
+		Velocities[id.x] += (crossPhaseVelocitySum / crossPhaseWeight) * blend;
+	}
+}
+
+[numthreads(NumThreads, 1, 1)]
+void UpdatePositions(uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= numParticles) return;
+	if (ParticlePhase[id.x] > 1) return;
+
+	Positions[id.x] += Velocities[id.x] * deltaTime;
+	HandleCollisions(id.x);
+}
+
+[numthreads(NumThreads, 1, 1)]
+void PhaseChange(uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= numParticles) return;
+	uint phase = ParticlePhase[id.x];
+	float energy = ThermalEnergy[id.x];
+	float density = Densities[id.x].x;
+	float2 pos = PredictedPositions[id.x];
+	int2 originCell = GetCell2D(pos, smoothingRadius);
+	float liquidSupportBelow = 0;
+	float liquidSupportAbove = 0;
+	float liquidSupportTotal = 0;
+	float liquidTemperatureWeighted = 0;
+	float sqrRadius = smoothingRadius * smoothingRadius;
+	for (int i = 0; i < 9; i++)
+	{
+		uint hash = HashCell2D(originCell + offsets2D[i]);
+		uint key = KeyFromHash(hash, numParticles);
+		uint currIndex = SpatialOffsets[key];
+		while (currIndex < numParticles)
+		{
+			uint neighbourIndex = currIndex++;
+			if (SpatialKeys[neighbourIndex] != key) break;
+			if (ParticlePhase[neighbourIndex] != 0) continue;
+			float2 offset = PredictedPositions[neighbourIndex] - pos;
+			float sqrDistance = dot(offset, offset);
+			if (sqrDistance > sqrRadius) continue;
+			float support = DensityKernel(sqrt(sqrDistance), smoothingRadius);
+			liquidSupportTotal += support;
+			liquidTemperatureWeighted += ThermalEnergy[neighbourIndex] * support;
+			if (offset.y < -0.1 * smoothingRadius) liquidSupportBelow += support;
+			else if (offset.y > 0.1 * smoothingRadius) liquidSupportAbove += support;
+		}
+	}
+	float minimumSupport = targetDensity * nearSurfaceDensityFraction;
+	bool upwardFacingLiquidSurface = liquidSupportBelow > minimumSupport && liquidSupportAbove < liquidSupportBelow * 0.25;
+	bool immersedInLiquid = liquidSupportAbove > minimumSupport && liquidSupportBelow > minimumSupport;
+	float surroundingLiquidTemperature = liquidSupportTotal > 1e-5 ? liquidTemperatureWeighted / liquidSupportTotal : ambientTemperatureC;
+	float c = cos(boundsRotationRadians);
+	float s = sin(boundsRotationRadians);
+	float2 relativePos = pos - boundsCentre;
+	float2 localPos = float2(c * relativePos.x + s * relativePos.y, -s * relativePos.x + c * relativePos.y);
+	float heightAboveBase = localPos.y + boundsSize.y * 0.5;
+	float burnerRadius = lerp(5.0, 1.5, saturate(burnerFocus));
+	float siteSpacing = max(nucleationSiteSpacing, smoothingRadius * 4.0);
+	float siteIndex = round((localPos.x - burnerLocalX) / siteSpacing);
+	float siteX = burnerLocalX + siteIndex * siteSpacing;
+	bool atHeatedBottomSite = burnerPower > 0
+		&& heightAboveBase <= max(0.08, smoothingRadius * 0.65)
+		&& liquidSupportAbove > minimumSupport
+		&& liquidSupportBelow < liquidSupportAbove * 0.25
+		&& abs(localPos.x - siteX) <= max(0.1, smoothingRadius * 1.2)
+		&& abs(localPos.x - burnerLocalX) <= burnerRadius;
+	if (phase == 0)
+	{
+		bool exposedSurface = density < targetDensity * surfaceDensityFraction && upwardFacingLiquidSurface;
+		bool surfaceEvaporation = exposedSurface && energy >= evaporationThreshold;
+		bool wallBoiling = atHeatedBottomSite && energy >= evaporationThreshold;
+		if (surfaceEvaporation || wallBoiling)
+		{
+			ParticlePhase[id.x] = 1;
+			ThermalEnergy[id.x] = max(ambientTemperatureC, energy - latentHeat);
+		}
+	}
+	else if (phase == 1)
+	{
+		// Vapour condenses only while immersed, after it cools below both the
+		// configured saturation proxy and the surrounding liquid temperature.
+		if (immersedInLiquid && liquidSupportTotal > minimumSupport * 2.0 && energy < condensationThreshold && energy < surroundingLiquidTemperature)
+		{
+			ParticlePhase[id.x] = 0;
+			ThermalEnergy[id.x] = min(1000.0, energy + latentHeat);
+		}
+	}
+}
+
+[numthreads(NumThreads, 1, 1)]
+void DiffuseThermalEnergy(uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= numParticles) return;
+	float energy = ThermalEnergy[id.x];
+
+	float2 pos = PredictedPositions[id.x];
+	int2 originCell = GetCell2D(pos, smoothingRadius);
+	float sqrRadius = smoothingRadius * smoothingRadius;
+	float weightedTemperatureDifference = 0;
+	float liquidNeighbourWeight = 0;
+	float alphaSelf = ParticlePhase[id.x] == 0 ? liquidThermalDiffusivity : vapourThermalDiffusivity * vapourCoolingMultiplier;
+	for (int i = 0; i < 9; i++)
+	{
+		uint hash = HashCell2D(originCell + offsets2D[i]);
+		uint key = KeyFromHash(hash, numParticles);
+		uint currIndex = SpatialOffsets[key];
+		while (currIndex < numParticles)
+		{
+			uint neighbourIndex = currIndex++;
+			if (SpatialKeys[neighbourIndex] != key) break;
+			float2 offset = PredictedPositions[neighbourIndex] - pos;
+			float sqrDistance = dot(offset, offset);
+			if (sqrDistance > sqrRadius) continue;
+			float weight = ViscosityKernel(sqrt(sqrDistance), smoothingRadius);
+			if (ParticlePhase[id.x] == 1 && ParticlePhase[neighbourIndex] == 0)
+				liquidNeighbourWeight += weight;
+			float alphaNeighbour = ParticlePhase[neighbourIndex] == 0 ? liquidThermalDiffusivity : vapourThermalDiffusivity * vapourCoolingMultiplier;
+			// Symmetric harmonic mean gives the same pair conductance in both directions.
+			float alphaPair = (alphaSelf + alphaNeighbour) > 0
+				? 2.0 * alphaSelf * alphaNeighbour / (alphaSelf + alphaNeighbour)
+				: 0.0;
+			weightedTemperatureDifference += (ThermalEnergy[neighbourIndex] - energy) * weight * alphaPair;
+		}
+	}
+
+	// The 2D Poly6 kernel has second moment 0.1 h^2 per axis, so its local
+	// Laplacian approximation is 20 * (weighted mean - local value) / h^2.
+	// A fixed reference weight keeps pairwise flux symmetric and conserves the
+	// temperature-proxy sum under this equal-capacity particle approximation.
+	float h = max(smoothingRadius, 1e-4);
+	float metresPerUnit = max(metresPerSimulationUnit, 1e-6);
+	float referenceWeight = max(targetDensity, 1e-4);
+	float diffusionScale = thermalDiffusionRate * deltaTime * 20.0
+		/ (h * h * referenceWeight * metresPerUnit * metresPerUnit);
+	float maxAlphaPhysical = max(liquidThermalDiffusivity, vapourThermalDiffusivity * vapourCoolingMultiplier);
+	// Explicit diffusion stability guard, with headroom for local density variation.
+	float stableScale = 0.25 / max(1e-12, 2.0 * maxAlphaPhysical * referenceWeight);
+	diffusionScale = min(diffusionScale, stableScale);
+	float diffusedEnergy = energy + diffusionScale * weightedTemperatureDifference;
+	if (ParticlePhase[id.x] == 1 && liquidNeighbourWeight <= 1e-5)
+	{
+		float vapourAmbientRate = thermalCooling * vapourCoolingMultiplier;
+		diffusedEnergy += (ambientTemperatureC - diffusedEnergy) * (1.0 - exp(-vapourAmbientRate * deltaTime));
+	}
+	ThermalEnergyNext[id.x] = max(ambientTemperatureC, diffusedEnergy);
+}
+
+[numthreads(NumThreads, 1, 1)]
+void ApplyThermalEnergy(uint3 id : SV_DispatchThreadID)
+{
+	if (id.x >= numParticles) return;
+	ThermalEnergy[id.x] = ThermalEnergyNext[id.x];
+}

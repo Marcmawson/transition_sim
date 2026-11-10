@@ -1,0 +1,73 @@
+#pragma kernel SimulateFlame
+
+RWStructuredBuffer<float4> FlameState;    // x, y, age, lifetime
+RWStructuredBuffer<float4> FlameVelocity; // vx, vy, random seed, unused
+
+uint particleCount;
+float deltaTime;
+float timeNow;
+float2 plumeOrigin;
+int burnerEnabled;
+float airCollar;
+float burnerPower;
+
+float Hash(float n)
+{
+    return frac(sin(n * 127.1 + 311.7) * 43758.5453);
+}
+
+void Respawn(uint i, float seed)
+{
+    float r0 = Hash(seed + 1.7);
+    float r1 = Hash(seed + 9.2);
+    float focus = saturate(airCollar);
+    float nozzleWidth = lerp(0.65, 0.18, focus);
+    FlameState[i] = float4(plumeOrigin + float2((r0 - 0.5) * nozzleWidth, 0), 0, lerp(0.32, 0.72, r1));
+    FlameVelocity[i] = float4((r0 - 0.5) * 1.4, lerp(2.0, 5.0, r1) + burnerPower * 0.055, seed, 0);
+}
+
+[numthreads(64, 1, 1)]
+void SimulateFlame(uint3 id : SV_DispatchThreadID)
+{
+    uint i = id.x;
+    if (i >= particleCount) return;
+
+    float4 state = FlameState[i];
+    float4 velocity = FlameVelocity[i];
+
+    if (burnerEnabled == 0)
+    {
+        FlameState[i].z = FlameState[i].w + 1;
+        return;
+    }
+
+    if (state.z >= state.w || state.w <= 0)
+    {
+        Respawn(i, velocity.z + 1.0 + i * 0.013);
+        return;
+    }
+
+    float focus = saturate(airCollar);
+    float t = timeNow * 7.0 + velocity.z * 19.0 + state.y * 1.4;
+    float turbulence = sin(t) + 0.45 * sin(t * 1.91 + velocity.z * 2.3);
+    float spread = lerp(2.5, 0.72, focus);
+    float awayFromAxis = state.x - plumeOrigin.x;
+
+    velocity.x += (turbulence * (1.0 - focus) * 9.0 - awayFromAxis * (0.7 + focus * 1.4)) * deltaTime;
+    velocity.y += (8.0 + burnerPower * 0.20 + turbulence * 2.0) * deltaTime;
+    velocity.xy *= exp(-deltaTime * 0.65);
+    state.xy += velocity.xy * deltaTime;
+    state.z += deltaTime;
+
+    // Turbulent entrainment broadens the plume with height; the collar restrains spread.
+    float plumeWidth = spread + max(0, state.y - plumeOrigin.y) * lerp(0.12, 0.035, focus);
+    if (state.z >= state.w || abs(state.x - plumeOrigin.x) > plumeWidth || state.y - plumeOrigin.y > 9.0)
+    {
+        FlameState[i] = float4(state.xy, state.w + 1, state.w);
+        FlameVelocity[i] = velocity;
+        return;
+    }
+
+    FlameState[i] = state;
+    FlameVelocity[i] = velocity;
+}
