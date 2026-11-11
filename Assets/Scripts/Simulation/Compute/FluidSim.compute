@@ -36,6 +36,9 @@ const float gravity;
 const float deltaTime;
 const float simTime;
 const float collisionDamping;
+const float predictionTime;
+const float4 beakerCollision;
+const float beakerRimY;
 const float smoothingRadius;
 const float targetDensity;
 const float pressureMultiplier;
@@ -130,6 +133,34 @@ void ResolveCollisions(inout float3 pos, inout float3 vel, float collisionDampin
     vel = mul(localToWorld, float4(velocityLocal, 0)).xyz;
 }
 
+void ResolveBeaker(float3 previous, inout float3 position, inout float3 velocity)
+{
+    float radius = beakerCollision.z;
+    if (radius <= 0) return;
+    float2 centre = beakerCollision.xy;
+    float floorY = beakerCollision.w;
+    float2 radial = position.xz - centre;
+    float distance = length(radial);
+    float2 previousRadial = previous.xz - centre;
+    bool wasInside = previous.y >= floorY && previous.y < beakerRimY &&
+        dot(previousRadial, previousRadial) <= radius * radius * 1.00001;
+    bool enteredOpening = previous.y >= beakerRimY && distance <= radius;
+    if (position.y >= beakerRimY || (!wasInside && !enteredOpening)) return;
+
+    if (position.y < floorY)
+    {
+        position.y = floorY;
+        if (velocity.y < 0) velocity.y *= -collisionDamping;
+    }
+    if (distance > radius)
+    {
+        float2 normal = radial / distance;
+        position.xz = centre + normal * radius;
+        float outward = dot(velocity.xz, normal);
+        if (outward > 0) velocity.xz -= (1 + collisionDamping) * outward * normal;
+    }
+}
+
 [numthreads(ThreadGroupSize, 1, 1)]
 void ExternalForces(uint3 id : SV_DispatchThreadID)
 {
@@ -140,7 +171,7 @@ void ExternalForces(uint3 id : SV_DispatchThreadID)
     Velocities[id.x] += float3(0, gravity, 0) * deltaTime;
 
     // Predict
-    PredictedPositions[id.x] = Positions[id.x] + Velocities[id.x] * 1 / 120.0;
+    PredictedPositions[id.x] = Positions[id.x] + Velocities[id.x] * predictionTime;
 }
 
 [numthreads(ThreadGroupSize, 1, 1)]
@@ -465,9 +496,10 @@ void UpdatePositions(uint3 id : SV_DispatchThreadID)
         return;
 
     float3 vel = Velocities[id.x];
-    float3 pos = Positions[id.x];
-    pos += vel * deltaTime;
+    float3 previous = Positions[id.x];
+    float3 pos = previous + vel * deltaTime;
 
+    ResolveBeaker(previous, pos, vel);
     ResolveCollisions(pos, vel, collisionDamping);
 
     // Write results

@@ -30,10 +30,11 @@ namespace Seb.Fluid.Rendering
 		ComputeBuffer argsBuffer;
 		Texture2D gradientTexture;
 		DisplayMode modeOld;
-		bool needsUpdate;
+		bool needsUpdate = true;
 
 		void LateUpdate()
 		{
+			if (sim == null || sim.positionBuffer == null) return;
 			UpdateSettings();
 
 			if (mode != DisplayMode.None)
@@ -48,6 +49,11 @@ namespace Seb.Fluid.Rendering
 			if (modeOld != mode)
 			{
 				modeOld = mode;
+				if (mesh != null) Destroy(mesh);
+				if (mat != null) Destroy(mat);
+				mesh = null;
+				mat = null;
+				needsUpdate = true;
 				if (mode != DisplayMode.None)
 				{
 					if (mode == DisplayMode.Billboard) mesh = QuadGenerator.GenerateQuadMesh();
@@ -131,6 +137,9 @@ namespace Seb.Fluid.Rendering
 		void OnDestroy()
 		{
 			ComputeHelper.Release(argsBuffer);
+			if (mesh != null) Destroy(mesh);
+			if (mat != null) Destroy(mat);
+			if (gradientTexture != null) Destroy(gradientTexture);
 		}
 	}
 }

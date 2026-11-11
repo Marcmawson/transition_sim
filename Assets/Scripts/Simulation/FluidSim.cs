@@ -85,6 +85,23 @@ namespace Seb.Fluid.Simulation
 		Spawner3D.SpawnData spawnData;
 		Dictionary<ComputeBuffer, string> bufferNameLookup;
 
+		[HideInInspector] public bool manualControl;
+		[HideInInspector] public Vector4 beakerCollision; // Centre X/Z, inner radius, floor height.
+		[HideInInspector] public float beakerRimY;
+		public float SimulatedSeconds => simTimer;
+
+		public void AdvanceManually(float stepSeconds)
+		{
+			if (!manualControl || positionBuffer == null || stepSeconds <= 0)
+				throw new InvalidOperationException("A ready manual simulation and positive timestep are required.");
+			RunSimulationFrame(stepSeconds * iterationsPerFrame);
+		}
+
+		public void ResetParticles()
+		{
+			if (positionBuffer != null) SetInitialBufferData(spawnData);
+		}
+
 		void Start()
 		{
 			Debug.Log("Controls: Space = Play/Pause, Q = SlowMode, R = Reset");
@@ -264,6 +281,7 @@ namespace Seb.Fluid.Simulation
 
 		void Update()
 		{
+			if (manualControl) return;
 			// Run simulation
 			if (!isPaused)
 			{
@@ -362,6 +380,9 @@ namespace Seb.Fluid.Simulation
 			Vector3 simBoundsCentre = transform.position;
 
 			compute.SetFloat("deltaTime", stepDeltaTime);
+			compute.SetFloat("predictionTime", manualControl ? stepDeltaTime : 1f / 120f);
+			compute.SetVector("beakerCollision", beakerCollision);
+			compute.SetFloat("beakerRimY", beakerRimY);
 			compute.SetFloat("whiteParticleDeltaTime", frameDeltaTime);
 			compute.SetFloat("simTime", simTimer);
 			compute.SetFloat("gravity", gravity);
@@ -436,12 +457,13 @@ namespace Seb.Fluid.Simulation
 
 		void OnDestroy()
 		{
+			if (bufferNameLookup != null)
 			foreach (var kvp in bufferNameLookup)
 			{
 				Release(kvp.Key);
 			}
 
-			spatialHash.Release();
+			spatialHash?.Release();
 		}
 
 
