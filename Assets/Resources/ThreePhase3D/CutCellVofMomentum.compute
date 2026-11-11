@@ -1,0 +1,86 @@
+#pragma kernel RemapCutMomentum
+#include "VofCompensated.hlsl"
+
+StructuredBuffer<int4> Faces; // low group, high group, axis, active
+StructuredBuffer<int> Rows;
+StructuredBuffer<int> Incidence;
+StructuredBuffer<float2> GroupData;
+StructuredBuffer<float2> FaceData;
+RWStructuredBuffer<float2> Output;
+int GroupCount, FaceCount;
+
+float2 Group(int plane, int c) { return GroupData[plane * GroupCount + c]; }
+float2 Face(int plane, int f) { return FaceData[plane * FaceCount + f]; }
+
+float2 MeanVelocity(int group, int axis, int crossing)
+{
+    if (group < 0) return Face(3 + axis, crossing);
+    float2 area = Group(2 + axis, group);
+    if (Equal(area, V(0))) return V(0);
+    float2 sum = V(0);
+    for (int e = Rows[group]; e < Rows[group + 1]; e++)
+    {
+        int f = abs(Incidence[e]) - 1;
+        if (Faces[f].z == axis) sum = Add(sum, Mul(Face(0, f), Face(1, f)));
+    }
+    return Div(sum, area);
+}
+
+void Endpoint(int group, int axis, float2 area, float2 oldVelocity,
+    inout float2 mass, inout float2 expected, inout float2 impulse)
+{
+    if (group < 0) return;
+    float2 weight = Div(area, Group(2 + axis, group));
+    float2 initial = Mul(weight, Group(0, group));
+    mass = Add(mass, initial);
+    expected = Add(expected, Mul(weight, Group(1, group)));
+    impulse = Add(impulse, Mul(initial, oldVelocity));
+    for (int e = Rows[group]; e < Rows[group + 1]; e++)
+    {
+        int signedFace = Incidence[e], f = abs(signedFace) - 1;
+        float2 signedMass = Face(2, f);
+        float2 inward = signedFace > 0 ? -signedMass : signedMass;
+        if (Equal(inward, V(0))) continue;
+        int other = signedFace > 0 ? Faces[f].y : Faces[f].x;
+        float2 incomingVelocity = Less(inward, V(0)) ? oldVelocity : MeanVelocity(other, axis, f);
+        float2 portion = Mul(inward, weight);
+        mass = Add(mass, portion);
+        impulse = Add(impulse, Mul(portion, incomingVelocity));
+    }
+}
+
+[numthreads(64, 1, 1)]
+void RemapCutMomentum(uint3 id : SV_DispatchThreadID)
+{
+    int f = (int)id.x;
+    if (f >= FaceCount) return;
+    int4 face = Faces[f];
+    float2 mass = V(0), expected = V(0), p = V(0), u = V(0);
+    if (face.w != 0)
+    {
+        Endpoint(face.x, face.z, Face(0, f), Face(1, f), mass, expected, p);
+        Endpoint(face.y, face.z, Face(0, f), Face(1, f), mass, expected, p);
+        u = Div(p, expected);
+    }
+    float2 error = AbsPair(Sub(mass, expected));
+    Output[f] = u;
+    Output[FaceCount + f] = p;
+    Output[2 * FaceCount + f] = error;
+    Output[3 * FaceCount + f] = V(face.w != 0 && (!Less(V(0), expected) || Less(Mul(V(1e-9), expected), error)) ? 1 : 0);
+    float2 crossing = Face(2, f);
+    bool reversed = Less(crossing, V(0));
+    int donor = reversed ? face.y : face.x, recipient = reversed ? face.x : face.y;
+    for (int axis = 0; axis < 3; axis++)
+    {
+        float2 boundary = V(0), wall = V(0);
+        if (!Equal(crossing, V(0)))
+        {
+            float2 impulse = Mul(AbsPair(crossing), MeanVelocity(donor, axis, f));
+            if (donor < 0) boundary = impulse;
+            if (recipient < 0) boundary = -impulse;
+            else if (Equal(Group(2 + axis, recipient), V(0))) wall = -impulse;
+        }
+        Output[(4 + axis) * FaceCount + f] = boundary;
+        Output[(7 + axis) * FaceCount + f] = wall;
+    }
+}

@@ -159,8 +159,6 @@ namespace PhysicsSim.ThreePhase3D.Flow
             var correction = new double[faces];
             var divergence = new double[groups];
             var outgoing = new double[groups];
-            var increase = new double[groups];
-            var decrease = new double[groups];
             var planes = new ClipPlane?[plan.Grid.Cells.Count];
             var reservoir = new CutCellInflow[faces];
             double roundoff = 0;
@@ -215,11 +213,9 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 roundoff += Math.Abs(geometric - raw);
                 double delta = geometric - alpha * widthVolume;
                 correction[f] = delta;
-                increase[donor] += Math.Max(0, delta);
-                decrease[donor] += Math.Max(0, -delta);
             }
 
-            var work = new CutCellScalarWork(plan, fields, swept, correction, outgoing, increase, decrease, reservoir);
+            var work = new CutCellScalarWork(plan, fields, swept, correction, outgoing, reservoir);
             var output = apply == null ? ApplyReference(work) : apply(work);
             var next = output.Fields;
             roundoff += output.RoundoffM3;
@@ -249,8 +245,17 @@ namespace PhysicsSim.ThreePhase3D.Flow
             var swept = work.Swept;
             var correction = work.Correction;
             var outgoing = work.Outgoing;
-            var increase = work.Increase;
-            var decrease = work.Decrease;
+            var increase = new double[plan.GroupCount];
+            var decrease = new double[plan.GroupCount];
+            for (int f = 0; f < plan.FaceCount; f++)
+            {
+                if (swept[f] == 0) continue;
+                var face = plan.Faces[f];
+                int donor = swept[f] > 0 ? face.Low : face.High;
+                if (donor < 0) continue;
+                increase[donor] += Math.Max(0, correction[f]);
+                decrease[donor] += Math.Max(0, -correction[f]);
+            }
             var reservoir = work.Reservoir;
             int faces = plan.FaceCount;
             var next = new double[5][];
@@ -358,13 +363,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
     {
         internal readonly VariableCoefficientProjection Plan;
         internal readonly double[][] Fields;
-        internal readonly double[] Swept, Correction, Outgoing, Increase, Decrease;
+        internal readonly double[] Swept, Correction, Outgoing;
         internal readonly CutCellInflow[] Reservoir;
         internal CutCellScalarWork(VariableCoefficientProjection plan, double[][] fields, double[] swept,
-            double[] correction, double[] outgoing, double[] increase, double[] decrease, CutCellInflow[] reservoir)
+            double[] correction, double[] outgoing, CutCellInflow[] reservoir)
         {
             Plan = plan; Fields = fields; Swept = swept; Correction = correction;
-            Outgoing = outgoing; Increase = increase; Decrease = decrease; Reservoir = reservoir;
+            Outgoing = outgoing; Reservoir = reservoir;
         }
     }
 

@@ -11,9 +11,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly VariableCoefficientProjection plan;
         private readonly CutCellVofTransport transport;
         private readonly ComputeShader shader;
-        private readonly int build, apply, groupDispatch, faceDispatch;
+        private readonly int budget, build, apply, groupDispatch, faceDispatch;
         private readonly List<ComputeBuffer> owned = new List<ComputeBuffer>();
-        private readonly ComputeBuffer endpoints, rows, incidence, groups, candidates, transfers, updated;
+        private readonly ComputeBuffer endpoints, rows, incidence, groups, candidates, transfers, updated, donorBudget;
         private readonly VofFloatPair[] groupData, candidateData, transferData, updatedData;
 
         public CutCellGpuScalars(VariableCoefficientProjection plan, ComputeShader shader)
@@ -22,14 +22,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (shader == null || !SystemInfo.supportsComputeShaders)
                 throw new NotSupportedException("Cut-cell scalar compute shader is unavailable.");
             this.shader = shader;
+            budget = shader.FindKernel("BuildCutDonorBudget");
             build = shader.FindKernel("BuildCutFaceFlux");
             apply = shader.FindKernel("ApplyCutScalarFlux");
-            if (!shader.IsSupported(build) || !shader.IsSupported(apply))
+            if (!shader.IsSupported(budget) || !shader.IsSupported(build) || !shader.IsSupported(apply))
                 throw new NotSupportedException("Cut-cell scalar kernels are unsupported on " + SystemInfo.graphicsDeviceType);
             int ng = plan.GroupCount, nf = plan.FaceCount;
             groupDispatch = DispatchCount(ng);
             faceDispatch = DispatchCount(nf);
-            long bytes = 8L * ((CutCellScalarGpuLayout.GroupPlanes + CutCellScalarGpuLayout.StatePlanes) * (long)ng +
+            long bytes = 8L * ((CutCellScalarGpuLayout.GroupPlanes + CutCellScalarGpuLayout.StatePlanes + 2) * (long)ng +
                 (CutCellScalarGpuLayout.CandidatePlanes + CutCellScalarGpuLayout.TransferPlanes + 1) * (long)nf + 2) +
                 4L * (plan.Rows.Length + (long)Math.Max(1, plan.Incidence.Length));
             if (bytes > 512L * 1024 * 1024)
@@ -51,6 +52,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (plan.Incidence.Length > 0) incidence.SetData(plan.Incidence);
                 groups = Buffer(groupData.Length, 8);
                 candidates = Buffer(candidateData.Length, 8);
+                donorBudget = Buffer(2 * ng, 8);
                 transfers = Guarded(transferData.Length);
                 updated = Guarded(updatedData.Length);
             }
@@ -71,6 +73,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             candidates.SetData(candidateData);
             shader.SetInt("GroupCount", plan.GroupCount);
             shader.SetInt("FaceCount", plan.FaceCount);
+            shader.SetBuffer(budget, "Rows", rows);
+            shader.SetBuffer(budget, "Incidence", incidence);
+            shader.SetBuffer(budget, "Candidates", candidates);
+            shader.SetBuffer(budget, "DonorBudget", donorBudget);
+            shader.Dispatch(budget, groupDispatch, 1, 1);
+            shader.SetBuffer(build, "DonorBudget", donorBudget);
             shader.SetBuffer(build, "Endpoints", endpoints);
             shader.SetBuffer(build, "Groups", groups);
             shader.SetBuffer(build, "Candidates", candidates);

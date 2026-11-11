@@ -1,0 +1,5 @@
+Base GitHub commit: d91b3c3408385346661eeb63ac85423fefa0c2a4.
+CPU reference: .NET 8, Tools/ThreePhase3D/VofMain.cs, 85/85.
+DXC cs_6_0 compiled BuildCutDonorBudget, BuildCutFaceFlux, ApplyCutScalarFlux and RemapCutMomentum for DXIL and SPIR-V with warnings as errors.
+A standalone SwiftShader Vulkan harness used the production cut-cell GPU C# wrappers with ComputeShader and ComputeBuffer API shims. The harness ran the cut-cell kernels and CPU references for periodic transport and pressure.
+The expanded suite passed 121/121 checks, including 36 GPU-to-CPU comparisons. Unity Direct3D 11 execution of this increment remains pending.

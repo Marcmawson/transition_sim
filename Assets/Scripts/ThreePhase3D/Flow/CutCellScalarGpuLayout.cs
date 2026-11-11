@@ -5,7 +5,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
 {
     internal static class CutCellScalarGpuLayout
     {
-        internal const int GroupPlanes = 9, CandidatePlanes = 6, TransferPlanes = 8, StatePlanes = 5;
+        internal const int GroupPlanes = 7, CandidatePlanes = 6, TransferPlanes = 8, StatePlanes = 5;
 
         internal static void Pack(CutCellScalarWork work, VofFloatPair[] groups, VofFloatPair[] candidates)
         {
@@ -15,8 +15,6 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 for (int p = 0; p < StatePlanes; p++) groups[p * ng + c] = new VofFloatPair(work.Fields[p][c]);
                 groups[5 * ng + c] = new VofFloatPair(work.Plan.Volumes[c]);
                 groups[6 * ng + c] = new VofFloatPair(work.Outgoing[c]);
-                groups[7 * ng + c] = new VofFloatPair(work.Increase[c]);
-                groups[8 * ng + c] = new VofFloatPair(work.Decrease[c]);
             }
             for (int f = 0; f < nf; f++)
             {

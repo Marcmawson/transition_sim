@@ -12,14 +12,18 @@ namespace PhysicsSim.ThreePhase3D.Verification
         public delegate VofAdvance Advance(GeometricVof3D vof, VofFields state, double[][] velocity, double dt);
         public delegate CutCellTransportResult CutAdvance(VariableCoefficientProjection plan, CutCellInventories state,
             double[] velocity, double dt, Func<int, CutCellInflow> inflow);
+        public delegate CutCellMomentumResult CutMomentumAdvance(VariableCoefficientProjection plan, CutCellInventories before,
+            CutCellTransportResult after, double[] velocity, double liquidDensity, double gasDensity);
+        private readonly CutMomentumAdvance cutMomentumAdvance;
         private readonly Advance advance;
         private readonly CutAdvance cutAdvance;
         private readonly PeriodicVofProjection.PressureSolve pressureSolve;
         public VofChecks(Advance advance = null) : this(advance, null) { }
 
-        public VofChecks(Advance advance, PeriodicVofProjection.PressureSolve pressureSolve, CutAdvance cutAdvance = null)
+        public VofChecks(Advance advance, PeriodicVofProjection.PressureSolve pressureSolve, CutAdvance cutAdvance = null, CutMomentumAdvance cutMomentumAdvance = null)
         {
             this.cutAdvance = cutAdvance;
+            this.cutMomentumAdvance = cutMomentumAdvance;
             this.pressureSolve = pressureSolve ?? FlowCpuReference.Project;
             this.advance = advance ?? ((vof, state, velocity, dt) => vof.Advance(state, velocity, dt));
         }
@@ -99,15 +103,17 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 int face = plan.FaceIndex(0,i,0,0);
                 u[face] = .06 / plan.Faces[face].Area;
             }
-            var result = TransportCut(id, plan, transport, state,u,1,_ => new CutCellInflow(0,0,4,.2,new D3(u[plan.FaceIndex(0,0,0,0)],0,0)));
+            var result = TransportCut(id, plan, transport, state,u,1,_ => new CutCellInflow(0,0,4,.2,new D3(u[plan.FaceIndex(0,0,0,0)],.2,0)));
             int inlet = plan.FaceIndex(0,0,0,0);
             Check(id, "ambient gas inlet [m3]", result.GasFaceM3[inlet], .06, 1e-12);
             for (int field = 0; field < 5; field++)
                 Check(id, "field ledger " + field, result.Fields.Planes[field].Sum() -
                     state.Planes[field].Sum() - result.BoundaryInflow[field], 0, 1e-10);
             Check(id, "roundoff accounting [m3]", result.RoundoffM3, 0, 1e-10);
-            var updatedMomentum = transport.AdvanceMomentum(state, result, u, LiquidDensity, GasDensity);
+            var updatedMomentum = TransportCutMomentum(id, plan, transport, state, result, u);
             Check(id, "staggered phase mass closes [kg]", updatedMomentum.MaxDualMassErrorKg, 0, 1e-10);
+            Check(id, "transverse inflow momentum reaches wall ledger [kg m/s]",
+                updatedMomentum.WallImpulseKgMPerS[1], -GasDensity * .06 * .2, 1e-12);
             Check(id, "uniform velocity with open-boundary mass transfer [m/s]",
                 updatedMomentum.VelocityMPerS.Zip(u, (a,b) => Math.Abs(a-b)).Max(), 0, 2e-10);
             double beforeMomentum = state.LiquidM3.Zip(state.GasM3, (l,g) => LiquidDensity*l+GasDensity*g).Sum() * u[inlet];
@@ -143,7 +149,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
             var u = new double[plan.FaceCount];
             Set(0,1,0,0, .06); Set(2,1,0,1, .06); Set(0,1,0,1,-.06); Set(2,0,0,1,-.06);
             var transport = TransportCut(id, plan, solver, state,u,1);
-            var momentum = solver.AdvanceMomentum(state,transport,u,LiquidDensity,GasDensity);
+            var momentum = TransportCutMomentum(id, plan, solver, state, transport, u);
             Check(id, "liquid volume closes [m3]", transport.Fields.LiquidM3.Sum() - liquid.Sum(), 0, 1e-10);
             Check(id, "closed boundary ledger [m3]", transport.BoundaryInflow.Select(Math.Abs).Max(), 0, 0);
             Check(id, "staggered mass closes [kg]", momentum.MaxDualMassErrorKg, 0, 1e-10);
@@ -180,7 +186,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 u[loop[s]] = (s < 2 ? 1 : -1) * 1e-9 / plan.Faces[loop[s]].Area;
             var transport = new CutCellVofTransport(plan);
             var result = TransportCut(id, plan, transport, state,u,1);
-            var momentum = transport.AdvanceMomentum(state,result,u,LiquidDensity,GasDensity);
+            var momentum = TransportCutMomentum(id, plan, transport, state, result, u);
             Check(id, "phase volume closes through curved cut cells [m3]", result.Fields.LiquidM3.Sum() - liquid.Sum(), 0, 1e-13);
             Check(id, "staggered mass closes [kg]", momentum.MaxDualMassErrorKg, 0, 1e-12);
 
@@ -201,6 +207,23 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 }
                 return null;
             }
+        }
+
+        private CutCellMomentumResult TransportCutMomentum(string id, VariableCoefficientProjection plan,
+            CutCellVofTransport reference, CutCellInventories before, CutCellTransportResult after, double[] velocity)
+        {
+            var expected = reference.AdvanceMomentum(before, after, velocity, LiquidDensity, GasDensity);
+            if (cutMomentumAdvance == null) return expected;
+            var actual = cutMomentumAdvance(plan, before, after, velocity, LiquidDensity, GasDensity);
+            Compare("velocity [m/s]", actual.VelocityMPerS, expected.VelocityMPerS);
+            Compare("staggered momentum [kg m/s]", actual.MomentumKgMPerS, expected.MomentumKgMPerS);
+            Compare("boundary momentum [kg m/s]", actual.BoundaryMomentumKgMPerS, expected.BoundaryMomentumKgMPerS);
+            Compare("wall impulse [kg m/s]", actual.WallImpulseKgMPerS, expected.WallImpulseKgMPerS);
+            return actual;
+
+            void Compare(string quantity, double[] a, double[] b) =>
+                Check(id, "GPU vs CPU " + quantity, a.Zip(b, (x,y) => Math.Abs(x-y)).Max(),
+                    0, 1e-13 + 1e-10 * b.Select(Math.Abs).Max());
         }
 
         private CutCellTransportResult TransportCut(string id, VariableCoefficientProjection plan, CutCellVofTransport reference,
