@@ -49,6 +49,9 @@ internal static class SurfaceGeometryMain
         CheckSphericalDrop();
         CheckThermocapillarySlab();
         CheckWetting();
+        double coarseContactError = CheckSessileDrop(16);
+        if (!(CheckSessileDrop(24) < coarseContactError))
+            throw new InvalidOperationException("Contact patch localisation did not improve under refinement.");
         return 0;
     }
 
@@ -215,6 +218,83 @@ internal static class SurfaceGeometryMain
             throw new InvalidOperationException("Tracked wetting did not reproduce the prescribed contact flux.");
         Console.WriteLine($"Tracked wetting: receding speed={detected.SignedSpeedMPerS:G8} m/s; separated interface excluded.");
         Console.WriteLine($"Synthetic wetting: receding angle={angle:G8}°, traction={traction.X:G8} Pa, liquid ledger={ledger:G8} m^3");
+    }
+
+    private static double CheckSessileDrop(int n)
+    {
+        const double extent = .024, wallY = .0013, radius = .006, speed = .01;
+        const double angle = 60;
+        double h = extent / n;
+        double contactRadius = radius * Math.Sin(angle * Math.PI / 180);
+        var grid = new Grid3D(n, n / 2, n, new D3(h, h, h));
+        var wall = SurfacePrimitives.Box(new D3(-h, -h, -h), new D3(extent + h, wallY, extent + h));
+        var geometry = CutCellGeometry.Build(grid, wall);
+        var plan = new VariableCoefficientProjection(geometry, BoundaryConditions3D.Closed, _ => 997, _ => 0);
+        var profile = new WettingProfile("Synthetic flat wall", "Translating spherical-cap fixture", angle, .0001, h,
+            new[] { new WettingMeasurement(0, 65), new WettingMeasurement(.02, 75) },
+            new[] { new WettingMeasurement(0, 55), new WettingMeasurement(.02, 45) });
+        var solver = CutCellVofTransport.WithTrackedWetting(plan, profile);
+        var velocity = new double[plan.FaceCount];
+        for (int f = 0; f < velocity.Length; f++)
+            if (plan.Faces[f].Active != 0 && plan.Faces[f].Axis == 0) velocity[f] = speed;
+
+        // Two independently sampled snapshots of a prescribed translating cap.
+        // The second snapshot is shifted by 1 mm, equivalent to 0.1 s at speed.
+        double maximumRadialError = 0;
+        foreach (double xCentre in new[] { .0115, .0125 })
+        {
+            var centre = new D3(xCentre, wallY - radius * .5, .012);
+            var liquid = new double[plan.GroupCount];
+            var shape = grid.Cells;
+            for (int k = 0; k < shape.Z; k++)
+            for (int j = 0; j < shape.Y; j++)
+            for (int i = 0; i < shape.X; i++)
+            {
+                int cell = shape.Index(i, j, k), group = plan.GroupByCell[cell];
+                if (group < 0) continue;
+                var lower = grid.Lower(i, j, k);
+                double yLow = Math.Max(wallY, lower.Y), height = lower.Y + h - yLow;
+                int inside = 0;
+                const int samples = 10;
+                for (int z = 0; z < samples; z++)
+                for (int y = 0; y < samples; y++)
+                for (int x = 0; x < samples; x++)
+                {
+                    var p = new D3(lower.X + h * (x + .5) / samples, yLow + height * (y + .5) / samples,
+                        lower.Z + h * (z + .5) / samples) - centre;
+                    if (D3.Dot(p, p) < radius * radius) inside++;
+                }
+                liquid[group] += geometry.FluidVolumeM3[cell] * inside / (samples * samples * samples);
+            }
+
+            int advancing = 0, receding = 0, wrongSign = 0, contacts = 0;
+            double radialError = 0, angleError = 0;
+            foreach (int cell in geometry.Patches.Select(p => p.Cell).Distinct())
+            {
+                int group = plan.GroupByCell[cell];
+                if (group < 0 || liquid[group] <= 0 || liquid[group] >= plan.Volumes[group]) continue;
+                var normal = solver.EstimateNormal(cell, group, liquid);
+                var contact = solver.TrackContact(cell, group, liquid[group], normal, velocity);
+                if (contact == null) continue;
+                var p = contact.Wall.CentroidLocalM - centre;
+                double r = Math.Sqrt(p.X * p.X + p.Z * p.Z);
+                radialError = Math.Max(radialError, Math.Abs(r - contactRadius));
+                if (p.X > h && contact.SignedSpeedMPerS > 0) advancing++;
+                if (p.X < -h && contact.SignedSpeedMPerS < 0) receding++;
+                if (Math.Abs(p.X) > h && p.X * contact.SignedSpeedMPerS <= 0) wrongSign++;
+                double imposed = Math.Acos(D3.Dot(contact.InterfaceNormal(normal), contact.Wall.NormalLocal)) * 180 / Math.PI;
+                double cosine = D3.Dot(normal.Unit(), contact.Wall.NormalLocal);
+                double apparent = Math.Acos(Math.Max(-1, Math.Min(1, cosine))) * 180 / Math.PI;
+                double target = profile.AngleDegrees(contact.SignedSpeedMPerS, apparent);
+                angleError = Math.Max(angleError, Math.Abs(imposed - target));
+                contacts++;
+            }
+            Console.WriteLine($"Sessile cap {n} cells, centre={xCentre:G4} m: contacts={contacts}, advancing={advancing}, receding={receding}, wrong sign={wrongSign}, radius error={radialError:G5} m, angle error={angleError:G5} deg");
+            if (advancing == 0 || receding == 0 || wrongSign != 0 || !(radialError <= h) || !(angleError <= 1e-10))
+                throw new InvalidOperationException("Synthetic sessile-cap tracking check failed.");
+            maximumRadialError = Math.Max(maximumRadialError, radialError);
+        }
+        return maximumRadialError;
     }
 
     private static void CheckAlternateAxis()

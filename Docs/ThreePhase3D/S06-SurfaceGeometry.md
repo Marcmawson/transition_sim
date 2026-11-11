@@ -73,3 +73,11 @@ The fixture checks that contacts and wall impulse occur, liquid moves, and the v
 The Unity command **Physics Sim → Three Phase 3D → Run S06 coupled wetting GPU checks** runs the same synthetic beaker through eight accepted steps. It requires GPU clipping and GPU traction dispatches on every step and records the detected patch count and conservation ledgers. The GPU evaluates the two aperture-weighted traction contributions to each staggered face from the local velocity and wall tensor prepared on the CPU. The host compares each FP32 face impulse with the FP64 reference, then applies the returned impulse to momentum and the wall ledger before GPU pressure projection.
 
 The CPU still owns contact detection, wall geometry, coefficient assembly, and ledger checks. The Unity run uses the existing GPU clipping, scalar transport, momentum remap and pressure solver. A local SwiftShader Vulkan check executes the production traction shader with the other stages on the CPU. Unity Direct3D 11 verification covers the combined path.
+
+### Synthetic sessile-cap tracking check
+
+The CPU surface suite samples a prescribed 60° spherical cap above a flat wall at 1.5 mm and 1.0 mm grid spacing. It tests two positions separated by 1 mm and supplies a wall-relative translation speed of 0.01 m/s. The tracker must identify the advancing and receding sides, select the corresponding synthetic angle curve, and keep detected patch centroids within one cell width of the analytical contact circle. The maximum error must decrease under refinement. The centroid distance is a locator check for finite wall patches. The angle check tests the imposed reconstruction normal.
+
+The two snapshots prescribe the motion. A free sessile-drop evolution benchmark, slip-length sensitivity, and comparison against separately measured glass observations are still required for V13. The actual glass preparation, temperature, angle and speed measurements with uncertainty, slip length, and matching distance are pending under [MAT028](Materials.csv).
+
+The reported Unity run `s06-beaker-20261111T142027-2c19e7c3542a4fb59225a94ec8576e10` passed at [commit 5372635](https://github.com/Marcmawson/transition_sim/commit/5372635857edcfae9f9fd2babbad2d214542a892) with eight accepted steps, eight clipping dispatches, eight traction dispatches, and 184 contact patch occurrences.

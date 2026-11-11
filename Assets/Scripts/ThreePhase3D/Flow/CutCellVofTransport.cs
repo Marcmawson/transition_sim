@@ -471,7 +471,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             }
         }
 
-        private D3 EstimateNormal(int cell, int group, double[] liquid)
+        internal D3 EstimateNormal(int cell, int group, double[] liquid)
         {
             plan.Grid.Cells.Coordinates(cell, out int i, out int j, out int k);
             double alpha = liquid[group] / plan.Volumes[group];
