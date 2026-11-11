@@ -12,9 +12,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     {
         private const float VolumeMl = 9;
         private const float DropGapM = .01f;
-        private const float StepSeconds = .0005f;
-        private const float TestSeconds = .4f;
-        private const int StepsPerFrame = 8;
+        private const int TargetFrameRate = 60;
+        private const double StepSeconds = .0005;
+        private const int TestSteps = 800;
+        private const int MaxStepsPerFrame = 64;
         [SerializeField] private ComputeShader fluidCompute;
         [SerializeField] private Shader particleShader;
 
@@ -23,10 +24,27 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private GameObject solverObject;
         private GeometryInputs geometry;
         private bool running, measuring, finishOnNextFrame, readbackPending;
-        private double startTime;
-        private int measuredFrames;
+        private double startTime, lastTick, pendingSeconds;
+        private int measuredFrames, measuredSteps;
+        private int previousFrameRate, previousVSync;
         private string evidence;
         private float frameMs;
+
+        private void OnEnable()
+        {
+            previousFrameRate = Application.targetFrameRate;
+            previousVSync = QualitySettings.vSyncCount;
+            QualitySettings.vSyncCount = 0;
+            Application.targetFrameRate = TargetFrameRate;
+        }
+
+        private void OnDisable()
+        {
+            Application.targetFrameRate = previousFrameRate;
+            QualitySettings.vSyncCount = previousVSync;
+            running = measuring = finishOnNextFrame = false;
+            pendingSeconds = 0;
+        }
 
         private void Start()
         {
@@ -68,7 +86,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.compute = computeInstance;
             fluid.spawner = spawner;
             fluid.manualControl = true;
-            fluid.iterationsPerFrame = StepsPerFrame;
             fluid.gravity = -9.81f;
             // Start from the demo's liquid parameters scaled to metre-sized particles.
             fluid.smoothingRadius = .002f;
@@ -109,25 +126,42 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 FinishMeasurement();
             }
             if (!running || fluid == null || fluid.positionBuffer == null) return;
-            fluid.AdvanceManually(StepSeconds);
+            double now = Time.realtimeSinceStartupAsDouble;
+            pendingSeconds = Math.Min(pendingSeconds + now - lastTick, MaxStepsPerFrame * StepSeconds);
+            lastTick = now;
+            int steps = (int)(pendingSeconds / StepSeconds);
             if (measuring)
             {
                 measuredFrames++;
-                if (fluid.SimulatedSeconds >= TestSeconds - StepSeconds / 2)
-                {
-                    running = false;
-                    finishOnNextFrame = true;
-                }
+                steps = Math.Min(steps, TestSteps - measuredSteps);
             }
+            if (steps == 0) return;
+            fluid.AdvanceManually((float)StepSeconds, steps);
+            pendingSeconds -= steps * StepSeconds;
+            if (!measuring) return;
+            measuredSteps += steps;
+            if (measuredSteps == TestSteps)
+            {
+                running = false;
+                finishOnNextFrame = true;
+            }
+        }
+
+        private void SetRunning(bool value)
+        {
+            running = value;
+            pendingSeconds = 0;
+            lastTick = Time.realtimeSinceStartupAsDouble;
         }
 
         private void StartMeasurement()
         {
             fluid.ResetParticles();
             evidence = null;
-            measuredFrames = 0;
-            startTime = Time.realtimeSinceStartupAsDouble;
-            running = measuring = true;
+            measuredFrames = measuredSteps = 0;
+            SetRunning(true);
+            startTime = lastTick;
+            measuring = true;
         }
 
         private void FinishMeasurement()
@@ -189,12 +223,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.BeginHorizontal();
                 if (GUILayout.Button(running ? "Pause" : "Run"))
                 {
-                    running = !running;
+                    SetRunning(!running);
                     measuring = false;
                 }
                 if (GUILayout.Button("Reset"))
                 {
-                    running = measuring = false;
+                    SetRunning(false);
+                    measuring = false;
                     fluid.ResetParticles();
                     evidence = null;
                 }

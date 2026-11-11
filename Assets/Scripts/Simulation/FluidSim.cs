@@ -90,11 +90,11 @@ namespace Seb.Fluid.Simulation
 		[HideInInspector] public float beakerRimY;
 		public float SimulatedSeconds => simTimer;
 
-		public void AdvanceManually(float stepSeconds)
+		public void AdvanceManually(float stepSeconds, int steps)
 		{
-			if (!manualControl || positionBuffer == null || stepSeconds <= 0)
+			if (!manualControl || positionBuffer == null || stepSeconds <= 0 || steps <= 0)
 				throw new InvalidOperationException("A ready manual simulation and positive timestep are required.");
-			RunSimulationFrame(stepSeconds * iterationsPerFrame);
+			RunSimulationFrame(stepSeconds * steps, steps);
 		}
 
 		public void ResetParticles()
@@ -299,13 +299,15 @@ namespace Seb.Fluid.Simulation
 			HandleInput();
 		}
 
-		void RunSimulationFrame(float frameDeltaTime)
+		void RunSimulationFrame(float frameDeltaTime) => RunSimulationFrame(frameDeltaTime, iterationsPerFrame);
+
+		void RunSimulationFrame(float frameDeltaTime, int steps)
 		{
-			float subStepDeltaTime = frameDeltaTime / iterationsPerFrame;
+			float subStepDeltaTime = frameDeltaTime / steps;
 			UpdateSettings(subStepDeltaTime, frameDeltaTime);
 
 			// Simulation sub-steps
-			for (int i = 0; i < iterationsPerFrame; i++)
+			for (int i = 0; i < steps; i++)
 			{
 				simTimer += subStepDeltaTime;
 				RunSimulationStep();
