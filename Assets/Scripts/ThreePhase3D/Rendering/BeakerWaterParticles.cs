@@ -7,9 +7,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 {
     internal sealed class BeakerWaterParticles : IDisposable
     {
-        private const int SamplesPerAxis = 5;
-        private const int SamplesPerCell = SamplesPerAxis * SamplesPerAxis * SamplesPerAxis;
-        private const float DiameterM = .0008f;
         private readonly BeakerVofTimeIntegration release;
         private readonly GeometryInputs glass;
         private readonly ParticleSystem display;
@@ -43,10 +40,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             display.Pause(false);
         }
 
-        public void Refresh()
+        private int lastSamplesPerAxis;
+        private float lastDiameterM, lastJitter;
+
+        public bool SettingsChanged(int samplesPerAxis, float diameterM, float jitter) =>
+            samplesPerAxis != lastSamplesPerAxis || diameterM != lastDiameterM || jitter != lastJitter;
+
+        public void Refresh(int samplesPerAxis, float diameterM, float jitter)
         {
             var grid = release.Geometry.Grid;
             var cells = grid.Cells;
+            int samplesPerCell = samplesPerAxis * samplesPerAxis * samplesPerAxis;
             int count = 0;
             for (int k = 0; k < cells.Z; k++)
             for (int j = 0; j < cells.Y; j++)
@@ -56,20 +60,20 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (fraction <= 0) continue;
                 int cell = cells.Index(i, j, k);
                 var lower = grid.Frame.ToWorld(grid.Lower(i, j, k));
-                for (int sample = 0; sample < SamplesPerCell; sample++)
+                for (int sample = 0; sample < samplesPerCell; sample++)
                 {
-                    uint seed = (uint)(cell * SamplesPerCell + sample);
+                    uint seed = (uint)(cell * samplesPerCell + sample);
                     if (Unit(seed * 4) >= fraction) continue;
                     var point = new Vector3(
-                        (float)(lower.X + grid.Spacing.X * Offset(sample % SamplesPerAxis, seed * 4 + 1)),
-                        (float)(lower.Y + grid.Spacing.Y * Offset(sample / SamplesPerAxis % SamplesPerAxis, seed * 4 + 2)),
-                        (float)(lower.Z + grid.Spacing.Z * Offset(sample / (SamplesPerAxis * SamplesPerAxis), seed * 4 + 3)));
-                    if (TouchesGlass(point)) continue;
+                        (float)(lower.X + grid.Spacing.X * Offset(sample % samplesPerAxis, seed * 4 + 1, samplesPerAxis, jitter)),
+                        (float)(lower.Y + grid.Spacing.Y * Offset(sample / samplesPerAxis % samplesPerAxis, seed * 4 + 2, samplesPerAxis, jitter)),
+                        (float)(lower.Z + grid.Spacing.Z * Offset(sample / (samplesPerAxis * samplesPerAxis), seed * 4 + 3, samplesPerAxis, jitter)));
+                    if (TouchesGlass(point, diameterM * .5f)) continue;
                     if (count == particles.Length) Array.Resize(ref particles, count * 2);
                     particles[count++] = new ParticleSystem.Particle
                     {
                         position = point,
-                        startSize = DiameterM,
+                        startSize = diameterM,
                         startColor = new Color32(62, 207, 248, 255),
                         startLifetime = 1,
                         remainingLifetime = 1
@@ -79,11 +83,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             var main = display.main;
             if (main.maxParticles < count) main.maxParticles = particles.Length;
             display.SetParticles(particles, count);
+            lastSamplesPerAxis = samplesPerAxis;
+            lastDiameterM = diameterM;
+            lastJitter = jitter;
         }
 
-        private bool TouchesGlass(Vector3 point)
+        private bool TouchesGlass(Vector3 point, float padding)
         {
-            const float padding = DiameterM * .5f;
             float bottom = (float)glass.externalBaseHeightM;
             float rim = (float)glass.RimHeightM;
             if (point.y < bottom - padding || point.y > rim + padding) return false;
@@ -97,8 +103,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             return point.y < floor + padding || side > (float)glass.innerRadiusM * scale - padding;
         }
 
-        private static float Offset(int index, uint seed) =>
-            (index + .2f + .6f * Unit(seed)) / SamplesPerAxis;
+        private static float Offset(int index, uint seed, int samplesPerAxis, float jitter) =>
+            (index + .5f + jitter * (Unit(seed) - .5f)) / samplesPerAxis;
 
         private static float Unit(uint value)
         {

@@ -42,15 +42,21 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             catch { Dispose(); throw; }
         }
 
-        public void Step()
+        public void Step() => StepCore(acceleration,
+            acceleration.Length > 0 ? BeakerVofTimeIntegration.ReleaseMaxStepS : (double?)null,
+            BeakerVofTimeIntegration.IterationLimit);
+
+        internal void StepRelease(double gravityY, double maximumStepS, int pressureIterations) =>
+            StepCore(new D3(0, gravityY, 0), maximumStepS, pressureIterations);
+
+        private void StepCore(D3 gravity, double? maximumStepS, int pressureIterations)
         {
             int contacts = 0;
             Simulation.Step((state, flow) =>
             {
                 var step = traction == null
                     ? scalars.AdvanceCoupled(state, flow, Simulation.LiquidDensityKgM3,
-                        BeakerVofTimeIntegration.GasDensity, momentum, pressure, BeakerVofTimeIntegration.IterationLimit, acceleration,
-                        acceleration.Length > 0 ? BeakerVofTimeIntegration.ReleaseMaxStepS : (double?)null)
+                        BeakerVofTimeIntegration.GasDensity, momentum, pressure, pressureIterations, gravity, maximumStepS)
                     : scalars.AdvanceCoupledWithWetting(state, flow, momentum, pressure, traction);
                 contacts = step.Momentum.ContactTractionPatches;
                 return step;

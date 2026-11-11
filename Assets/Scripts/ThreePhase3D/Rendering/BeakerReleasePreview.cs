@@ -9,6 +9,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     [RequireComponent(typeof(Beaker3DSetup))]
     public sealed class BeakerReleasePreview : MonoBehaviour
     {
+        [SerializeField] private BeakerSimulationControls controls;
         private BeakerWaterParticles waterParticles;
         private BeakerVofTimeIntegration release;
         private BeakerVofGpuSession gpuSession;
@@ -17,7 +18,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private GameObject cavityGuides;
         private Material guideMaterial;
         private bool running;
-        private const double ParticleRefreshSeconds = 1.0 / 30.0;
         private double nextParticleRefresh;
         private double solverStepMs, particleUpdateMs;
         private float frameMs;
@@ -98,15 +98,28 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 }
             }
             if (running) Advance();
+            else if (error == null && waterParticles != null &&
+                waterParticles.SettingsChanged(controls.SamplesPerCellAxis, controls.ParticleDiameterM, controls.ParticleJitter))
+            {
+                try { ShowWaterState(); }
+                catch (Exception exception) { Fail(exception); }
+            }
         }
 
         private void SpawnWater()
         {
             if (solverWork != null) return;
             Clear();
+            if (controls == null)
+            {
+                Fail(new InvalidOperationException("Assign the Simulation Controls object to the beaker preview."));
+                return;
+            }
+            double volume = controls.WaterVolumeM3;
+            double jitter = controls.SpawnHeightJitterM;
             StartSolverWork(() =>
             {
-                var simulation = BeakerVofTimeIntegration.CreateRelease(9e-6, false, 293.15, 101325, surfaceJitterM: .003);
+                var simulation = BeakerVofTimeIntegration.CreateRelease(volume, false, 293.15, 101325, surfaceJitterM: jitter);
                 return () =>
                 {
                     gpuSession = new BeakerVofGpuSession(simulation);
@@ -139,7 +152,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             try
             {
                 var timer = System.Diagnostics.Stopwatch.StartNew();
-                gpuSession.Step();
+                gpuSession.StepRelease(controls.GravityY, controls.MaximumStepS, controls.PressureIterationLimit);
                 solverStepMs = timer.Elapsed.TotalMilliseconds;
                 ShowWaterState();
             }
@@ -158,11 +171,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (!running || now >= nextParticleRefresh)
             {
                 var timer = System.Diagnostics.Stopwatch.StartNew();
-                waterParticles.Refresh();
+                waterParticles.Refresh(controls.SamplesPerCellAxis, controls.ParticleDiameterM, controls.ParticleJitter);
                 particleUpdateMs = timer.Elapsed.TotalMilliseconds;
-                nextParticleRefresh = now + ParticleRefreshSeconds;
+                nextParticleRefresh = now + controls.ParticleRefreshSeconds;
             }
-            waterStatus = $"9 mL water · GPU  |  {release.TimeS:F3} s  |  Step {release.Steps}  |  Δt {release.Pressure.Diagnostics.Dt * 1000:F3} ms";
+            waterStatus = $"{release.InitialLiquidVolumeM3 * 1e6:G4} mL water · GPU  |  {release.TimeS:F3} s  |  Step {release.Steps}  |  Δt {release.Pressure.Diagnostics.Dt * 1000:F3} ms";
             volumeStatus = $"Liquid volume drift {release.LiquidDriftM3:E2} m³";
         }
 
