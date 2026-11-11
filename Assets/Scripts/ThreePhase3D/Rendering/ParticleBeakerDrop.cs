@@ -13,9 +13,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const float VolumeMl = 9;
         private const float DropGapM = .01f;
         private const int TargetFrameRate = 60;
-        private const double StepSeconds = 0.001;
-        private const int TestSteps = 400;
-        private const int MaxStepsPerFrame = 32;
+        private const double StepSeconds = 0.0004;
+        private const int TestSteps = 1000;
+        private const int MaxStepsPerFrame = 80;
         [SerializeField] private ComputeShader fluidCompute;
         [SerializeField] private Shader particleShader;
 
