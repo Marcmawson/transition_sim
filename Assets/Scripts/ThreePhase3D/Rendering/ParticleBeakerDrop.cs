@@ -10,7 +10,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     [RequireComponent(typeof(Beaker3DSetup))]
     public sealed class ParticleBeakerDrop : MonoBehaviour
     {
-        private const float VolumeMl = 9;
+        private const float SmallVolumeMl = 9;
+        private const float LargeVolumeMl = 250;
         private const float DropGapM = .01f;
         private const int TargetFrameRate = 60;
         private const int BenchmarkMicroseconds = 400000;
@@ -30,6 +31,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             (SolverTimestep[])Enum.GetValues(typeof(SolverTimestep));
         [SerializeField] private ComputeShader fluidCompute;
         [SerializeField] private Shader particleShader;
+
+        [Header("Release Settings")]
+        [SerializeField, Tooltip("Use the 120 mm beaker and release 250 mL instead of 9 mL.")]
+        private bool largerBeaker = false;
 
         [Header("Simulation Settings")]
         [SerializeField] private SolverTimestep solverTimestep = SolverTimestep.Ms040;
@@ -60,6 +65,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private int StepMicroseconds => (int)Timesteps[timestepIndex];
         private double StepSeconds => StepMicroseconds / 1_000_000.0;
+        private float releaseVolumeMl;
 
         private void OnEnable()
         {
@@ -87,8 +93,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
             var setup = GetComponent<Beaker3DSetup>();
             geometry = setup.scenario.physical.geometry;
-            geometry.innerRadiusM = .033;
-            geometry.cavityHeightM = .06;
+            releaseVolumeMl = largerBeaker ? LargeVolumeMl : SmallVolumeMl;
+            geometry.innerRadiusM = largerBeaker ? .06 : .033;
+            geometry.cavityHeightM = largerBeaker ? .16 : .06;
             geometry.tripodRingRadiusM = geometry.OuterRadiusM * .75;
             setup.scenario.display.glassOpacity = .28f;
             setup.scenario.display.showSetupReport = false;
@@ -96,7 +103,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
             float floor = (float)(geometry.externalBaseHeightM + geometry.baseThicknessM);
             float rim = (float)geometry.RimHeightM;
-            float side = Mathf.Pow(VolumeMl * 1e-6f, 1f / 3f);
+            float side = Mathf.Pow(releaseVolumeMl * 1e-6f, 1f / 3f);
             solverObject = new GameObject("GPU liquid particles");
             solverObject.SetActive(false);
             solverObject.transform.position = new Vector3(0, .175f, 0);
@@ -202,7 +209,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             measuring = false;
             double elapsed = Time.realtimeSinceStartupAsDouble - startTime;
             string timing = FormattableString.Invariant(
-                $"GPU drop: {measuredFrames} frames, {measuredFrames / elapsed:F1} FPS, {fluid.SimulatedSeconds:F3} s simulated in {elapsed:F3} s at {measuredPlaybackSpeed:P0} playback · {StepMicroseconds / 1000.0:0.##} ms per step · {solverSteps} solver steps");
+                $"GPU drop: {measuredFrames} frames, {measuredFrames / elapsed:F1} FPS, {fluid.SimulatedSeconds:F3} s simulated in {elapsed:F3} s at {measuredPlaybackSpeed:P0} playback · {StepMicroseconds / 1000.0:0.##} ms per step · {solverSteps} solver steps · {releaseVolumeMl:F0} mL release");
             evidence = timing;
             if (!SystemInfo.supportsAsyncGPUReadback)
             {
@@ -251,7 +258,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 Mathf.Max(1, Mathf.Min(345, Screen.height - 32)));
             GUILayout.BeginArea(bounds, GUI.skin.box);
             panelScroll = GUILayout.BeginScrollView(panelScroll);
-            GUILayout.Label("Simulation Controls", GUI.skin.box);
+            GUILayout.Label($"Simulation Controls · {releaseVolumeMl:F0} mL release", GUI.skin.box);
             if (fluid != null && fluid.positionBuffer != null)
             {
                 GUILayout.Label($"{fluid.positionBuffer.count} particles · {(frameMs > 0 ? 1000 / frameMs : 0):F1} FPS");
