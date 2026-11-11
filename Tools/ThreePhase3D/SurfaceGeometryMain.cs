@@ -6,11 +6,13 @@ using PhysicsSim.ThreePhase3D.Flow;
 using PhysicsSim.ThreePhase3D.Geometry;
 using PhysicsSim.ThreePhase3D.PhaseChange;
 using PhysicsSim.ThreePhase3D.Materials;
+using PhysicsSim.ThreePhase3D.Thermal;
 
 internal static class SurfaceGeometryMain
 {
     private static int Main(string[] args)
     {
+        if (args.Contains("--fluid-enthalpy")) return CheckFluidEnthalpy();
         if (args.Contains("--beaker-gravity")) return BeakerVofMain.CheckGravity();
         if (args.Contains("--beaker-release")) return BeakerVofMain.CheckRelease();
         if (args.Contains("--v11-diagnostics")) return RunV11(diagnostics: true);
@@ -129,6 +131,69 @@ internal static class SurfaceGeometryMain
     }
 
     private enum CurvatureDiagnostic { Transported, ExactSphere, ResampledSphere }
+
+    private static int CheckFluidEnthalpy()
+    {
+        const double pressure = 101325, temperature = 303.15, density = 997;
+        var eos = new Water95();
+        var table = new WaterPropertyTable(WaterPropertyTable.Generate(WaterBranch.Liquid));
+        var enthalpy = new FluidEnthalpy(table, density);
+        var grid = new Grid3D(4, 1, 1, new D3(.01, .01, .01));
+        var solid = SurfacePrimitives.Box(new D3(-.01, -.01, -.01), new D3(.05, .004, .02));
+        var geometry = CutCellGeometry.Build(grid, solid);
+        var open = new FlowBoundary(FlowBoundaryKind.OpenPressure);
+        var wall = new FlowBoundary(FlowBoundaryKind.NoSlip);
+        var plan = new VariableCoefficientProjection(geometry,
+            new BoundaryConditions3D(open, open, wall, wall, wall, wall), _ => density, _ => 0);
+        var transport = new CutCellVofTransport(plan);
+        var liquid = plan.Volumes.Select((v, i) => v * (.2 + .15 * i)).ToArray();
+        var gas = plan.Volumes.Zip(liquid, (v, l) => v - l).ToArray();
+        var velocity = new double[plan.FaceCount];
+        for (int i = 0; i <= 4; i++)
+        {
+            int face = plan.FaceIndex(0, i, 0, 0);
+            velocity[face] = 6e-8 / plan.Faces[face].Area;
+        }
+
+        var energies = liquid.Select(v => enthalpy.EnergyJ(v, temperature)).ToArray();
+        var before = new CutCellInventories(liquid, gas, energies, new double[gas.Length], new double[gas.Length]);
+        var after = transport.Advance(before, velocity, 1, _ => new CutCellInflow(0, 0, 0, 0));
+        if (after.LiquidFaceM3.All(value => value == 0))
+            throw new InvalidOperationException("No liquid was transported in the thermal fixture.");
+        double residual = after.Fields.LiquidEnergyJ.Sum() - energies.Sum() - after.BoundaryInflow[2];
+        if (Math.Abs(residual) > 1e-9)
+            throw new InvalidOperationException($"Liquid enthalpy ledger residual {residual:G8} J.");
+        for (int i = 0; i < liquid.Length; i++)
+        {
+            var t = enthalpy.TemperatureK(after.Fields.LiquidM3[i], after.Fields.LiquidEnergyJ[i]);
+            if (!t.HasValue || Math.Abs(t.Value - temperature) > 1e-8)
+                throw new InvalidOperationException("VOF advection changed a uniform liquid temperature.");
+        }
+
+        var pulse = liquid.Select((v, i) => enthalpy.EnergyJ(v, i == 0 ? 323.15 : 293.15)).ToArray();
+        var pulseBefore = new CutCellInventories(liquid, gas, pulse, new double[gas.Length], new double[gas.Length]);
+        var pulseAfter = transport.Advance(pulseBefore, velocity, 1, _ => new CutCellInflow(0, 0, 0, 0));
+        double? downstream = enthalpy.TemperatureK(pulseAfter.Fields.LiquidM3[1], pulseAfter.Fields.LiquidEnergyJ[1]);
+        double pulseResidual = pulseAfter.Fields.LiquidEnergyJ.Sum() - pulse.Sum() - pulseAfter.BoundaryInflow[2];
+        if (!downstream.HasValue || downstream.Value <= 293.15 || downstream.Value >= 323.15 ||
+            Math.Abs(pulseResidual) > 1e-9)
+            throw new InvalidOperationException("The warm pulse failed conservative downstream transport.");
+        Console.WriteLine($"PASS warm pulse raised downstream water to {downstream:F3} K; residual {pulseResidual:G4} J");
+
+        foreach (double t in new[] { table.MinimumK, 277.13, 330.125, table.MaximumK })
+        {
+            double? recovered = enthalpy.TemperatureK(9e-6, enthalpy.EnergyJ(9e-6, t));
+            if (!recovered.HasValue || Math.Abs(recovered.Value - t) > 1e-9)
+                throw new InvalidOperationException("Liquid temperature failed the enthalpy round trip.");
+        }
+
+        double Density(double t) => eos.Evaluate(t, pressure, WaterBranch.Liquid).DensityKgM3;
+        if (!(Density(277.13) > Density(274) && Density(277.13) > Density(283)))
+            throw new InvalidOperationException("Water density did not peak near 4 C.");
+        Console.WriteLine($"PASS moving liquid retained {temperature:F2} K; enthalpy ledger residual {residual:G4} J");
+        Console.WriteLine($"PASS liquid enthalpy inversion and density ordering: {Density(274):F5}, {Density(277.13):F5}, {Density(283):F5} kg/m3");
+        return 0;
+    }
 
     private static int RunV11(bool diagnostics = false)
     {
