@@ -15,6 +15,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private CutCellVofTransport transport;
         private GameObject ice;
         private Material waterMaterial, iceMaterial;
+        private GameObject cavityGuides;
+        private Material guideMaterial;
         private bool running;
         private float nextStep;
         private string error;
@@ -28,6 +30,45 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             setup.scenario.display.glassOpacity = .1f;
             setup.scenario.display.showSetupReport = false;
             setup.Refresh();
+            DrawCavityGuides(setup.scenario.physical.geometry);
+        }
+
+        private void DrawCavityGuides(GeometryInputs geometry)
+        {
+            var shader = Shader.Find("Sprites/Default");
+            if (shader == null) return;
+            cavityGuides = new GameObject("Cavity outlines");
+            cavityGuides.transform.SetParent(transform, false);
+            guideMaterial = new Material(shader);
+            float floor = (float)(geometry.externalBaseHeightM + geometry.baseThicknessM);
+            float top = floor + (float)geometry.cavityHeightM;
+            float radius = (float)geometry.innerRadiusM;
+            var lower = new Vector3[BeakerVofTimeIntegration.Segments];
+            var upper = new Vector3[lower.Length];
+            for (int i = 0; i < lower.Length; i++)
+            {
+                float angle = 2 * Mathf.PI * i / lower.Length;
+                lower[i] = new Vector3(radius * Mathf.Cos(angle), floor, radius * Mathf.Sin(angle));
+                upper[i] = new Vector3(lower[i].x, top, lower[i].z);
+            }
+            var edge = new Color(.53f, .78f, .89f, .85f);
+            AddLine("Inner rim", upper, edge, true);
+            AddLine("Cavity floor edge", lower, edge, true);
+            for (int i = 0; i < lower.Length; i += lower.Length / 4)
+                AddLine("Cavity wall guide", new[] { lower[i], upper[i] }, new Color(.53f, .78f, .89f, .48f), false);
+        }
+
+        private void AddLine(string label, Vector3[] points, Color color, bool closed)
+        {
+            var line = new GameObject(label).AddComponent<LineRenderer>();
+            line.transform.SetParent(cavityGuides.transform, false);
+            line.useWorldSpace = false;
+            line.sharedMaterial = guideMaterial;
+            line.startColor = line.endColor = color;
+            line.widthMultiplier = .001f;
+            line.loop = closed;
+            line.positionCount = points.Length;
+            line.SetPositions(points);
         }
 
         private void Update()
@@ -181,6 +222,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             waterCells.Clear();
             if (waterMaterial != null) Destroy(waterMaterial);
             if (iceMaterial != null) Destroy(iceMaterial);
+            if (cavityGuides != null) Destroy(cavityGuides);
+            if (guideMaterial != null) Destroy(guideMaterial);
         }
     }
 }
