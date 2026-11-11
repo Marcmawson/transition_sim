@@ -1,0 +1,46 @@
+#pragma kernel ClearFields
+#pragma kernel ProbeMetrics
+StructuredBuffer<float> FixedVolume,IceVolume,FluidVolume;
+StructuredBuffer<float> OpenAreaX,OpenAreaY,OpenAreaZ;
+StructuredBuffer<float4> FixedInterface,IceInterface;
+StructuredBuffer<float> FixedDistance,IceDistance;
+StructuredBuffer<uint> CellMask;
+RWStructuredBuffer<float> CellField,VelocityX,VelocityY,VelocityZ;
+RWStructuredBuffer<uint> Status;
+RWStructuredBuffer<float4> Results;
+uint CellCount,XFaceCount,YFaceCount,ZFaceCount,Nx,Ny,Nz,Ghost,DispatchWidth;
+float CellVolume,AreaX,AreaY,AreaZ;
+uint cellIndex(uint i,uint j,uint k){return (k*(Ny+2*Ghost)+j)*(Nx+2*Ghost)+i;}
+uint xFaceIndex(uint i,uint j,uint k){return (k*(Ny+2*Ghost)+j)*(Nx+1+2*Ghost)+i;}
+uint yFaceIndex(uint i,uint j,uint k){return (k*(Ny+1+2*Ghost)+j)*(Nx+2*Ghost)+i;}
+uint zFaceIndex(uint i,uint j,uint k){return (k*(Ny+2*Ghost)+j)*(Nx+2*Ghost)+i;}
+[numthreads(64,1,1)]
+void ClearFields(uint3 tid:SV_DispatchThreadID)
+{
+    uint q=tid.x+tid.y*DispatchWidth;
+    if(q<CellCount)CellField[q]=0;
+    if(q<XFaceCount)VelocityX[q]=0;
+    if(q<YFaceCount)VelocityY[q]=0;
+    if(q<ZFaceCount)VelocityZ[q]=0;
+}
+[numthreads(64,1,1)]
+void ProbeMetrics(uint3 tid:SV_DispatchThreadID)
+{
+    uint q=tid.x+tid.y*DispatchWidth;if(q>=CellCount)return;
+    Results[q]=0;Status[q]=0;
+    uint sx=Nx+2*Ghost,sy=Ny+2*Ghost,i=q%sx,j=(q/sx)%sy,k=q/(sx*sy);
+    bool interior=i>=Ghost&&j>=Ghost&&k>=Ghost&&i<Nx+Ghost&&j<Ny+Ghost&&k<Nz+Ghost;
+    if(CellMask[q]!=(interior?1u:0u)){Status[q]=8;return;}
+    if(!interior){if(FixedVolume[q]!=0||IceVolume[q]!=0||FluidVolume[q]!=0)Status[q]=16;return;}
+    float3 volumes=float3(FixedVolume[q],IceVolume[q],FluidVolume[q]);uint flags=0;
+    float partition=volumes.x+volumes.y+volumes.z-CellVolume;
+    if(any(isnan(volumes))||any(isinf(volumes))||any(volumes<0)||any(volumes>CellVolume*(1+2e-5))||abs(partition)>CellVolume*2e-5)flags|=1;
+    float3 minus=float3(OpenAreaX[xFaceIndex(i,j,k)],OpenAreaY[yFaceIndex(i,j,k)],OpenAreaZ[zFaceIndex(i,j,k)]);
+    float3 plus=float3(OpenAreaX[xFaceIndex(i+1,j,k)],OpenAreaY[yFaceIndex(i,j+1,k)],OpenAreaZ[zFaceIndex(i,j,k+1)]);
+    if(any(isnan(minus))||any(isnan(plus))||any(isinf(minus))||any(isinf(plus))||any(minus<0)||any(plus<0)||any(minus>float3(AreaX,AreaY,AreaZ)*(1+2e-5))||any(plus>float3(AreaX,AreaY,AreaZ)*(1+2e-5)))flags|=2;
+    float4 fixedPatch=FixedInterface[q],icePatch=IceInterface[q];
+    float3 closure=plus-minus-fixedPatch.xyz-icePatch.xyz;
+    if(any(isnan(fixedPatch))||any(isnan(icePatch))||any(isinf(fixedPatch))||any(isinf(icePatch))||length(closure)>max(AreaX,max(AreaY,AreaZ))*2e-5)flags|=4;
+    if(isnan(FixedDistance[q])||isnan(IceDistance[q])||isinf(FixedDistance[q])||isinf(IceDistance[q])||(fixedPatch.w>0&&FixedDistance[q]<0)||(icePatch.w>0&&IceDistance[q]<0))flags|=32;
+    Status[q]=flags;Results[q]=float4(partition,closure);
+}
