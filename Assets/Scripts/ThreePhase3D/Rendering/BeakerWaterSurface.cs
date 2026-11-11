@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
 using UnityEngine;
 
@@ -21,10 +22,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly Vector3[] positions, gradients;
         private readonly float[] samples, fractions, weights;
         private readonly int nx, ny, nz;
-        private readonly Vector3 spacing;
+        private readonly Vector3 spacing, first;
+        private readonly float cavityRadius, cavityFloor, cavityHeight;
+        private readonly Vector3[] capTriangle = new Vector3[3], capPolygon = new Vector3[4];
+        private readonly float[] capValues = new float[3];
 
-        public BeakerWaterSurface(BeakerVofTimeIntegration release)
+        public BeakerWaterSurface(BeakerVofTimeIntegration release, GeometryInputs beaker)
         {
+            const float contactInset = .00005f;
+            cavityRadius = (float)beaker.innerRadiusM - contactInset;
+            cavityFloor = (float)(beaker.externalBaseHeightM + beaker.baseThicknessM) + contactInset;
+            cavityHeight = (float)beaker.RimHeightM - cavityFloor;
             var grid = release.Geometry.Grid;
             var cells = grid.Cells;
             nx = (cells.X + 1) * Subdivisions + 1;
@@ -32,7 +40,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             nz = (cells.Z + 1) * Subdivisions + 1;
             spacing = new Vector3((float)grid.Spacing.X, (float)grid.Spacing.Y, (float)grid.Spacing.Z) / Subdivisions;
             var origin = grid.Centre(0, 0, 0);
-            var first = new Vector3((float)origin.X, (float)origin.Y, (float)origin.Z) - spacing * Subdivisions;
+            first = new Vector3((float)origin.X, (float)origin.Y, (float)origin.Z) - spacing * Subdivisions;
             positions = new Vector3[nx * ny * nz];
             gradients = new Vector3[positions.Length];
             samples = new float[positions.Length];
@@ -78,6 +86,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
             // A trilinear sample can exceed the threshold only within one
             // cell spacing of a qualifying centre. Keep one extra sample for normals.
+            Array.Clear(samples, 0, samples.Length);
             x0 *= Subdivisions;
             y0 *= Subdivisions;
             z0 *= Subdivisions;
@@ -136,10 +145,84 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (liquidCorners == 0 || liquidCorners == corners.Length) continue;
                 for (int t = 0; t < Tetrahedra.GetLength(0); t++) Polygonize(t);
             }
+            AddCavityContact();
             mesh.Clear();
             mesh.SetVertices(vertices);
             mesh.SetNormals(normals);
             mesh.SetTriangles(triangles, 0);
+        }
+
+        private void AddCavityContact()
+        {
+            int radialSteps = Mathf.CeilToInt(cavityRadius / spacing.x);
+            int wallSteps = Mathf.CeilToInt(cavityHeight / spacing.y);
+            var floor = new Vector3(0, cavityFloor, 0);
+            for (int segment = 0; segment < BeakerVofTimeIntegration.Segments; segment++)
+            {
+                float a = 2 * Mathf.PI * segment / BeakerVofTimeIntegration.Segments;
+                float b = 2 * Mathf.PI * (segment + 1) / BeakerVofTimeIntegration.Segments;
+                var left = new Vector3(Mathf.Cos(a), 0, Mathf.Sin(a)) * cavityRadius;
+                var right = new Vector3(Mathf.Cos(b), 0, Mathf.Sin(b)) * cavityRadius;
+                var outward = (left + right).normalized;
+                for (int i = 0; i < radialSteps; i++)
+                {
+                    float inner = (float)i / radialSteps, outer = (float)(i + 1) / radialSteps;
+                    AddContactTriangle(floor + left * inner, floor + left * outer,
+                        floor + right * outer, Vector3.down);
+                    if (i > 0)
+                        AddContactTriangle(floor + left * inner, floor + right * outer,
+                            floor + right * inner, Vector3.down);
+                }
+                for (int i = 0; i < wallSteps; i++)
+                {
+                    var bottom = floor + Vector3.up * (cavityHeight * i / wallSteps);
+                    var top = floor + Vector3.up * (cavityHeight * (i + 1) / wallSteps);
+                    AddContactTriangle(bottom + left, top + left, top + right, outward);
+                    AddContactTriangle(bottom + left, top + right, bottom + right, outward);
+                }
+            }
+        }
+
+        private void AddContactTriangle(Vector3 a, Vector3 b, Vector3 c, Vector3 outward)
+        {
+            capTriangle[0] = a;
+            capTriangle[1] = b;
+            capTriangle[2] = c;
+            for (int i = 0; i < 3; i++) capValues[i] = SampleContact(capTriangle[i]);
+            int count = 0;
+            for (int i = 0, previous = 2; i < 3; previous = i++)
+            {
+                bool wet = capValues[i] >= SurfaceFraction;
+                bool previousWet = capValues[previous] >= SurfaceFraction;
+                if (wet != previousWet)
+                {
+                    float t = (SurfaceFraction - capValues[previous]) / (capValues[i] - capValues[previous]);
+                    capPolygon[count++] = Vector3.LerpUnclamped(capTriangle[previous], capTriangle[i], t);
+                }
+                if (wet) capPolygon[count++] = capTriangle[i];
+            }
+            if (count < 3) return;
+            int start = vertices.Count;
+            for (int i = 0; i < count; i++)
+            {
+                vertices.Add(capPolygon[i]);
+                normals.Add(outward);
+            }
+            for (int i = 1; i < count - 1; i++) AddTriangle(start, start + i, start + i + 1, outward);
+        }
+
+        private float SampleContact(Vector3 position)
+        {
+            var p = position - first;
+            float x = p.x / spacing.x, y = p.y / spacing.y, z = p.z / spacing.z;
+            int i = Mathf.FloorToInt(x), j = Mathf.FloorToInt(y), k = Mathf.FloorToInt(z);
+            if (i < 0 || j < 0 || k < 0 || i >= nx - 1 || j >= ny - 1 || k >= nz - 1) return 0;
+            float u = x - i, v = y - j, w = z - k;
+            float back = Mathf.Lerp(Mathf.Lerp(samples[Index(i, j, k)], samples[Index(i + 1, j, k)], u),
+                Mathf.Lerp(samples[Index(i, j + 1, k)], samples[Index(i + 1, j + 1, k)], u), v);
+            float front = Mathf.Lerp(Mathf.Lerp(samples[Index(i, j, k + 1)], samples[Index(i + 1, j, k + 1)], u),
+                Mathf.Lerp(samples[Index(i, j + 1, k + 1)], samples[Index(i + 1, j + 1, k + 1)], u), v);
+            return Mathf.Lerp(back, front, w);
         }
 
         private int Index(int x, int y, int z) => x + nx * (y + ny * z);

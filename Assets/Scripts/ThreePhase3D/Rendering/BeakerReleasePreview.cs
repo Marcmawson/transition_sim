@@ -179,7 +179,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             waterMaterial.SetFloat("_BaseY", (float)geometry.externalBaseHeightM);
             waterMesh = new Mesh { name = "Beaker liquid surface", indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
             waterMesh.MarkDynamic();
-            waterSurface = new BeakerWaterSurface(release);
+            waterSurface = new BeakerWaterSurface(release, geometry);
             waterObject = new GameObject("Water surface");
             waterObject.transform.SetParent(transform, false);
             waterObject.AddComponent<MeshFilter>().sharedMesh = waterMesh;
