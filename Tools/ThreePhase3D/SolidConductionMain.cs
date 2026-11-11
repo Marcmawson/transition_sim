@@ -1,0 +1,116 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using PhysicsSim.ThreePhase3D.Thermal;
+
+internal static class SolidConductionMain
+{
+    private static void Main()
+    {
+        double coarse = SlabError(16);
+        double fine = SlabError(32);
+        if (fine >= coarse / 3.5 || fine > 0.01)
+            throw new Exception($"Unexpected slab errors: {coarse:G8}, {fine:G8} K.");
+        Console.WriteLine($"PASS insulated slab: maximum errors {coarse:G6} and {fine:G6} K");
+        CompositeContact();
+        HeatedBase(.036, 9);
+        HeatedBase(.063, 250);
+    }
+
+    private static double SlabError(int count)
+    {
+        // Insulated slab with T(x,t) = 300 + 20 cos(pi*x/L) exp(-alpha*pi^2*t/L^2).
+        const double length = .01, conductivity = 1.2, volumetricCp = 1.8e6, duration = 20;
+        double dx = length / count;
+        double[] capacity = Enumerable.Repeat(volumetricCp * dx, count).ToArray();
+        double[] initial = Enumerable.Range(0, count)
+            .Select(i => 300 + 20 * Math.Cos(Math.PI * (i + .5) / count)).ToArray();
+        var faces = Enumerable.Range(0, count - 1)
+            .Select(i => new SolidConduction.Face(i, i + 1, conductivity / dx)).ToArray();
+        var solver = new SolidConduction(capacity, initial, faces);
+        double[] power = new double[count];
+        int steps = (int)Math.Ceiling(duration / (.35 * solver.MaximumStepSeconds));
+        for (int i = 0; i < steps; i++) solver.Step(duration / steps, power);
+        double decay = Math.Exp(-conductivity / volumetricCp * Math.PI * Math.PI * duration / (length * length));
+        Near(StoredJ(solver, capacity, 300), 0, 1e-8);
+        return Enumerable.Range(0, count)
+            .Max(i => Math.Abs(solver.TemperatureK[i] - (300 + (initial[i] - 300) * decay)));
+    }
+
+    private static void CompositeContact()
+    {
+        const double area = .01, hot = 330, cold = 290;
+        const double left = .002 / 1.2, contact = .001, right = .003 / 16;
+        double middleG = CoupledHeatFaces.HeatRateW(area, 2, 1, .002, 1.2, contact, .003, 16);
+        var solver = new SolidConduction(new[] { 4.0, 7.0 }, new[] { 300.0, 300.0 },
+            new[] { new SolidConduction.Face(0, 1, middleG) });
+        double leftG = area / left, rightG = area / right;
+        double expected = area * (hot - cold) / (2 * left + contact + 2 * right);
+        double[] power = new double[2];
+        for (int i = 0; i < 4000; i++)
+        {
+            power[0] = leftG * (hot - solver.TemperatureK[0]);
+            power[1] = rightG * (cold - solver.TemperatureK[1]);
+            solver.Step(.01, power);
+        }
+        Near(power[0], expected, 1e-9);
+        Near(power[1], -expected, 1e-9);
+        Console.WriteLine($"PASS composite contact: steady heat rate {expected:F6} W");
+    }
+
+    private static void HeatedBase(double radius, int waterMl)
+    {
+        const int radial = 16, axial = 6;
+        const double thickness = .003, conductivity = 1.2, volumetricCp = 1.8e6;
+        const double initial = 293.15, watts = 10, dt = .01;
+        int support = radial * axial;
+        var capacity = new double[support + 1];
+        var faces = new List<SolidConduction.Face>();
+        var power = new double[capacity.Length];
+        double dr = radius / radial, dz = thickness / axial;
+        var edges = Enumerable.Range(1, radial).Select(i => i * dr).ToArray();
+        var burner = RadialHeatFluxBoundary.GaussianFacePowerW(watts, .015, edges);
+        for (int r = 0; r < radial; r++)
+        {
+            double area = Math.PI * (2 * r + 1) * dr * dr;
+            int bottom = r * axial;
+            power[bottom] = burner[r];
+            for (int z = 0; z < axial; z++)
+            {
+                int cell = bottom + z;
+                capacity[cell] = volumetricCp * area * dz;
+                if (z + 1 < axial) faces.Add(new SolidConduction.Face(cell, cell + 1, conductivity * area / dz));
+                if (r + 1 < radial) faces.Add(new SolidConduction.Face(cell, cell + axial,
+                    conductivity * 2 * Math.PI * edges[r] * dz / dr));
+            }
+        }
+        // Synthetic support heat capacity and contact patch for this fixture.
+        capacity[support] = 10;
+        double supportG = CoupledHeatFaces.HeatRateW(1e-4, 2, 1, dz / 2, conductivity, .001, .003, 16);
+        faces.Add(new SolidConduction.Face((radial - 1) * axial, support, supportG));
+        var solver = new SolidConduction(capacity, Enumerable.Repeat(initial, capacity.Length).ToArray(), faces.ToArray());
+        for (int i = 0; i < 300; i++) solver.Step(dt, power);
+        Near(StoredJ(solver, capacity, initial), 30, 1e-8);
+        if (!(solver.TemperatureK[0] > solver.TemperatureK[axial - 1] &&
+            solver.TemperatureK[0] > solver.TemperatureK[(radial - 1) * axial] &&
+            solver.TemperatureK[support] > initial))
+            throw new Exception("Expected through-thickness and radial gradients and support warming.");
+        double hotBase = solver.TemperatureK[0];
+        Array.Clear(power, 0, power.Length);
+        for (int i = 0; i < 300; i++) solver.Step(dt, power);
+        Near(StoredJ(solver, capacity, initial), 30, 1e-8);
+        if (solver.TemperatureK[0] >= hotBase) throw new Exception("Hot spot did not cool after switch-off.");
+        Console.WriteLine($"PASS {waterMl} mL fixture base geometry: 30 J stored, radial/axial gradients, support warming");
+    }
+
+    private static double StoredJ(SolidConduction solver, double[] capacity, double referenceK)
+    {
+        return capacity.Select((value, i) => value * (solver.TemperatureK[i] - referenceK)).Sum();
+    }
+
+    private static void Near(double actual, double expected, double tolerance)
+    {
+        if (double.IsNaN(actual) || Math.Abs(actual - expected) > tolerance)
+            throw new Exception($"Expected {expected:G17}, got {actual:G17}.");
+    }
+}

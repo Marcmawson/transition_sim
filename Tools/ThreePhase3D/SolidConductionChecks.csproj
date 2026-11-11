@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="SolidConductionMain.cs" />
+    <Compile Include="../../Assets/Scripts/ThreePhase3D/Core/SiUnits.cs" />
+    <Compile Include="../../Assets/Scripts/ThreePhase3D/Thermal/*.cs" />
+  </ItemGroup>
+</Project>
