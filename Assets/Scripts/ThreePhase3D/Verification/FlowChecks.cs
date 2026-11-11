@@ -37,7 +37,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
             Hydrostatic("hydrostatic-variable-density", cutGrid, null, false, j => j < 2 ? 700 : 1300);
             Channel();
             EmbeddedShear();
-            ViscousBeaker();
+            UnresolvedViscousBeaker();
             CurvedWallChannel();
             Decay();
             Rollback();
@@ -130,21 +130,22 @@ namespace PhysicsSim.ThreePhase3D.Verification
             Check(id, "wall damping reduces the velocity norm", Energy(damped.VelocityMPerS) < Energy(plug) ? 1 : 0, 1, 0);
         }
 
-        private void ViscousBeaker()
+        private void UnresolvedViscousBeaker()
         {
-            const string id = "viscous-beaker-rest";
+            const string id = "unresolved-viscous-beaker";
             var frame = new RigidFrame(new D3(-.08,-.025,-.08), new D3(1,0,0), new D3(0,1,0), new D3(0,0,1));
             var grid = new Grid3D(16, 13, 16, new D3(.01,.01,.01), frame);
             var surface = ApparatusSurface.Beaker(new GeometryInputs
             {
-                innerRadiusM = .033, wallThicknessM = .031, baseThicknessM = .031, cavityHeightM = .06
+                innerRadiusM = .033, wallThicknessM = .031, baseThicknessM = .031, cavityHeightM = .06, externalBaseHeightM = 0
             }, 24);
             var geometry = CutCellGeometry.Build(grid, surface);
             var plan = new VariableCoefficientProjection(geometry, BoundaryConditions3D.Closed, _ => 997, _ => .001);
-            var predictor = new MomentumPredictor3D(plan);
-            Check(id, "embedded wall rates are present", predictor.Diffusion.MaximumDiagonal > 0 ? 1 : 0, 1, 0);
-            var rest = RunStep(id, predictor, new float[plan.FaceCount], new D3(), .005);
-            Check(id, "stationary unforced viscous beaker stays at rest [m/s]", Energy(rest.VelocityMPerS), 0, 0);
+            Check(id, "beaker occupies cells in the pressure domain", geometry.Patches.Count > 0 ? 1 : 0, 1, 0);
+            bool rejected = false;
+            try { _ = new MomentumPredictor3D(plan); }
+            catch (NotSupportedException failure) { rejected = failure.Message.Contains("dual fluid centroid"); }
+            Check(id, "unresolved dual wall distance is rejected", rejected ? 1 : 0, 1, 0);
         }
 
         private void CurvedWallChannel()

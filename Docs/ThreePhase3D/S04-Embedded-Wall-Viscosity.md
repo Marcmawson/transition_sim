@@ -10,8 +10,8 @@ The fluid centroids are computed from signed tetrahedral first moments of clippe
 
 - Off-grid planar wall: analytical linear shear remains unchanged at the wall-adjacent probe. The wall rate is 0.274348408 s⁻¹ against the analytical 0.274348423 s⁻¹. A tangential plug decays by the predicted amount.
 - Curved channel: axial plug speed remains unchanged at the core after one step and decreases in norm as the wall damps the outer flow.
-- Synthetic thick-walled beaker: dual geometry and viscous stencils assemble and the unforced fluid stays at rest.
+- The earlier thick-walled beaker rest case placed the solid above the grid and did not test an embedded wall. The corrected case asserts that the beaker occupies grid cells and that unresolved dual-centroid distances on the coarse fixture cause explicit rejection. The planar and curved-channel diffusion results above exercise embedded walls.
 
-The managed reference and standalone software Vulkan paths each pass 106 checks. The curved-channel check tests one diffusion step. The beaker case is a geometry and rest check. [Verification logs](../../ValidationRuns/s04-embedded-viscosity-20261111)
+The original managed reference and standalone software Vulkan paths each passed 106 checks. The corrected fixture is covered by the 104-check [managed S04 regression run](../../ValidationRuns/s05-gpu-cut-transport-20261111/s04-regression-results.txt). The curved-channel check tests one diffusion step. The beaker case is a geometry and rest check. [Verification logs](../../ValidationRuns/s04-embedded-viscosity-20261111)
 
 To validate the new shader on the target device, use **Physics Sim > Three Phase 3D > Run S04 GPU flow checks** in Unity with Play mode stopped. The prior Unity run verified the earlier single-phase checkpoint. The embedded-wall checks were added after that run.

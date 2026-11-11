@@ -1,0 +1,6 @@
+Base GitHub commit: d6fe12286c510e4233b2d508816e91fd83efa89d.
+Managed checks: .NET 8.0.428 on Linux x86_64. S05 84/84, corrected S04 regression suite 104/104, foundation suite passed.
+Runtime/editor boundary: separate assemblies compiled with Unity API stubs. Actual Unity import remains pending.
+Shader compiler: DXC cs_6_0 DXIL and SPIR-V, warnings as errors.
+Standalone software Vulkan: Mesa lavapipe (Mesa 25.0.7) with shaderFloat64 enabled for all five periodic VOF kernels. S04 pressure and correction kernels ran on the same software Vulkan device. Cut-cell geometry, scalar and momentum transport ran on the CPU. Expanded checks 84/84.
+Unity Direct3D 11 import and hardware execution of the FP64 update kernels were not run in this environment.

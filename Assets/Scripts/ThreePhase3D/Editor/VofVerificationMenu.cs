@@ -62,6 +62,7 @@ namespace PhysicsSim.ThreePhase3D.Editor
                 if (useGpu)
                 {
                     var shader = Resources.Load<ComputeShader>("ThreePhase3D/VofGeometry");
+                    var pressureShader = Resources.Load<ComputeShader>("ThreePhase3D/SinglePhaseFlow");
                     checks = new VofChecks((vof, fields, velocity, dt) =>
                     {
                         if (active != vof)
@@ -79,7 +80,7 @@ namespace PhysicsSim.ThreePhase3D.Editor
                         report.GpuExecuted = true;
                         return result;
                     }, (plan, tentative, dt, cap) => FlowGpuSolver.Project(plan,
-                        Resources.Load<ComputeShader>("ThreePhase3D/SinglePhaseFlow"), tentative, dt, cap));
+                        pressureShader, tentative, dt, cap));
                 }
                 else checks = new VofChecks();
                 checks.Run();

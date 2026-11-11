@@ -23,6 +23,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
         private const double Roundoff = 128 * 2.2204460492503131e-16;
         private readonly int[][] next = new int[3][], previous = new int[3][];
         private readonly double liquidDensity, gasDensity;
+        internal double LiquidDensity => liquidDensity;
+        internal double GasDensity => gasDensity;
         public Grid3D Grid { get; }
         public int CellCount { get; }
 
@@ -62,51 +64,26 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return (k * Grid.Cells.Y + j) * Grid.Cells.X + i;
         }
 
-        public VofAdvance Advance(VofFields state, double[][] transportingVelocity, double dt) =>
-            Advance(state, transportingVelocity, dt, null);
-
-        internal VofAdvance Advance(VofFields state, double[][] transportingVelocity, double dt,
-            Func<double[], double[][], double[][]> geometricCandidates)
+        public VofAdvance Advance(VofFields state, double[][] transportingVelocity, double dt)
         {
-            if (state == null || !SiUnits.IsFinite(dt) || dt <= 0) throw new ArgumentException("A state and positive finite timestep are required.");
-            Validate(state, transportingVelocity);
-            var total = Axes();
+            var total = PrepareCourant(state, transportingVelocity, dt, out var outgoing);
             var liquid = Axes();
             var gas = Axes();
             var mass = Axes();
             var plane = new VofPlane[CellCount];
-            var outgoing = new double[CellCount];
             var positive = new double[CellCount];
             var negative = new double[CellCount];
             double volume = Grid.CellVolume;
-
             for (int cell = 0; cell < CellCount; cell++)
             {
                 double alpha = state.LiquidFraction[cell];
-                if (geometricCandidates == null && alpha > 0 && alpha < 1)
+                if (alpha > 0 && alpha < 1)
                     plane[cell] = VofPlane.Reconstruct(new D3(
                         state.LiquidFraction[previous[0][cell]] - state.LiquidFraction[next[0][cell]],
                         state.LiquidFraction[previous[1][cell]] - state.LiquidFraction[next[1][cell]],
                         state.LiquidFraction[previous[2][cell]] - state.LiquidFraction[next[2][cell]]), alpha);
-                for (int a = 0; a < 3; a++)
-                {
-                    double signed = dt * transportingVelocity[a][cell] / Grid.Spacing[a];
-                    if (!SiUnits.IsFinite(signed) || Math.Abs(signed) > 1)
-                        throw new ArgumentException("A face traverses more than one cell in a step.");
-                    total[a][cell] = signed;
-                    outgoing[signed < 0 ? next[a][cell] : cell] += Math.Abs(signed);
-                }
             }
 
-            for (int cell = 0; cell < CellCount; cell++)
-            {
-                double divergence = 0;
-                for (int a = 0; a < 3; a++) divergence += total[a][cell] - total[a][previous[a][cell]];
-                if (Math.Abs(divergence) > Roundoff || outgoing[cell] > .5)
-                    throw new ArgumentException("PLIC requires a solenoidal transport field and a combined outgoing Courant number at most 0.5.");
-            }
-
-            double[][] candidates = geometricCandidates?.Invoke(state.LiquidFraction, total);
             // The donor-cell baseline is feasible. Limit each geometric
             // increment against the donor's remaining inventory of both phases.
             for (int a = 0; a < 3; a++)
@@ -116,7 +93,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 int donor = signed < 0 ? next[a][cell] : cell;
                 double alpha = state.LiquidFraction[donor];
                 double geometric = alpha == 0 || alpha == 1 || swept == 0
-                    ? alpha * swept : candidates == null ? plane[donor].Swept(a, signed > 0, swept) : candidates[a][cell];
+                    ? alpha * swept : plane[donor].Swept(a, signed > 0, swept);
                 if (!SiUnits.IsFinite(geometric) || geometric < -Roundoff || geometric > swept + Roundoff)
                     throw new InvalidOperationException("PLIC candidate is outside the swept slab.");
                 double correction = geometric - alpha * swept;
@@ -228,6 +205,32 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 roundoffVapour, roundoffEnergy, dualMassError);
         }
 
+        internal double[][] PrepareCourant(VofFields state, double[][] transportingVelocity, double dt, out double[] outgoing)
+        {
+            if (state == null || !SiUnits.IsFinite(dt) || dt <= 0)
+                throw new ArgumentException("A state and positive finite timestep are required.");
+            Validate(state, transportingVelocity);
+            var total = Axes();
+            outgoing = new double[CellCount];
+            for (int cell = 0; cell < CellCount; cell++)
+            for (int axis = 0; axis < 3; axis++)
+            {
+                double signed = dt * transportingVelocity[axis][cell] / Grid.Spacing[axis];
+                if (!SiUnits.IsFinite(signed) || Math.Abs(signed) > 1)
+                    throw new ArgumentException("A face traverses more than one cell in a step.");
+                total[axis][cell] = signed;
+                outgoing[signed < 0 ? next[axis][cell] : cell] += Math.Abs(signed);
+            }
+            for (int cell = 0; cell < CellCount; cell++)
+            {
+                double divergence = 0;
+                for (int axis = 0; axis < 3; axis++) divergence += total[axis][cell] - total[axis][previous[axis][cell]];
+                if (Math.Abs(divergence) > Roundoff || outgoing[cell] > .5)
+                    throw new ArgumentException("PLIC requires a solenoidal transport field and a combined outgoing Courant number at most 0.5.");
+            }
+            return total;
+        }
+
         private double Transfer(double signedVolume, int low, int high, double[] inventory, double[] alpha, bool isLiquid)
         {
             if (signedVolume == 0) return 0;
@@ -239,7 +242,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         private double[][] Axes() => new[] { new double[CellCount], new double[CellCount], new double[CellCount] };
 
-        private void Validate(VofFields state, double[][] transport)
+        internal void Validate(VofFields state, double[][] transport)
         {
             CheckAxes(transport);
             CheckAxes(state.FaceVelocity);

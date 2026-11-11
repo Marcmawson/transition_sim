@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
+using PhysicsSim.ThreePhase3D.Geometry;
 
 namespace PhysicsSim.ThreePhase3D.Verification
 {
@@ -37,6 +38,9 @@ namespace PhysicsSim.ThreePhase3D.Verification
             Check("translation", "fine/coarse shape error ratio", fine / coarse, 0, .85);
             DeformAndReverse();
             CoupledPressure();
+            CutCellBoundaryTransport();
+            ClosedCutCirculation();
+            BeakerCutTransport();
         }
 
         private void CoupledPressure()
@@ -63,6 +67,136 @@ namespace PhysicsSim.ThreePhase3D.Verification
             var second = coupled.Advance(first.Fields, .04, 4096, (fields, u, dt) => advance(vof, fields, u, dt), pressureSolve);
             Check(id, "second transport conserves liquid volume [m3]",
                 (second.Fields.LiquidFraction.Sum() - start.LiquidFraction.Sum()) * grid.CellVolume, 0, 1e-12);
+        }
+
+        private void CutCellBoundaryTransport()
+        {
+            const string id = "cut-cell open boundary";
+            var grid = new Grid3D(4, 1, 1, new D3(1,1,1));
+            var slab = SurfacePrimitives.Box(new D3(-1,-1,-1), new D3(5,.4,2));
+            var geometry = CutCellGeometry.Build(grid, slab);
+            var clipped = new CutCellVofGeometry(geometry);
+            int sample = grid.Cells.Index(1,0,0);
+            var plane = clipped.Reconstruct(sample, new D3(0,1,0), .3);
+            Check(id, "clipped liquid inventory [m3]", clipped.LiquidVolume(sample, plane), .3, 1e-10);
+            Check(id, "clipped liquid sweep [m3]", clipped.Sweep(sample, 0, true, .06, plane), .03, 1e-10);
+            var open = new FlowBoundary(FlowBoundaryKind.OpenPressure);
+            var wall = new FlowBoundary(FlowBoundaryKind.NoSlip);
+            var plan = new VariableCoefficientProjection(geometry,
+                new BoundaryConditions3D(open,open,wall,wall,wall,wall), _ => 1000, _ => 0);
+            var transport = new CutCellVofTransport(plan);
+            double[] liquid = plan.Volumes.Select((v,i) => v * (.2 + .15 * i)).ToArray();
+            double[] gas = plan.Volumes.Zip(liquid, (v,l) => v-l).ToArray();
+            var state = new CutCellInventories(liquid, gas, liquid.Select(v => 6*v).ToArray(),
+                gas.Select(v => 3*v).ToArray(), gas.Select(v => .1*v).ToArray());
+            var u = new double[plan.FaceCount];
+            for (int i = 0; i <= 4; i++)
+            {
+                int face = plan.FaceIndex(0,i,0,0);
+                u[face] = .06 / plan.Faces[face].Area;
+            }
+            var result = transport.Advance(state,u,1,_ => new CutCellInflow(0,0,4,.2,new D3(u[plan.FaceIndex(0,0,0,0)],0,0)));
+            int inlet = plan.FaceIndex(0,0,0,0);
+            Check(id, "ambient gas inlet [m3]", result.GasFaceM3[inlet], .06, 1e-12);
+            for (int field = 0; field < 5; field++)
+                Check(id, "field ledger " + field, result.Fields.Planes[field].Sum() -
+                    state.Planes[field].Sum() - result.BoundaryInflow[field], 0, 1e-10);
+            Check(id, "roundoff accounting [m3]", result.RoundoffM3, 0, 1e-10);
+            var updatedMomentum = transport.AdvanceMomentum(state, result, u, LiquidDensity, GasDensity);
+            Check(id, "staggered phase mass closes [kg]", updatedMomentum.MaxDualMassErrorKg, 0, 1e-10);
+            Check(id, "uniform velocity with open-boundary mass transfer [m/s]",
+                updatedMomentum.VelocityMPerS.Zip(u, (a,b) => Math.Abs(a-b)).Max(), 0, 2e-10);
+            double beforeMomentum = state.LiquidM3.Zip(state.GasM3, (l,g) => LiquidDensity*l+GasDensity*g).Sum() * u[inlet];
+            Check(id, "staggered momentum follows boundary ledger [kg m/s]", updatedMomentum.MomentumKgMPerS.Sum() -
+                beforeMomentum - updatedMomentum.BoundaryMomentumKgMPerS[0] - updatedMomentum.WallImpulseKgMPerS[0], 0, 1e-9);
+            var pressure = pressureSolve(plan, u.Select(v => (float)v).ToArray(), 1, 4096);
+            var projected = transport.AdvanceProjected(state, pressure, _ => new CutCellInflow(0,0,4,.2));
+            Check(id, "S04 projection feeds cut-cell scalar transport [m3]",
+                projected.Fields.LiquidM3.Sum() - state.LiquidM3.Sum() - projected.BoundaryInflow[0], 0, 1e-10);
+            Check(id, "pressure flux reconciliation [m3]", projected.PressureFluxCorrectionM3, 0, 1e-6);
+            var coupled = transport.AdvanceCoupled(state, pressure, LiquidDensity, GasDensity,
+                _ => new CutCellInflow(0,0,4,.2,new D3(u[inlet],0,0)), 4096, pressureSolve);
+            Check(id, "advected cut-cell density feeds the next pressure solve", coupled.Pressure.Diagnostics.Converged ? 1 : 0, 1, 0);
+            u[plan.FaceIndex(1,0,0,0)] = .1;
+            bool rejected = false;
+            try { transport.Advance(state,u,1,_ => new CutCellInflow(0,0,4,.2)); }
+            catch (ArgumentException) { rejected = true; }
+            Check(id, "closed wall rejects normal transport", rejected ? 1 : 0, 1, 0);
+        }
+
+        private void ClosedCutCirculation()
+        {
+            const string id = "cut-cell closed circulation";
+            var grid = new Grid3D(2, 1, 2, new D3(1,1,1));
+            var slab = SurfacePrimitives.Box(new D3(-1,-1,-1), new D3(3,.4,3));
+            var plan = new VariableCoefficientProjection(CutCellGeometry.Build(grid, slab),
+                BoundaryConditions3D.Closed, _ => 1000, _ => 0);
+            var solver = new CutCellVofTransport(plan);
+            var liquid = plan.Volumes.Select((v,i) => v * (.2 + .15 * i)).ToArray();
+            var gas = plan.Volumes.Zip(liquid, (v,l) => v-l).ToArray();
+            var state = new CutCellInventories(liquid, gas, liquid.Select(v => 6*v).ToArray(),
+                gas.Select(v => 3*v).ToArray(), gas.Select(v => .1*v).ToArray());
+            var u = new double[plan.FaceCount];
+            Set(0,1,0,0, .06); Set(2,1,0,1, .06); Set(0,1,0,1,-.06); Set(2,0,0,1,-.06);
+            var transport = solver.Advance(state,u,1);
+            var momentum = solver.AdvanceMomentum(state,transport,u,LiquidDensity,GasDensity);
+            Check(id, "liquid volume closes [m3]", transport.Fields.LiquidM3.Sum() - liquid.Sum(), 0, 1e-10);
+            Check(id, "closed boundary ledger [m3]", transport.BoundaryInflow.Select(Math.Abs).Max(), 0, 0);
+            Check(id, "staggered mass closes [kg]", momentum.MaxDualMassErrorKg, 0, 1e-10);
+            Check(id, "staggered velocity evolves under transported momentum",
+                momentum.VelocityMPerS.Zip(u,(a,b) => Math.Abs(a-b)).Max() > 1e-4 ? 1 : 0, 1, 0);
+
+            void Set(int axis, int i, int j, int k, double q)
+            {
+                int face = plan.FaceIndex(axis,i,j,k);
+                u[face] = q / plan.Faces[face].Area;
+            }
+        }
+
+        private void BeakerCutTransport()
+        {
+            const string id = "beaker cut-cell transport";
+            var frame = new RigidFrame(new D3(-.08,-.025,-.08), new D3(1,0,0), new D3(0,1,0), new D3(0,0,1));
+            var grid = new Grid3D(16, 13, 16, new D3(.01,.01,.01), frame);
+            var beaker = ApparatusSurface.Beaker(new GeometryInputs
+            {
+                innerRadiusM = .033, wallThicknessM = .031, baseThicknessM = .031, cavityHeightM = .06, externalBaseHeightM = 0
+            }, 24);
+            var geometry = CutCellGeometry.Build(grid, beaker);
+            var plan = new VariableCoefficientProjection(geometry, BoundaryConditions3D.Closed, _ => LiquidDensity, _ => 0);
+            var loop = FindLoop();
+            Check(id, "resolved circulation crosses a curved cut cell", loop != null ? 1 : 0, 1, 0);
+            if (loop == null) return;
+            var liquid = plan.Volumes.Select((v,i) => v * (.2 + .1 * (i % 4))).ToArray();
+            var gas = plan.Volumes.Zip(liquid, (v,l) => v-l).ToArray();
+            var state = new CutCellInventories(liquid, gas, liquid.Select(v => 6*v).ToArray(),
+                gas.Select(v => 3*v).ToArray(), gas.Select(v => .1*v).ToArray());
+            var u = new double[plan.FaceCount];
+            for (int s = 0; s < 4; s++)
+                u[loop[s]] = (s < 2 ? 1 : -1) * 1e-9 / plan.Faces[loop[s]].Area;
+            var transport = new CutCellVofTransport(plan);
+            var result = transport.Advance(state,u,1);
+            var momentum = transport.AdvanceMomentum(state,result,u,LiquidDensity,GasDensity);
+            Check(id, "phase volume closes through curved cut cells [m3]", result.Fields.LiquidM3.Sum() - liquid.Sum(), 0, 1e-13);
+            Check(id, "staggered mass closes [kg]", momentum.MaxDualMassErrorKg, 0, 1e-12);
+
+            int[] FindLoop()
+            {
+                for (int j = 0; j < grid.Cells.Y; j++)
+                for (int k = 4; k < 11; k++)
+                for (int i = 4; i < 11; i++)
+                {
+                    var cells = new[] { grid.Cells.Index(i,j,k), grid.Cells.Index(i+1,j,k),
+                        grid.Cells.Index(i+1,j,k+1), grid.Cells.Index(i,j,k+1) };
+                    if (cells.Any(c => geometry.FluidVolumeM3[c] < .15 * grid.CellVolume) ||
+                        cells.All(c => geometry.FluidVolumeM3[c] >= .999 * grid.CellVolume) ||
+                        cells.Select(c => plan.GroupByCell[c]).Distinct().Count() != 4) continue;
+                    var faces = new[] { plan.FaceIndex(0,i+1,j,k), plan.FaceIndex(2,i+1,j,k+1),
+                        plan.FaceIndex(0,i+1,j,k+1), plan.FaceIndex(2,i,j,k+1) };
+                    if (faces.All(f => plan.Faces[f].Active != 0)) return faces;
+                }
+                return null;
+            }
         }
 
         private void PressureFreeMomentum()

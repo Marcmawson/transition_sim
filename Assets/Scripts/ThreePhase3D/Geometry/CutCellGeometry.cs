@@ -76,6 +76,12 @@ namespace PhysicsSim.ThreePhase3D.Geometry
         private D3[] solidMomentOffsets;
         internal D3 FluidCentroidOffset(int cell) => -solidMomentOffsets[cell] / _FluidVolumeM3[cell];
 
+        internal IEnumerable<List<SignedTetrahedron>> BuildSolidTetrahedra()
+        {
+            if(fixedInput!=null)yield return new ClosedSurface(fixedInput,Grid).Tetrahedra;
+            if(iceInput!=null)yield return new ClosedSurface(iceInput,Grid).Tetrahedra;
+        }
+
         internal CutCellGeometry BuildVelocityDual(int axis)
         {
             var shape=Grid.Shape((GridLocation)(axis+1));

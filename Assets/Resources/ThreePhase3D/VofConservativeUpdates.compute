@@ -1,0 +1,196 @@
+#pragma kernel LimitDonors
+#pragma kernel BuildFaceFlux
+#pragma kernel UpdateCells
+#pragma kernel UpdateMomentum
+
+// Scalar planes are field-major, with Count contiguous cells per field.
+// Geometry candidates are FP32. Extensive inventories and face transfers use
+// FP64, including the gas complement near a nearly full liquid cell.
+StructuredBuffer<double> InputFields;
+StructuredBuffer<float4> CandidateFractions;
+RWStructuredBuffer<double> Budget;
+RWStructuredBuffer<double> FaceData;
+RWStructuredBuffer<double> CellData;
+RWStructuredBuffer<double> MomentumData;
+int Nx, Ny, Nz, Count;
+int VolumeLo, VolumeHi, LiquidDensityLo, LiquidDensityHi, GasDensityLo, GasDensityHi;
+static const double Roundoff = 2.8421709430404007e-14L;
+
+double Volume() { return asdouble(asuint(VolumeLo), asuint(VolumeHi)); }
+double LiquidDensity() { return asdouble(asuint(LiquidDensityLo), asuint(LiquidDensityHi)); }
+double GasDensity() { return asdouble(asuint(GasDensityLo), asuint(GasDensityHi)); }
+
+// Use the base SM5 double operations. Native double division requires
+// additional driver features beyond basic double-precision shader support.
+double DividePositive(double numerator, double denominator)
+{
+    if (denominator <= 0) return asdouble(0, 0x7ff80000);
+    uint low, high;
+    asuint(denominator, low, high);
+    uint exponent = high >> 20;
+    if (exponent == 0)
+    {
+        denominator *= 18014398509481984.0L;
+        numerator *= 18014398509481984.0L;
+        asuint(denominator, low, high);
+        exponent = high >> 20;
+    }
+    double mantissa = asdouble(low, (high & 0x000fffff) | 0x3ff00000);
+    double scale = asdouble(0, exponent == 2046 ? 0x00080000 : (2046 - exponent) << 20);
+    precise double inverse = (double)(1.0 / (float)mantissa);
+    inverse *= 2 - mantissa * inverse;
+    inverse *= 2 - mantissa * inverse;
+    return (numerator * scale) * inverse;
+}
+
+int Adjacent(int cell, int axis, int direction)
+{
+    int stride = axis == 0 ? 1 : axis == 1 ? Nx : Nx * Ny;
+    int extent = axis == 0 ? Nx : axis == 1 ? Ny : Nz;
+    int coordinate = (cell / stride) % extent;
+    return cell + stride * (((coordinate + direction + extent) % extent) - coordinate);
+}
+
+double Field(int field, int cell) { return InputFields[field * Count + cell]; }
+double Flux(int field, int axis, int cell) { return FaceData[(field * 3 + axis) * Count + cell]; }
+double Cell(int field, int cell) { return CellData[field * Count + cell]; }
+
+double CandidateDelta(int face, int axis, double alpha, double swept)
+{
+    if (alpha == 0 || alpha == 1 || swept == 0) return 0;
+    double candidate = (double)CandidateFractions[face][axis];
+    return (clamp(candidate, 0.0L, 1.0L) - alpha) * swept;
+}
+
+[numthreads(64, 1, 1)]
+void LimitDonors(uint3 id : SV_DispatchThreadID)
+{
+    int cell = (int)id.x;
+    if (cell >= Count) return;
+    double alpha = Field(0, cell);
+    double increase = 0, decrease = 0;
+    for (int axis = 0; axis < 3; axis++)
+    {
+        int minus = Adjacent(cell, axis, -1);
+        double forward = Field(7 + axis, cell), backward = -Field(7 + axis, minus);
+        if (forward > 0)
+        {
+            double change = CandidateDelta(cell, axis, alpha, forward);
+            increase += max(0.0L, change);
+            decrease += max(0.0L, -change);
+        }
+        if (backward > 0)
+        {
+            double change = CandidateDelta(minus, axis, alpha, backward);
+            increase += max(0.0L, change);
+            decrease += max(0.0L, -change);
+        }
+    }
+    double remaining = 1 - Field(10, cell);
+    double liquid = remaining * alpha, gas = remaining * (1 - alpha);
+    Budget[cell] = increase > liquid ? DividePositive(liquid, increase) : 1;
+    Budget[Count + cell] = decrease > gas ? DividePositive(gas, decrease) : 1;
+}
+
+[numthreads(64, 1, 1)]
+void BuildFaceFlux(uint3 id : SV_DispatchThreadID)
+{
+    int face = (int)id.x;
+    if (face >= Count) return;
+    double volume = Volume();
+    for (int axis = 0; axis < 3; axis++)
+    {
+        double signedWidth = Field(7 + axis, face), swept = abs(signedWidth);
+        int donor = signedWidth < 0 ? Adjacent(face, axis, 1) : face;
+        double alpha = Field(0, donor);
+        double ratio = (double)CandidateFractions[face][axis];
+        double change = CandidateDelta(face, axis, alpha, swept);
+        double accepted = change * Budget[(change < 0 ? Count : 0) + donor];
+        double proposed = alpha * swept + accepted;
+        double bounded = clamp(proposed, 0.0L, swept);
+        double sign = signedWidth < 0 ? -1 : 1;
+        double liquid = sign * bounded * volume, gas = sign * (swept - bounded) * volume;
+        FaceData[(0 + axis) * Count + face] = liquid;
+        FaceData[(3 + axis) * Count + face] = gas;
+        FaceData[(6 + axis) * Count + face] = LiquidDensity() * liquid + GasDensity() * gas;
+        FaceData[(9 + axis) * Count + face] = abs(change - accepted) * volume;
+        FaceData[(12 + axis) * Count + face] = 2 * abs(proposed - bounded) * volume;
+        FaceData[(15 + axis) * Count + face] = (isnan((float)ratio) || ratio < -2e-6L || ratio > 1.000002L ||
+            proposed < -Roundoff || proposed > swept + Roundoff) ? 1 : 0;
+        FaceData[(18 + axis) * Count + face] = abs(ratio - clamp(ratio, 0.0L, 1.0L)) * swept * volume;
+    }
+}
+
+double Transfer(double flux, int low, int high, int field, bool liquid, double volume)
+{
+    if (flux == 0) return 0;
+    int donor = flux < 0 ? high : low;
+    double alpha = Field(0, donor);
+    return Field(field, donor) * DividePositive(flux, volume * (liquid ? alpha : 1 - alpha));
+}
+
+[numthreads(64, 1, 1)]
+void UpdateCells(uint3 id : SV_DispatchThreadID)
+{
+    int cell = (int)id.x;
+    if (cell >= Count) return;
+    double volume = Volume(), rhoL = LiquidDensity(), rhoG = GasDensity();
+    double alpha = Field(0, cell), l = alpha * volume, g = (1 - alpha) * volume;
+    double before = rhoL * l + rhoG * g;
+    double el = Field(1, cell), eg = Field(2, cell), vapour = Field(3, cell);
+    for (int axis = 0; axis < 3; axis++)
+    {
+        int minus = Adjacent(cell, axis, -1), plus = Adjacent(cell, axis, 1);
+        double li = Flux(0, axis, minus), lo = Flux(0, axis, cell);
+        double gi = Flux(1, axis, minus), go = Flux(1, axis, cell);
+        l += li - lo;
+        g += gi - go;
+        el += Transfer(li, minus, cell, 1, true, volume) - Transfer(lo, cell, plus, 1, true, volume);
+        eg += Transfer(gi, minus, cell, 2, false, volume) - Transfer(go, cell, plus, 2, false, volume);
+        vapour += Transfer(gi, minus, cell, 3, false, volume) - Transfer(go, cell, plus, 3, false, volume);
+    }
+    double bounded = l <= 0 ? 0 : g <= 0 ? volume : clamp(l, 0.0L, volume);
+    double fraction = bounded == volume ? 1 : clamp(DividePositive(bounded, volume), 0.0L, 1.0L);
+    double storedL = fraction * volume, storedG = (1 - fraction) * volume;
+    double maxVapour = rhoG * (1 - fraction) * volume;
+    double storedVapour = clamp(vapour, 0.0L, maxVapour);
+    double storedEl = fraction == 0 ? 0 : el, storedEg = fraction == 1 ? 0 : eg;
+    CellData[0 * Count + cell] = fraction;
+    CellData[1 * Count + cell] = storedEl;
+    CellData[2 * Count + cell] = storedEg;
+    CellData[3 * Count + cell] = storedVapour;
+    CellData[4 * Count + cell] = before;
+    CellData[5 * Count + cell] = rhoL * storedL + rhoG * storedG;
+    CellData[6 * Count + cell] = abs(storedL - l) + abs(storedG - g);
+    CellData[7 * Count + cell] = abs(storedVapour - vapour);
+    CellData[8 * Count + cell] = abs(storedEl - el) + abs(storedEg - eg);
+    CellData[9 * Count + cell] = (l < -Roundoff * volume || g < -Roundoff * volume ||
+        abs(l + g - volume) > 4 * Roundoff * volume || vapour < -Roundoff * rhoG * volume ||
+        vapour > maxVapour + 4 * Roundoff * rhoG * volume) ? 1 : 0;
+}
+
+[numthreads(64, 1, 1)]
+void UpdateMomentum(uint3 id : SV_DispatchThreadID)
+{
+    int cell = (int)id.x;
+    if (cell >= Count) return;
+    for (int axis = 0; axis < 3; axis++)
+    {
+        int neighbour = Adjacent(cell, axis, 1);
+        double initialMass = .5 * (Cell(4, cell) + Cell(4, neighbour));
+        double finalMass = .5 * (Cell(5, cell) + Cell(5, neighbour));
+        double transported = initialMass, p = initialMass * Field(4 + axis, cell);
+        for (int direction = 0; direction < 3; direction++)
+        {
+            int minus = Adjacent(cell, direction, -1), plus = Adjacent(cell, direction, 1);
+            double entering = .5 * (Flux(2, direction, minus) + Flux(2, direction, Adjacent(minus, axis, 1)));
+            double leaving = .5 * (Flux(2, direction, cell) + Flux(2, direction, neighbour));
+            transported += entering - leaving;
+            p += entering * Field(4 + axis, entering >= 0 ? minus : cell)
+                - leaving * Field(4 + axis, leaving >= 0 ? cell : plus);
+        }
+        MomentumData[(0 + axis) * Count + cell] = DividePositive(p, finalMass);
+        MomentumData[(3 + axis) * Count + cell] = p;
+        MomentumData[(6 + axis) * Count + cell] = abs(transported - finalMass);
+    }
+}

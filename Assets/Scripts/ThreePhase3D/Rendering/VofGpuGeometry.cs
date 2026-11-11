@@ -10,7 +10,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly ComputeShader shader;
         private readonly int sweep, groups;
         private readonly float[] alphaData;
-        private readonly Vector4[] courantData, sweepData;
+        private readonly Vector4[] courantData;
+        private readonly VofGpuUpdates updates;
         private ComputeBuffer alpha, courant, swept;
         public double CandidateRoundoffM3 { get; private set; }
 
@@ -29,13 +30,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     SystemInfo.graphicsDeviceType + ". Check the Unity shader import messages.");
             alphaData = new float[count];
             courantData = new Vector4[count];
-            sweepData = new Vector4[count + 1];
             try
             {
                 alpha = new ComputeBuffer(count, 4);
                 courant = new ComputeBuffer(count, 16);
-                swept = new ComputeBuffer(count + 1, 16);
-                swept.SetData(new[] { new Vector4(-1, -1, -1, -1) }, 0, count, 1);
+                swept = new ComputeBuffer(count, 16);
+                updates = new VofGpuUpdates(vof, Resources.Load<ComputeShader>("ThreePhase3D/VofConservativeUpdates"));
             }
             catch { Dispose(); throw; }
         }
@@ -43,10 +43,14 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         public VofAdvance Advance(VofFields state, double[][] velocity, double dt)
         {
             if (swept == null) throw new ObjectDisposedException(nameof(VofGpuGeometry));
-            return vof.Advance(state, velocity, dt, Candidates);
+            var total = vof.PrepareCourant(state, velocity, dt, out var outgoing);
+            DispatchCandidates(state.LiquidFraction, total);
+            var result = updates.Advance(state, total, outgoing, swept, out double candidateRoundoff);
+            CandidateRoundoffM3 += candidateRoundoff;
+            return result;
         }
 
-        private double[][] Candidates(double[] fraction, double[][] total)
+        private void DispatchCandidates(double[] fraction, double[][] total)
         {
             int count = vof.CellCount;
             for (int c = 0; c < count; c++)
@@ -64,26 +68,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             shader.SetBuffer(sweep, "Courant", courant);
             shader.SetBuffer(sweep, "SweepOut", swept);
             shader.Dispatch(sweep, groups, 1, 1);
-            swept.GetData(sweepData);
-            if (sweepData[count] != new Vector4(-1, -1, -1, -1))
-                throw new InvalidOperationException("S05 swept-volume buffer guard was overwritten.");
-            var output = new[] { new double[count], new double[count], new double[count] };
-            for (int a = 0; a < 3; a++)
-            for (int c = 0; c < count; c++)
-            {
-                float ratio = sweepData[c][a];
-                if (float.IsNaN(ratio) || ratio < -2e-6f || ratio > 1 + 2e-6f)
-                    throw new InvalidOperationException("GPU PLIC sweep returned an invalid fraction.");
-                double bounded = Math.Min(1, Math.Max(0, ratio));
-                double width = Math.Abs(total[a][c]);
-                CandidateRoundoffM3 += Math.Abs(bounded - ratio) * width * vof.Grid.CellVolume;
-                output[a][c] = bounded * width;
-            }
-            return output;
         }
 
         public void Dispose()
         {
+            updates?.Dispose();
             alpha?.Release(); alpha = null;
             courant?.Release(); courant = null;
             swept?.Release(); swept = null;
