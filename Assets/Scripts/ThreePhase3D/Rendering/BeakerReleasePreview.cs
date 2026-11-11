@@ -108,7 +108,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             Clear();
             StartSolverWork(() =>
             {
-                var simulation = BeakerVofTimeIntegration.CreateRelease(9e-6, false, 293.15, 101325);
+                var simulation = BeakerVofTimeIntegration.CreateRelease(9e-6, false, 293.15, 101325, surfaceJitterM: .003);
                 return () =>
                 {
                     gpuSession = new BeakerVofGpuSession(simulation);

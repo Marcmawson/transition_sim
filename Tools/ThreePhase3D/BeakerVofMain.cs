@@ -71,6 +71,9 @@ internal static class BeakerVofMain
         const double volume = 9e-6, temperature = 293.15, pressure = 101325;
         var release = BeakerVofTimeIntegration.CreateRelease(volume, false, temperature, pressure);
         var byMass = BeakerVofTimeIntegration.CreateRelease(release.InitialLiquidMassKg, true, temperature, pressure);
+        var jittered = BeakerVofTimeIntegration.CreateRelease(volume, false, temperature, pressure, surfaceJitterM: .003);
+        bool jitterPassed = Math.Abs(jittered.InitialLiquidVolumeM3 - volume) <= 1e-15 &&
+            jittered.State.LiquidM3.Zip(release.State.LiquidM3, (a,b) => Math.Abs(a-b)).Sum() > 1e-9;
         var grid = release.Geometry.Grid;
         int headspace = release.Plan.GroupByCell[grid.Cells.Index(8, 10, 8)];
         int exterior = release.Plan.GroupByCell[grid.Cells.Index(0, 6, 8)];
@@ -88,7 +91,7 @@ internal static class BeakerVofMain
                 maxIterations: BeakerVofTimeIntegration.IterationLimit));
         double moved = initial.Zip(release.State.LiquidM3, (a,b) => Math.Abs(a-b)).Sum();
         Console.WriteLine(FormattableString.Invariant(
-            $"Beaker release: initialized={initialized} initial={release.InitialLiquidVolumeM3:E5} m^3 mass={release.InitialLiquidMassKg:E5} kg time={release.TimeS:F3} s redistribution={moved:E5} m^3 drift={release.LiquidDriftM3:E5} m^3"));
-        return initialized && moved > 1e-11 && Math.Abs(release.LiquidDriftM3) <= 1e-12 ? 0 : 1;
+            $"Beaker release: initialized={initialized} jitterPassed={jitterPassed} initial={release.InitialLiquidVolumeM3:E5} m^3 mass={release.InitialLiquidMassKg:E5} kg time={release.TimeS:F3} s redistribution={moved:E5} m^3 drift={release.LiquidDriftM3:E5} m^3"));
+        return initialized && jitterPassed && moved > 1e-11 && Math.Abs(release.LiquidDriftM3) <= 1e-12 ? 0 : 1;
     }
 }

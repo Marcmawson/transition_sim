@@ -41,20 +41,22 @@ namespace PhysicsSim.ThreePhase3D.Flow
         };
 
         public BeakerVofTimeIntegration(PeriodicVofProjection.PressureSolve pressure = null)
-            : this(pressure, null, LiquidDensity) { }
+            : this(pressure, null, LiquidDensity, 0) { }
 
         public static BeakerVofTimeIntegration CreateRelease(double amount, bool specifiedByMass,
-            double temperatureK, double pressurePa)
+            double temperatureK, double pressurePa, double surfaceJitterM = 0)
         {
             if (!SiUnits.IsFinite(amount) || amount <= 0)
                 throw new ArgumentOutOfRangeException(nameof(amount));
+            if (!SiUnits.IsFinite(surfaceJitterM) || surfaceJitterM < 0)
+                throw new ArgumentOutOfRangeException(nameof(surfaceJitterM));
             var water = new Water95().Evaluate(temperatureK, pressurePa, WaterBranch.Liquid);
             double density = water.DensityKgM3;
-            return new BeakerVofTimeIntegration(null, specifiedByMass ? amount / density : amount, density);
+            return new BeakerVofTimeIntegration(null, specifiedByMass ? amount / density : amount, density, surfaceJitterM);
         }
 
         private BeakerVofTimeIntegration(PeriodicVofProjection.PressureSolve pressure, double? releaseVolumeM3,
-            double liquidDensityKgM3)
+            double liquidDensityKgM3, double surfaceJitterM)
         {
             LiquidDensityKgM3 = liquidDensityKgM3;
             var input = GeometryInputsForPreview();
@@ -68,7 +70,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             if (releaseVolumeM3.HasValue)
             {
                 SliceJ = 6;
-                liquid = CreateReleaseVolumes(topology, input, releaseVolumeM3.Value);
+                liquid = CreateReleaseVolumes(topology, input, releaseVolumeM3.Value, surfaceJitterM);
             }
             else
             {
@@ -164,7 +166,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return liquid;
         }
 
-        private double[] CreateReleaseVolumes(VariableCoefficientProjection topology, GeometryInputs input, double volume)
+        private double[] CreateReleaseVolumes(VariableCoefficientProjection topology, GeometryInputs input, double volume, double surfaceJitterM)
         {
             // The box is inside the cavity and begins one cell above the base.
             // Only fully fluid cells are eligible for the exact box overlap.
@@ -174,15 +176,26 @@ namespace PhysicsSim.ThreePhase3D.Flow
             if (height < Geometry.Grid.Spacing.Y || height >= input.cavityHeightM - clearance)
                 throw new ArgumentOutOfRangeException(nameof(volume), "The release must span at least one cell and leave headspace.");
             var grid = Geometry.Grid;
+            double amplitude = Math.Min(surfaceJitterM,
+                Math.Min(height - grid.Spacing.Y, (input.cavityHeightM - clearance - height) / 2));
+            // Equal-area quadrants with zero-sum offsets preserve the requested volume.
+            double[] offsets = { -1, .5, -.25, .75 };
             var liquid = new double[topology.GroupCount];
             for (int k = 0; k < grid.Cells.Z; k++)
             for (int j = 0; j < grid.Cells.Y; j++)
             for (int i = 0; i < grid.Cells.X; i++)
             {
                 var lower = grid.Frame.ToWorld(grid.Lower(i, j, k));
-                double overlap = Overlap(lower.X, grid.Spacing.X, -halfWidth, halfWidth) *
-                    Overlap(lower.Y, grid.Spacing.Y, bottom, bottom + height) *
-                    Overlap(lower.Z, grid.Spacing.Z, -halfWidth, halfWidth);
+                double overlap = 0;
+                for (int quadrant = 0; quadrant < offsets.Length; quadrant++)
+                {
+                    double left = (quadrant & 1) == 0 ? -halfWidth : 0;
+                    double back = (quadrant & 2) == 0 ? -halfWidth : 0;
+                    double top = bottom + height + amplitude * offsets[quadrant];
+                    overlap += Overlap(lower.X, grid.Spacing.X, left, left + halfWidth) *
+                        Overlap(lower.Y, grid.Spacing.Y, bottom, top) *
+                        Overlap(lower.Z, grid.Spacing.Z, back, back + halfWidth);
+                }
                 if (overlap <= grid.CellVolume * 1e-12) continue;
                 int cell = grid.Cells.Index(i, j, k), group = topology.GroupByCell[cell];
                 if (group < 0 || Geometry.FluidVolumeM3[cell] < grid.CellVolume * (1 - 1e-10))
