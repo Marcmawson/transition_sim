@@ -44,6 +44,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private double stepSeconds, pendingSeconds, simulatedSeconds, nextSnapshot;
         private bool burnerOn, running, ready;
         private string status;
+        private Vector2 panelScroll;
 
         private void Start()
         {
@@ -275,7 +276,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(12, 12, Mathf.Max(1, Mathf.Min(430, Screen.width - 24)), 350), GUI.skin.box);
+            float width = Mathf.Max(1, Mathf.Min(430, Screen.width - 24));
+            float height = Mathf.Max(1, Mathf.Min(waterCapacity > 0 ? 425 : 320, Screen.height - 24));
+            GUILayout.BeginArea(new Rect(12, 12, width, height), GUI.skin.box);
+            panelScroll = GUILayout.BeginScrollView(panelScroll);
             GUILayout.Label(largerBeaker ? "S08 · 120 mm beaker" : "S08 · 66 mm beaker");
             GUILayout.Label(status ?? "Initialising GPU conduction");
             if (ready)
@@ -305,6 +309,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     GUILayout.Label($"Water colours · blue {ColdWaterC:F0} °C to red {hotWaterColourC:F0} °C");
                 }
             }
+            GUILayout.EndScrollView();
             GUILayout.EndArea();
         }
 
