@@ -19,7 +19,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private GameObject cavityGuides;
         private Material guideMaterial;
         private bool running;
-        private float nextStep;
+        private const double SurfaceRefreshSeconds = 1.0 / 30.0;
+        private double nextSurfaceRefresh;
+        private double solverStepMs, surfaceBuildMs;
+        private float frameMs;
         private string error;
         private Action pendingAction;
         private Task<Action> solverWork;
@@ -77,6 +80,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void Update()
         {
+            float elapsedMs = Time.unscaledDeltaTime * 1000f;
+            if (elapsedMs > 0) frameMs = frameMs == 0 ? elapsedMs : Mathf.Lerp(frameMs, elapsedMs, .1f);
             var action = pendingAction;
             pendingAction = null;
             action?.Invoke();
@@ -94,7 +99,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     if (workGeneration == generation) Fail(exception);
                 }
             }
-            if (running && Time.unscaledTime >= nextStep) Advance();
+            if (running) Advance();
         }
 
         private void SpawnWater()
@@ -134,7 +139,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (solverWork != null || release == null) return;
             try
             {
+                var timer = System.Diagnostics.Stopwatch.StartNew();
                 gpuSession.Step();
+                solverStepMs = timer.Elapsed.TotalMilliseconds;
                 ShowWaterState();
             }
             catch (Exception exception) { Fail(exception); }
@@ -148,10 +155,16 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void ShowWaterState()
         {
-            waterSurface.Rebuild(release, waterMesh);
+            double now = Time.realtimeSinceStartupAsDouble;
+            if (!running || now >= nextSurfaceRefresh)
+            {
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                waterSurface.Rebuild(release, waterMesh);
+                surfaceBuildMs = timer.Elapsed.TotalMilliseconds;
+                nextSurfaceRefresh = now + SurfaceRefreshSeconds;
+            }
             waterStatus = $"9 mL water · GPU  |  {release.TimeS:F3} s  |  Step {release.Steps}";
             volumeStatus = $"Liquid volume drift {release.LiquidDriftM3:E2} m³";
-            nextStep = Time.unscaledTime + .15f;
         }
 
         private void CreateWaterSurface()
@@ -209,6 +222,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 GUILayout.Label(waterStatus);
                 GUILayout.Label(volumeStatus);
+                if (frameMs > 0)
+                    GUILayout.Label($"Game {1000f / frameMs:F1} FPS  |  Step {solverStepMs:F1} ms  |  Surface {surfaceBuildMs:F1} ms");
                 if (error == null)
                 {
                     GUILayout.BeginHorizontal();
@@ -233,12 +248,20 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             Debug.LogException(exception, this);
         }
 
-        private void ToggleRunning() => running = !running;
+        private void ToggleRunning()
+        {
+            running = !running;
+            if (running) return;
+            try { ShowWaterState(); }
+            catch (Exception exception) { Fail(exception); }
+        }
 
         private void Clear()
         {
             running = false;
-            nextStep = 0;
+            nextSurfaceRefresh = 0;
+            solverStepMs = 0;
+            surfaceBuildMs = 0;
             generation++;
             release = null;
             gpuSession?.Dispose();
