@@ -6,7 +6,7 @@ This pack specifies a GPU simulation of a glass beaker on a tripod, heated benea
 
 The recommended foundation is a conservative three dimensional finite volume solver: staggered velocities, geometric volume of fluid interfaces, humid gas transport, conjugate solid conduction, and conservative phase change. Moving ice requires an additional coupled rigid body and melting boundary treatment. Unity supplies orchestration, compute shaders, rendering and interaction.
 
-Implementation checkpoints: [S04 single-phase flow](S04-Single-Phase-Flow.md) contains the projection and momentum benchmarks and Unity commands. [S03 grid and cut-cell geometry](S03-Grid-Geometry.md) contains the current grid checks and Unity preview/GPU commands. [S02 expanded materials](S02-Expanded-Materials.md) records the material providers and deferred transport limits. These checkpoints distinguish implemented code, numerical evidence and outstanding execution gates.
+Implementation checkpoints: [S05 geometric transport](S05-Geometric-Transport.md) records the periodic liquid–gas transport and its Unity checks. [S04 single-phase flow](S04-Single-Phase-Flow.md) contains the projection and momentum benchmarks and Unity commands. [S03 grid and cut-cell geometry](S03-Grid-Geometry.md) contains the current grid checks and Unity preview/GPU commands. [S02 expanded materials](S02-Expanded-Materials.md) records the material providers and deferred transport limits. These checkpoints distinguish implemented code, numerical evidence and outstanding execution gates.
 
 ## Read in this order
 

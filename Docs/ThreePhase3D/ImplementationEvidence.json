@@ -382,13 +382,21 @@
     },
     {
       "requirement_id": "R018",
-      "status": "SPECIFIED",
-      "code_symbols": [],
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Flow/GeometricVof3D.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Flow.GeometricVof3D.Advance",
+          "source_sha256": "e37141cbfa0a556bdb1244e38eaef27b1f92ae24e1a9c6e4489c339cd8d7971b"
+        }
+      ],
       "source_ids": [
         "M04",
         "M13"
       ],
-      "source_locators": [],
+      "source_locators": [
+        "Specification.md section 4, consistent phase fluxes; S05-Geometric-Transport.md discrete transport"
+      ],
       "validation_ids": [
         "V09",
         "V10"

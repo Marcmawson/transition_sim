@@ -1,0 +1,94 @@
+#pragma kernel Reconstruct
+#pragma kernel Sweep
+
+StructuredBuffer<float> Alpha;
+StructuredBuffer<float4> Courant;
+StructuredBuffer<float4> PlanesIn;
+RWStructuredBuffer<float4> PlanesOut;
+RWStructuredBuffer<float4> SweepOut;
+int Nx, Ny, Nz, Count;
+
+int Neighbour(int cell, int axis, int direction)
+{
+    int stride = axis == 0 ? 1 : axis == 1 ? Nx : Nx * Ny;
+    int extent = axis == 0 ? Nx : axis == 1 ? Ny : Nz;
+    int coordinate = (cell / stride) % extent;
+    int adjacent = (coordinate + direction + extent) % extent;
+    return cell + stride * (adjacent - coordinate);
+}
+
+float Two(float t, float b, float c)
+{
+    if (t <= 0) return 0;
+    if (t >= b + c) return 1;
+    if (t < b) return .5 * (t / b) * (t / c);
+    if (t <= c) return (t - .5 * b) / c;
+    float tail = b + c - t;
+    return 1 - .5 * (tail / b) * (tail / c);
+}
+
+float Segment(float lo, float hi, float t, float a, float b, float c)
+{
+    if (lo == hi) return 0;
+    return (hi - lo) / 6 * (Two(t - a * lo, b, c) + 4 * Two(t - a * .5 * (lo + hi), b, c)
+        + Two(t - a * hi, b, c));
+}
+
+float Fraction(float3 n, float intercept)
+{
+    float3 w = abs(n);
+    float a = min(w.x, min(w.y, w.z)), c = max(w.x, max(w.y, w.z));
+    // Compute the middle width without subtracting a potentially much larger width.
+    float b = max(min(w.x, w.y), min(max(w.x, w.y), w.z));
+    float t = intercept - dot(min(n, 0), float3(1, 1, 1));
+    if (t <= 0) return 0;
+    if (t >= a + b + c) return 1;
+    if (a == 0) return Two(t, b, c);
+    float p = saturate((t - b - c) / a), q = saturate((t - c) / a);
+    float r = saturate((t - b) / a), s = saturate(t / a);
+    return Segment(0, p, t, a, b, c) + Segment(p, q, t, a, b, c)
+        + Segment(q, r, t, a, b, c) + Segment(r, s, t, a, b, c);
+}
+
+[numthreads(64, 1, 1)]
+void Reconstruct(uint3 id : SV_DispatchThreadID)
+{
+    int cell = (int)id.x;
+    if (cell >= Count) return;
+    float alpha = Alpha[cell];
+    if (alpha <= 0 || alpha >= 1) { PlanesOut[cell] = 0; return; }
+    float3 normal;
+    for (int axis = 0; axis < 3; axis++)
+        normal[axis] = Alpha[Neighbour(cell, axis, -1)] - Alpha[Neighbour(cell, axis, 1)];
+    float scale = dot(abs(normal), float3(1, 1, 1));
+    normal = scale > 0 ? normal / scale : float3(1, 0, 0);
+    float lo = dot(min(normal, 0), float3(1, 1, 1)), hi = lo + 1;
+    for (int step = 0; step < 24; step++)
+    {
+        float mid = .5 * (lo + hi);
+        if (Fraction(normal, mid) < alpha) lo = mid;
+        else hi = mid;
+    }
+    PlanesOut[cell] = float4(normal, .5 * (lo + hi));
+}
+
+[numthreads(64, 1, 1)]
+void Sweep(uint3 id : SV_DispatchThreadID)
+{
+    int cell = (int)id.x;
+    if (cell >= Count) return;
+    float4 result = 0;
+    for (int axis = 0; axis < 3; axis++)
+    {
+        float signedWidth = Courant[cell][axis], width = abs(signedWidth);
+        int donor = signedWidth < 0 ? Neighbour(cell, axis, 1) : cell;
+        float alpha = Alpha[donor];
+        if (alpha <= 0 || alpha >= 1 || width == 0) { result[axis] = alpha; continue; }
+        float4 plane = PlanesIn[donor];
+        float3 scaled = plane.xyz;
+        scaled[axis] *= width;
+        float intercept = plane.w - (signedWidth > 0 ? plane[axis] * (1 - width) : 0);
+        result[axis] = Fraction(scaled, intercept);
+    }
+    SweepOut[cell] = result;
+}

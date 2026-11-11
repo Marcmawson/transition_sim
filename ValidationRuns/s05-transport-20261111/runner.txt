@@ -1,0 +1,5 @@
+Base Git commit: d2bcdbd9a3a5b98266aa8f4d1455041b412b33d0.
+CPU verification: .NET SDK 8.0.428, Linux x86_64. Entry point Tools/ThreePhase3D/VofMain.cs.
+Shader verification: DXC 1.9.2609.5, cs_6_0 DXIL and SPIR-V, warnings as errors. Standalone SwiftShader Vulkan 1.1 dispatch of Reconstruct and Sweep, with descriptor binding annotations and a swept-buffer guard. Candidates went through the production CPU limiter, momentum and scalar updates.
+CPU: 57/57. Software Vulkan plus CPU transport: 57/57.
+Unity Editor import, Game-view display and device GPU execution remain pending.
