@@ -319,12 +319,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             var bounds = new Rect(16, 16, Mathf.Max(1, Mathf.Min(460, Screen.width - 32)),
                 Mathf.Max(1, Mathf.Min(heatMovingWater ? 590 : 400, Screen.height - 32)));
             GUILayout.BeginArea(bounds, GUI.skin.box);
-            panelScroll = GUILayout.BeginScrollView(panelScroll);
             GUILayout.Label($"Simulation Controls · {releaseVolumeMl:F0} mL release", GUI.skin.box);
             if (beakerCamera != null && geometry != null &&
-                GUILayout.Button(beakerCamera.IsUndersideView ? "Free camera" : "Underside view"))
+                GUILayout.Button(beakerCamera.IsUndersideView ? "Return to free camera" : "Underside view"))
                 beakerCamera.ToggleUndersideView((float)geometry.externalBaseHeightM, (float)geometry.OuterRadiusM);
 
+            panelScroll = GUILayout.BeginScrollView(panelScroll);
             if (fluid != null && fluid.positionBuffer != null)
             {
                 GUILayout.Label($"{fluid.positionBuffer.count} particles · {(frameMs > 0 ? 1000 / frameMs : 0):F1} FPS");
