@@ -119,7 +119,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
         }
 
-        private static Texture2D CreateDot()
+        internal static Texture2D CreateDot()
         {
             const int size = 16;
             var texture = new Texture2D(size, size, TextureFormat.RGBA32, false) { wrapMode = TextureWrapMode.Clamp };

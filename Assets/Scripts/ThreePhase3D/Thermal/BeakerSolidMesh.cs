@@ -14,7 +14,7 @@ namespace PhysicsSim.ThreePhase3D.Thermal
         private const int WallHeightCells = 32, LegCells = 12, LegCount = 3;
         private const double GlassK = 1.2, GlassVolumetricCp = 1.8e6;
         private const double SteelK = 16, SteelVolumetricCp = 3.9e6;
-        private const int WaterHeightCells = 8;
+        public const int WaterHeightCells = 8;
         private const double ContactAreaM2 = 1e-4, ContactResistanceM2KW = .001;
 
         public readonly double[] CapacityJPerK;

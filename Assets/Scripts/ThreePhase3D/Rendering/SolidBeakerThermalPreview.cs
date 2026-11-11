@@ -12,9 +12,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const int RadialCells = BeakerSolidMesh.BaseRadialCells;
         private const int DepthCells = BeakerSolidMesh.BaseDepthCells;
         private const double InitialK = 293.15;
+        private const float ColdWaterC = 20f;
+        private static readonly Color ColdWaterColour = new Color(.06f, .32f, 1f);
+        private static readonly Color HotWaterColour = new Color(1f, .06f, .04f);
 
         [SerializeField] private bool largerBeaker = false;
         [SerializeField] private bool includeWater = true;
+        [SerializeField, Range(21f, 100f)] private float hotWaterColourC = 30f;
         [SerializeField, Range(0f, 100f)] private float absorbedBurnerPowerW = 10f;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -27,8 +31,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private ComputeShader shader;
         private ComputeBuffer read, write, capacity, burner, faceStart, links;
         private Texture2D map;
-        private GameObject waterDisplay;
+        private ParticleSystem waterDisplay;
+        private ParticleSystem.Particle[] waterParticles;
+        private int[] waterParticleCells;
         private Material waterMaterial;
+        private Texture2D waterDot;
         private BeakerSolidMesh mesh;
         private float[] snapshot;
         private readonly Color32[] pixels = new Color32[RadialCells * DepthCells];
@@ -140,14 +147,69 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void SpawnWaterDisplay(double radiusM, double floorM)
         {
-            waterDisplay = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
-            waterDisplay.name = "Stationary water fill";
-            waterDisplay.transform.SetParent(transform, false);
-            waterDisplay.transform.localPosition = Vector3.up * (float)(floorM + mesh.WaterDepthM / 2);
-            waterDisplay.transform.localScale = new Vector3((float)(2 * radiusM), (float)(mesh.WaterDepthM / 2), (float)(2 * radiusM));
-            Destroy(waterDisplay.GetComponent<Collider>());
-            waterMaterial = new Material(Shader.Find("Standard")) { color = new Color(.12f, .48f, .73f) };
-            waterDisplay.GetComponent<Renderer>().sharedMaterial = waterMaterial;
+            var shaderAsset = Shader.Find("Sprites/Default");
+            if (shaderAsset == null)
+                throw new InvalidOperationException("The water particle shader is unavailable.");
+
+            waterDot = BeakerWaterParticles.CreateDot();
+            waterMaterial = new Material(shaderAsset) { mainTexture = waterDot, renderQueue = 2999 };
+            var container = new GameObject("Water temperature particles");
+            container.transform.SetParent(transform, false);
+            waterDisplay = container.AddComponent<ParticleSystem>();
+            waterDisplay.Stop(false, ParticleSystemStopBehavior.StopEmittingAndClear);
+            var main = waterDisplay.main;
+            main.playOnAwake = false;
+            main.simulationSpace = ParticleSystemSimulationSpace.Local;
+            var emission = waterDisplay.emission;
+            emission.enabled = false;
+            var renderer = container.GetComponent<ParticleSystemRenderer>();
+            renderer.sharedMaterial = waterMaterial;
+            renderer.minParticleSize = 0;
+
+            const int radialCells = BeakerSolidMesh.InnerRadialCells;
+            const int depthCells = BeakerSolidMesh.WaterHeightCells;
+            float radialStep = (float)radiusM / radialCells;
+            float depthStep = (float)mesh.WaterDepthM / depthCells;
+            float diameter = Mathf.Min(radialStep * .62f, (float)mesh.WaterDepthM * .35f);
+            var particles = new List<ParticleSystem.Particle>();
+            var indices = new List<int>();
+            for (int r = 0; r < radialCells; r++)
+            {
+                float radius = (r + .5f) * radialStep;
+                int around = Mathf.CeilToInt(2 * Mathf.PI * radius / radialStep);
+                for (int z = 0; z < depthCells; z++)
+                    for (int i = 0; i < around; i++)
+                    {
+                        float angle = (i + .5f * (z % 2)) * 2 * Mathf.PI / around;
+                        particles.Add(new ParticleSystem.Particle
+                        {
+                            position = new Vector3(radius * Mathf.Cos(angle),
+                                (float)floorM + (z + .5f) * depthStep, radius * Mathf.Sin(angle)),
+                            startSize = diameter,
+                            startLifetime = 1,
+                            remainingLifetime = 1
+                        });
+                        indices.Add(mesh.WaterStart + r * depthCells + z);
+                    }
+            }
+            waterParticles = particles.ToArray();
+            waterParticleCells = indices.ToArray();
+            main.maxParticles = waterParticles.Length;
+            waterDisplay.Play(false);
+            waterDisplay.Pause(false);
+            RefreshWaterColours();
+        }
+
+        private void RefreshWaterColours()
+        {
+            if (waterDisplay == null) return;
+            float span = Mathf.Max(1, hotWaterColourC - ColdWaterC);
+            for (int i = 0; i < waterParticles.Length; i++)
+            {
+                float fraction = Mathf.Clamp01(snapshot[waterParticleCells[i]] / span);
+                waterParticles[i].startColor = Color.Lerp(ColdWaterColour, HotWaterColour, fraction);
+            }
+            waterDisplay.SetParticles(waterParticles, waterParticles.Length);
         }
 
         private void Update()
@@ -174,6 +236,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 }
                 sampledAbsorbedJ = absorbedJ;
                 RefreshMap();
+                RefreshWaterColours();
                 nextSnapshot = simulatedSeconds + .25;
             }
         }
@@ -195,6 +258,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             simulatedSeconds = pendingSeconds = nextSnapshot = 0;
             running = burnerOn = false;
             RefreshMap();
+            RefreshWaterColours();
         }
 
         private void RefreshMap()
@@ -211,7 +275,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(12, 12, Mathf.Max(1, Mathf.Min(430, Screen.width - 24)), 330), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(12, 12, Mathf.Max(1, Mathf.Min(430, Screen.width - 24)), 350), GUI.skin.box);
             GUILayout.Label(largerBeaker ? "S08 · 120 mm beaker" : "S08 · 66 mm beaker");
             GUILayout.Label(status ?? "Initialising GPU conduction");
             if (ready)
@@ -238,6 +302,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 {
                     GUILayout.Label($"Water {mesh.WaterVolumeM3 * 1e6:F0} mL · depth {mesh.WaterDepthM * 1000:F2} mm");
                     GUILayout.Label($"Water mean {20 + waterJ / waterCapacity:F3} °C · stored {waterJ:F2} J");
+                    GUILayout.Label($"Water colours · blue {ColdWaterC:F0} °C to red {hotWaterColourC:F0} °C");
                 }
             }
             GUILayout.EndArea();
@@ -251,7 +316,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             burner?.Release();
             faceStart?.Release();
             links?.Release();
-            if (waterDisplay != null) Destroy(waterDisplay);
+            if (waterDisplay != null) Destroy(waterDisplay.gameObject);
+            if (waterDot != null) Destroy(waterDot);
             if (waterMaterial != null) Destroy(waterMaterial);
             if (map != null) Destroy(map);
             if (shader != null) Destroy(shader);
