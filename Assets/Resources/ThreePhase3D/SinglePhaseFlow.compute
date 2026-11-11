@@ -1,6 +1,7 @@
 #pragma kernel PredictMomentum
 #pragma kernel IteratePressure
 #pragma kernel CorrectVelocity
+#include "VofCompensated.hlsl"
 
 struct Face
 {
@@ -13,12 +14,12 @@ StructuredBuffer<int> Stencil;
 StructuredBuffer<float> ViscousRates;
 StructuredBuffer<int> Rows;
 StructuredBuffer<int> Incidence;
-StructuredBuffer<float2> PressureRows; // diagonal, tentative outward volume flux / Dt
+StructuredBuffer<float4> PressureRows; // diagonal, high and low words of tentative outward volume flux / Dt
 StructuredBuffer<float> VelocityIn;
 StructuredBuffer<float> PredictedIn;
-StructuredBuffer<float> PressureIn;
+StructuredBuffer<float2> PressureIn;
 RWStructuredBuffer<float> PredictedOut;
-RWStructuredBuffer<float> PressureOut;
+RWStructuredBuffer<float2> PressureOut;
 RWStructuredBuffer<float> CorrectedOut;
 
 int FaceCount, GroupCount;
@@ -33,13 +34,13 @@ float SampleVelocity(int index, float centre)
     return 0;
 }
 
-float PressureGradient(Face face)
+float2 PressureGradient(Face face)
 {
-    float low = face.boundaryPressure;
-    float high = face.boundaryPressure;
+    float2 low = V(face.boundaryPressure);
+    float2 high = low;
     if (face.low >= 0) low = PressureIn[face.low];
     if (face.high >= 0) high = PressureIn[face.high];
-    return (high - low) * face.mobility;
+    return Mul(Sub(high, low), V(face.mobility));
 }
 
 [numthreads(64, 1, 1)]
@@ -83,18 +84,20 @@ void IteratePressure(uint3 id : SV_DispatchThreadID)
     if (group >= (uint)GroupCount) return;
     // The tentative flux is reduced once in FP64 from the existing predictor
     // readback, so near-cancelling face velocities retain their small net flux.
-    precise float pressureFlux = 0;
+    float2 pressureFlux = V(0);
     for (int entry = Rows[group]; entry < Rows[group + 1]; entry++)
     {
         int incidence = Incidence[entry];
         int index = abs(incidence) - 1;
         Face face = Faces[index];
         float area = incidence > 0 ? face.area : -face.area;
-        pressureFlux += area * PressureGradient(face);
+        pressureFlux = Add(pressureFlux, Mul(V(area), PressureGradient(face)));
     }
-    float residual = pressureFlux - PressureRows[group].y;
-    float diagonal = PressureRows[group].x;
-    PressureOut[group] = diagonal > 0 ? PressureIn[group] + (2.0 / 3.0) * residual / diagonal : 0;
+    float4 row = PressureRows[group];
+    float2 residual = Sub(pressureFlux, row.yz);
+    // The increment may be much smaller than the leading pressure word.
+    float update = row.x > 0 ? (2.0 / 3.0) * (residual.x + residual.y) / row.x : 0;
+    PressureOut[group] = row.x > 0 ? Add(PressureIn[group], V(update)) : V(0);
 }
 
 [numthreads(64, 1, 1)]
@@ -103,5 +106,11 @@ void CorrectVelocity(uint3 id : SV_DispatchThreadID)
     uint index = id.x;
     if (index >= (uint)FaceCount) return;
     Face face = Faces[index];
-    CorrectedOut[index] = face.active == 0 ? 0 : PredictedIn[index] - Dt * PressureGradient(face);
+    if (face.active == 0)
+    {
+        CorrectedOut[index] = 0;
+        return;
+    }
+    float2 result = Sub(V(PredictedIn[index]), Mul(V(Dt), PressureGradient(face)));
+    CorrectedOut[index] = result.x + result.y;
 }
