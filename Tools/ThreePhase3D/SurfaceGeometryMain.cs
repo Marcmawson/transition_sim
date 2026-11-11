@@ -58,6 +58,7 @@ internal static class SurfaceGeometryMain
         CheckSessileCapillaryPressure(105);
         CheckSessileCapillaryPressure(90, true);
         CheckSessileCapillaryPressure(90, true, true);
+        CheckCapillaryShapeRelaxation();
         double coarseDecayError = CheckPlanarShearDecay(8, 8);
         if (!(CheckPlanarShearDecay(16, 128) < .5 * coarseDecayError))
             throw new InvalidOperationException("Planar shear decay did not improve under refinement.");
@@ -285,7 +286,7 @@ internal static class SurfaceGeometryMain
         return maximumRadialError;
     }
 
-    private static double[] SampleSessileCap(VariableCoefficientProjection plan, double wallY, D3 centre, double radius)
+    private static double[] SampleSessileCap(VariableCoefficientProjection plan, double wallY, D3 centre, double radius, double stretch = 1)
     {
         var grid = plan.Grid;
         double h = grid.Spacing.X;
@@ -307,7 +308,8 @@ internal static class SurfaceGeometryMain
             {
                 var p = new D3(lower.X + h * (x + .5) / samples, yLow + height * (y + .5) / samples,
                     lower.Z + h * (z + .5) / samples) - centre;
-                if (D3.Dot(p, p) < radius * radius) inside++;
+                double xScaled = p.X / stretch, zScaled = p.Z * stretch;
+                if (xScaled * xScaled + p.Y * p.Y + zScaled * zScaled < radius * radius) inside++;
             }
             liquid[group] += plan.Geometry.FluidVolumeM3[cell] * (inside / (double)(samples * samples * samples));
         }
@@ -456,6 +458,70 @@ internal static class SurfaceGeometryMain
             if (!flow.Diagnostics.Converged || !(Math.Abs(jump / expected - 1) <= .05) ||
                 !(speed <= speedLimit) || !(Math.Abs(drift) <= 1e-15))
                 throw new InvalidOperationException("Wall-compatible capillary pressure check failed.");
+        }
+    }
+
+    private static void CheckCapillaryShapeRelaxation()
+    {
+        const int n = 26, steps = 8;
+        const double h = .001, radius = .007, sigma = .072, dt = .00005;
+        const double rhoL = 997, rhoG = 1.2, muL = .001, muG = .000018;
+        var grid = new Grid3D(n, 14, n, new D3(h, h, h));
+        var slab = SurfacePrimitives.Box(new D3(-h, -h, -h), new D3((n + 1) * h, h, (n + 1) * h));
+        var geometry = CutCellGeometry.Build(grid, slab);
+        var plan = new VariableCoefficientProjection(geometry, BoundaryConditions3D.Closed, _ => rhoG, _ => 0);
+        var centre = new D3(n * h / 2, h, n * h / 2);
+        var liquid = SampleSessileCap(plan, h, centre, radius, stretch: 1.12);
+        var gas = plan.Volumes.Zip(liquid, (volume, water) => volume - water).ToArray();
+        var initial = new CutCellInventories(liquid, gas, new double[gas.Length],
+            new double[gas.Length], new double[gas.Length]);
+        var rest = FlowCpuReference.Project(plan, new float[plan.FaceCount], dt, 16384);
+        var profile = new WettingProfile("Synthetic planar wall", "Capillary shape relaxation", 90, .0001, h,
+            new[] { new WettingMeasurement(0, 90.5), new WettingMeasurement(.02, 91) },
+            new[] { new WettingMeasurement(0, 89.5), new WettingMeasurement(.02, 89) });
+        var capillary = CutCellVofTransport.WithPlanarWallWetting(plan, 1, sigma, profile, bulkViscosity: true);
+        var control = CutCellVofTransport.WithTrackedWetting(plan, profile);
+        double initialShape = Shape(liquid), initialVolume = liquid.Sum();
+        var fields = initial;
+        var flow = rest;
+        var referenceFields = initial;
+        var referenceFlow = rest;
+        double maxDrift = 0;
+        for (int step = 0; step < steps; step++)
+        {
+            var trial = capillary.AdvanceCoupledWithWetting(fields, flow, rhoL, rhoG, muL, muG, maxIterations: 16384);
+            var reference = control.AdvanceCoupledWithWetting(referenceFields, referenceFlow, rhoL, rhoG,
+                muL, muG, maxIterations: 16384);
+            fields = trial.Transport.Fields;
+            flow = trial.Pressure;
+            referenceFields = reference.Transport.Fields;
+            referenceFlow = reference.Pressure;
+            maxDrift = Math.Max(maxDrift, Math.Abs(fields.LiquidM3.Sum() - initialVolume));
+            if (!flow.Diagnostics.Converged || !referenceFlow.Diagnostics.Converged ||
+                trial.CapillaryWettingContacts == 0 || trial.Momentum.MaxDualMassErrorKg > 1e-12)
+                throw new InvalidOperationException("Capillary shape relaxation failed its coupled-step checks.");
+        }
+
+        double finalShape = Shape(fields.LiquidM3), referenceShape = Shape(referenceFields.LiquidM3);
+        Console.WriteLine($"Capillary shape relaxation: t={steps * dt:G5} s, initial={initialShape:G10}, final={finalShape:G10}, control={referenceShape:G10}, volume drift={maxDrift:E5} m^3");
+        if (!(initialShape > .1 && finalShape > 0 && initialShape - finalShape > 1e-5) ||
+            Math.Abs(referenceShape - initialShape) > 1e-12 || maxDrift > 1e-15)
+            throw new InvalidOperationException("Only the capillary run should reduce the initial elongation.");
+
+        double Shape(double[] inventory)
+        {
+            double xx = 0, zz = 0;
+            var shape = grid.Cells;
+            for (int k = 0; k < shape.Z; k++)
+            for (int j = 1; j < shape.Y; j++)
+            for (int i = 0; i < shape.X; i++)
+            {
+                int group = plan.GroupByCell[shape.Index(i, j, k)];
+                var offset = grid.Centre(i, j, k) - centre;
+                xx += inventory[group] * offset.X * offset.X;
+                zz += inventory[group] * offset.Z * offset.Z;
+            }
+            return (xx - zz) / (xx + zz);
         }
     }
 

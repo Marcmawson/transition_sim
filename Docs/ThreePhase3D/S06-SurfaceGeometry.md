@@ -131,3 +131,11 @@ The standalone CPU suite compares the lower-wall traction and interior stress up
 This isolates viscous relaxation. Quantitative capillary-driven sessile-drop relaxation and comparison with measured glass data remain open.
 
 A run with half the spacing and a quarter of the timestep gave relative L2 errors of 2.64e-5 and 3.06e-5. The tighter timestep in the accepted fine run addresses the separate wall and bulk updates. The paired refinement therefore checks combined spatial and temporal error.
+
+### Capillary-driven sessile shape relaxation
+
+The CPU suite initializes a 7 mm sessile hemisphere at rest, stretches one horizontal axis by 1.12, and compresses the other by the reciprocal factor. It advances the resulting half-ellipsoid for eight 0.05 ms steps using dynamic wetting, wall traction, interior viscous stress, capillary forcing, and pressure projection. The shape metric is the difference between the horizontal second moments divided by their sum, measured about the initial centre. The check requires a decrease toward zero, conserved liquid volume, closed staggered mass, and converged pressure at every step.
+
+The control uses the same initial shape and tracked contact traction with surface tension disabled. Its velocity stays at rest, so bulk and no-slip drag would also contribute zero. This checks the initial capillary restoring response. Oscillation frequency, damping over longer times, resolution dependence, and comparison with measured glass remain open.
+
+The 0.2 ms trial exceeded the existing transport pressure-flux correction bound. The accepted 0.05 ms run retains that bound and records only the initial 0.4 ms response.
