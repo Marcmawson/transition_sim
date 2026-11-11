@@ -142,22 +142,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
         public CutCellCoupledStep AdvanceCoupledWithAcceleration(CutCellInventories state, FlowStep transportingFlow,
             double liquidDensity, double gasDensity, D3 worldAccelerationMPerS2,
             Func<int, CutCellInflow> inflow = null, int maxIterations = 4096)
-        {
-            var frame = plan.Grid.Frame;
-            var localAcceleration = new D3(D3.Dot(worldAccelerationMPerS2, frame.U),
-                D3.Dot(worldAccelerationMPerS2, frame.V), D3.Dot(worldAccelerationMPerS2, frame.W));
-            return AdvanceCoupled(state, transportingFlow, liquidDensity, gasDensity, inflow, maxIterations,
-                (nextPlan, tentative, dt, iterations) =>
-                {
-                    for (int f = 0; f < nextPlan.FaceCount; f++)
-                    {
-                        var face = nextPlan.Faces[f];
-                        if (face.Active != 0)
-                            tentative[f] = (float)(tentative[f] + dt * localAcceleration[face.Axis]);
-                    }
-                    return ProjectCpu(nextPlan, tentative, dt, iterations);
-                });
-        }
+            => AdvanceCoupled(state, transportingFlow, liquidDensity, gasDensity, inflow, maxIterations,
+                ProjectCpu, worldAccelerationMPerS2: worldAccelerationMPerS2);
 
         public CutCellCoupledStep AdvanceCoupledWithWetting(CutCellInventories state, FlowStep transportingFlow,
             double liquidDensity, double gasDensity, double liquidViscosityPaS, double gasViscosityPaS,
@@ -201,7 +187,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
             double liquidDensity, double gasDensity, Func<int, CutCellInflow> inflow, int maxIterations,
             PeriodicVofProjection.PressureSolve project,
             Func<CutCellScalarWork, CutCellScalarOutput> apply = null, CutCellGeometryBatch clip = null,
-            Func<CutCellInventories, CutCellTransportResult, double[], double, double, CutCellMomentumResult> remap = null)
+            Func<CutCellInventories, CutCellTransportResult, double[], double, double, CutCellMomentumResult> remap = null,
+            D3 worldAccelerationMPerS2 = default)
         {
             var transported = AdvanceProjected(state, transportingFlow, inflow, apply, clip);
             var previousVelocity = Array.ConvertAll(transportingFlow.VelocityMPerS, value => (double)value);
@@ -214,6 +201,19 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     gasDensity * transported.Fields.GasM3[group]) / plan.Volumes[group];
             }, _ => 0);
             var tentative = Array.ConvertAll(advected.VelocityMPerS, value => (float)value);
+            if (worldAccelerationMPerS2.Length != 0)
+            {
+                var frame = nextPlan.Grid.Frame;
+                var acceleration = new D3(D3.Dot(worldAccelerationMPerS2, frame.U),
+                    D3.Dot(worldAccelerationMPerS2, frame.V), D3.Dot(worldAccelerationMPerS2, frame.W));
+                double dt = transportingFlow.Diagnostics.Dt;
+                for (int f = 0; f < nextPlan.FaceCount; f++)
+                {
+                    var face = nextPlan.Faces[f];
+                    if (face.Active != 0)
+                        tentative[f] = (float)(tentative[f] + dt * acceleration[face.Axis]);
+                }
+            }
             Dictionary<int, double> angles = null;
             if (capillarity != null && trackedPatches != null)
             {

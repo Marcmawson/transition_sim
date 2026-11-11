@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
 using PhysicsSim.ThreePhase3D.PhaseChange;
 using UnityEngine;
@@ -72,14 +73,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         }
 
         public CutCellCoupledStep AdvanceCoupled(CutCellInventories state, FlowStep flow,
-            double liquidDensity, double gasDensity, CutCellGpuMomentum momentum, ComputeShader pressureShader, int maxIterations)
+            double liquidDensity, double gasDensity, CutCellGpuMomentum momentum, ComputeShader pressureShader, int maxIterations,
+            D3 worldAccelerationMPerS2 = default)
         {
             if (owned.Count == 0) throw new ObjectDisposedException(nameof(CutCellGpuScalars));
             if (momentum == null || pressureShader == null || clipping == null)
                 throw new ArgumentException("The coupled preview requires GPU momentum, pressure and clipping.");
             return transport.AdvanceCoupled(state, flow, liquidDensity, gasDensity, null, maxIterations,
                 (next, velocity, dt, cap) => FlowGpuSolver.Project(next, pressureShader, velocity, dt, cap),
-                Dispatch, clipping.Clip, momentum.Advance);
+                Dispatch, clipping.Clip, momentum.Advance, worldAccelerationMPerS2);
         }
 
         internal CutCellCoupledStep AdvanceCoupledWithWetting(CutCellInventories state, FlowStep flow,

@@ -58,6 +58,27 @@ namespace PhysicsSim.ThreePhase3D.Editor
         [MenuItem("Physics Sim/Three Phase 3D/Run S06 coupled wetting GPU checks")]
         public static void RunWettingChecks() => RunChecks(true);
 
+        [MenuItem("Physics Sim/Three Phase 3D/Run S07 GPU water release check")]
+        public static void RunReleaseCheck()
+        {
+            const int steps = 4;
+            var release = BeakerVofTimeIntegration.CreateRelease(9e-6, false, 293.15, 101325);
+            var initial = release.State.LiquidM3;
+            using (var session = new BeakerVofGpuSession(release))
+            {
+                var timer = System.Diagnostics.Stopwatch.StartNew();
+                for (int i = 0; i < steps; i++) session.Step();
+                timer.Stop();
+                double moved = initial.Zip(release.State.LiquidM3, (a, b) => Math.Abs(a - b)).Sum();
+                bool passed = release.Steps == steps && session.ClippingDispatches > 0 &&
+                    moved > 1e-11 && Math.Abs(release.LiquidDriftM3) <= 1e-12;
+                string result = FormattableString.Invariant(
+                    $"S07 GPU release: passed={passed} steps={release.Steps} clippingDispatches={session.ClippingDispatches} redistribution={moved:E5} m³ drift={release.LiquidDriftM3:E5} m³ meanStepMs={timer.Elapsed.TotalMilliseconds / steps:F1}");
+                if (passed) Debug.Log(result);
+                else Debug.LogError(result);
+            }
+        }
+
         private static void RunChecks(bool wetting)
         {
             var report = new Evidence { Device = SystemInfo.graphicsDeviceName, GraphicsApi = SystemInfo.graphicsDeviceType.ToString() };

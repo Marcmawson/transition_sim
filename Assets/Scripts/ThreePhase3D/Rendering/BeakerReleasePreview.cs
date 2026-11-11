@@ -10,10 +10,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     [RequireComponent(typeof(Beaker3DSetup))]
     public sealed class BeakerReleasePreview : MonoBehaviour
     {
-        private static readonly D3 Gravity = new D3(0, -9.81, 0);
         private readonly List<GameObject> waterCells = new List<GameObject>();
         private BeakerVofTimeIntegration release;
-        private CutCellVofTransport transport;
+        private BeakerVofGpuSession gpuSession;
         private GameObject ice;
         private Material waterMaterial, iceMaterial;
         private GameObject cavityGuides;
@@ -104,11 +103,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             StartSolverWork(() =>
             {
                 var simulation = BeakerVofTimeIntegration.CreateRelease(9e-6, false, 293.15, 101325);
-                var simulationTransport = new CutCellVofTransport(simulation.Plan);
                 return () =>
                 {
+                    gpuSession = new BeakerVofGpuSession(simulation);
                     release = simulation;
-                    transport = simulationTransport;
                     if (waterMaterial == null) waterMaterial = CreateMaterial(new Color(.06f, .73f, .96f));
                     ShowWaterState();
                 };
@@ -133,15 +131,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void Advance()
         {
             if (solverWork != null || release == null) return;
-            var simulation = release;
-            var simulationTransport = transport;
-            StartSolverWork(() =>
+            try
             {
-                simulation.Step((state, flow) => simulationTransport.AdvanceCoupledWithAcceleration(state, flow,
-                    simulation.LiquidDensityKgM3, BeakerVofTimeIntegration.GasDensity, Gravity,
-                    maxIterations: BeakerVofTimeIntegration.IterationLimit));
-                return ShowWaterState;
-            });
+                gpuSession.Step();
+                ShowWaterState();
+            }
+            catch (Exception exception) { Fail(exception); }
         }
 
         private void StartSolverWork(Func<Action> work)
@@ -153,7 +148,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void ShowWaterState()
         {
             DrawWater();
-            waterStatus = $"9 mL water  |  {release.TimeS:F3} s  |  Step {release.Steps}";
+            waterStatus = $"9 mL water · GPU  |  {release.TimeS:F3} s  |  Step {release.Steps}";
             volumeStatus = $"Liquid volume drift {release.LiquidDriftM3:E2} m³";
             nextStep = Time.unscaledTime + .15f;
         }
@@ -229,7 +224,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
             else if (ice != null) GUILayout.Label("20 mm ice block · stationary preview");
             if (solverWork != null && workGeneration == generation)
-                GUILayout.Label(release == null ? "Preparing water release…" : "Solving next step…");
+                GUILayout.Label("Preparing water release…");
             if (error != null) GUILayout.Label(error);
             GUILayout.EndArea();
         }
@@ -249,7 +244,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             nextStep = 0;
             generation++;
             release = null;
-            transport = null;
+            gpuSession?.Dispose();
+            gpuSession = null;
             error = null;
             foreach (var block in waterCells) block.SetActive(false);
             if (ice != null)
