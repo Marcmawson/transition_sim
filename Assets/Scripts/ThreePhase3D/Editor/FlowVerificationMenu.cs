@@ -50,10 +50,23 @@ namespace PhysicsSim.ThreePhase3D.Editor
             var root = new GameObject("S04 single-phase channel");
             Undo.RegisterCreatedObjectUndo(root, "Create S04 channel preview");
             Undo.AddComponent<FlowChannelPreview>(root);
+            Vector3 target = new Vector3(.011f, .01f, .0075f);
+            var camera = Camera.main;
+            if (camera != null)
+            {
+                camera.transform.position = target + new Vector3(.012f, .010f, -.060f);
+                camera.transform.LookAt(target);
+                camera.orthographic = true;
+                camera.orthographicSize = .018f;
+                camera.nearClipPlane = .001f;
+                camera.farClipPlane = 1f;
+                camera.clearFlags = CameraClearFlags.SolidColor;
+                camera.backgroundColor = new Color(.045f, .065f, .09f, 1f);
+            }
             Selection.activeGameObject = root;
             SceneView.lastActiveSceneView?.LookAt(new Vector3(.01f, .01f, .0075f),
                 Quaternion.Euler(15, -22, 0), .04f, true);
-            Debug.Log("Enter Play mode and enable Scene view Gizmos to see velocity arrows. This is the pressure-driven channel benchmark.");
+            Debug.Log("Enter Play mode and open the Game tab to see the channel frame and velocity arrows. This is the pressure-driven channel benchmark.");
         }
 
         public static void RunGpuBatch()

@@ -41,7 +41,7 @@ The CPU reference and standalone shader run each passed **89 comparisons**. See 
 Pull `main` and allow Unity 2022.3.46f1 to reimport. With Play mode stopped, use the **Physics Sim > Three Phase 3D** top menu.
 
 1. Select **Run S04 GPU flow checks**. The Console should report `gpuExecuted=True; passed=True`. The command saves an evidence bundle under `ValidationRuns/local/s04-gpu-*`.
-2. To see velocity develop from rest, select **Create S04 channel flow preview**, enter Play mode and turn on **Gizmos** in the Scene view. The preview uses a synthetic pressure-driven channel with fixed density and viscosity. The Game view reports simulation time and the measured divergence.
+2. To see velocity develop from rest, select **Create S04 channel flow preview**, enter Play mode and open the **Game** tab. The opaque channel frame and cyan velocity arrows are rendered by the preview camera. The preview uses a synthetic pressure-driven channel with fixed density and viscosity. The Game view reports simulation time and the measured divergence.
 3. **Run S04 CPU flow checks** runs the analytical suite without compute shader dispatches.
 
 Standalone CPU command in PowerShell:
