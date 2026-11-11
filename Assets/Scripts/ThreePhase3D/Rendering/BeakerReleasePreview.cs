@@ -9,19 +9,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     [RequireComponent(typeof(Beaker3DSetup))]
     public sealed class BeakerReleasePreview : MonoBehaviour
     {
-        private BeakerWaterSurface waterSurface;
-        private Mesh waterMesh;
-        private GameObject waterObject;
+        private BeakerWaterParticles waterParticles;
         private BeakerVofTimeIntegration release;
         private BeakerVofGpuSession gpuSession;
         private GameObject ice;
-        private Material waterMaterial, iceMaterial;
+        private Material iceMaterial;
         private GameObject cavityGuides;
         private Material guideMaterial;
         private bool running;
-        private const double SurfaceRefreshSeconds = 1.0 / 30.0;
-        private double nextSurfaceRefresh;
-        private double solverStepMs, surfaceBuildMs;
+        private const double ParticleRefreshSeconds = 1.0 / 30.0;
+        private double nextParticleRefresh;
+        private double solverStepMs, particleUpdateMs;
         private float frameMs;
         private string error;
         private Action pendingAction;
@@ -113,7 +111,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 {
                     gpuSession = new BeakerVofGpuSession(simulation);
                     release = simulation;
-                    CreateWaterSurface();
+                    waterParticles = new BeakerWaterParticles(transform, release,
+                        GetComponent<Beaker3DSetup>().scenario.physical.geometry);
                     ShowWaterState();
                 };
             });
@@ -156,34 +155,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void ShowWaterState()
         {
             double now = Time.realtimeSinceStartupAsDouble;
-            if (!running || now >= nextSurfaceRefresh)
+            if (!running || now >= nextParticleRefresh)
             {
                 var timer = System.Diagnostics.Stopwatch.StartNew();
-                waterSurface.Rebuild(release, waterMesh);
-                surfaceBuildMs = timer.Elapsed.TotalMilliseconds;
-                nextSurfaceRefresh = now + SurfaceRefreshSeconds;
+                waterParticles.Refresh();
+                particleUpdateMs = timer.Elapsed.TotalMilliseconds;
+                nextParticleRefresh = now + ParticleRefreshSeconds;
             }
             waterStatus = $"9 mL water · GPU  |  {release.TimeS:F3} s  |  Step {release.Steps}  |  Δt {release.Pressure.Diagnostics.Dt * 1000:F3} ms";
             volumeStatus = $"Liquid volume drift {release.LiquidDriftM3:E2} m³";
-        }
-
-        private void CreateWaterSurface()
-        {
-            var shader = Resources.Load<Shader>("ThreePhase3D/BeakerWaterSurface");
-            if (shader == null) throw new InvalidOperationException("The beaker water surface shader is unavailable.");
-            var geometry = GetComponent<Beaker3DSetup>().scenario.physical.geometry;
-            waterMaterial = new Material(shader);
-            waterMaterial.SetVector("_Beaker", new Vector4((float)geometry.innerRadiusM,
-                (float)geometry.OuterRadiusM, (float)(geometry.externalBaseHeightM + geometry.baseThicknessM),
-                (float)geometry.RimHeightM));
-            waterMaterial.SetFloat("_BaseY", (float)geometry.externalBaseHeightM);
-            waterMesh = new Mesh { name = "Beaker liquid surface", indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
-            waterMesh.MarkDynamic();
-            waterSurface = new BeakerWaterSurface(release, geometry);
-            waterObject = new GameObject("Water surface");
-            waterObject.transform.SetParent(transform, false);
-            waterObject.AddComponent<MeshFilter>().sharedMesh = waterMesh;
-            waterObject.AddComponent<MeshRenderer>().sharedMaterial = waterMaterial;
         }
 
         private GameObject CreateBlock(string label, Material material)
@@ -223,7 +203,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.Label(waterStatus);
                 GUILayout.Label(volumeStatus);
                 if (frameMs > 0)
-                    GUILayout.Label($"Game {1000f / frameMs:F1} FPS  |  Step {solverStepMs:F1} ms ({release.Pressure.Diagnostics.Iterations} it)  |  Surface {surfaceBuildMs:F1} ms");
+                    GUILayout.Label($"Game {1000f / frameMs:F1} FPS  |  Step {solverStepMs:F1} ms ({release.Pressure.Diagnostics.Iterations} it)  |  Particles {particleUpdateMs:F1} ms");
                 if (error == null)
                 {
                     GUILayout.BeginHorizontal();
@@ -262,25 +242,16 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void Clear()
         {
             running = false;
-            nextSurfaceRefresh = 0;
+            nextParticleRefresh = 0;
             solverStepMs = 0;
-            surfaceBuildMs = 0;
+            particleUpdateMs = 0;
             generation++;
             release = null;
             gpuSession?.Dispose();
             gpuSession = null;
             error = null;
-            if (waterObject != null)
-            {
-                waterObject.SetActive(false);
-                Destroy(waterObject);
-            }
-            if (waterMesh != null) Destroy(waterMesh);
-            if (waterMaterial != null) Destroy(waterMaterial);
-            waterObject = null;
-            waterMesh = null;
-            waterMaterial = null;
-            waterSurface = null;
+            waterParticles?.Dispose();
+            waterParticles = null;
             if (ice != null)
             {
                 ice.SetActive(false);
