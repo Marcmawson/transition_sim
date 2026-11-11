@@ -1,0 +1,249 @@
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using PhysicsSim.ThreePhase3D.Thermal;
+using UnityEngine;
+
+namespace PhysicsSim.ThreePhase3D.Rendering
+{
+    [RequireComponent(typeof(Beaker3DSetup))]
+    public sealed class SolidBeakerThermalPreview : MonoBehaviour
+    {
+        private const int RadialCells = 16;
+        private const int DepthCells = 6;
+        private const int Support = RadialCells * DepthCells;
+        private const int CellCount = Support + 1;
+        private const double InitialK = 293.15;
+        private const double Conductivity = 1.2;
+        private const double VolumetricCapacity = 1.8e6;
+
+        [SerializeField] private bool largerBeaker;
+        [SerializeField, Range(0f, 100f)] private float absorbedBurnerPowerW = 10f;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct FaceLink
+        {
+            public int Other;
+            public float Conductance;
+        }
+
+        private ComputeShader shader;
+        private ComputeBuffer read, write, capacity, burner, faceStart, links;
+        private Texture2D map;
+        private readonly float[] snapshot = new float[CellCount];
+        private readonly Color32[] pixels = new Color32[Support];
+        private int kernel;
+        private double stepSeconds, pendingSeconds, simulatedSeconds, nextSnapshot;
+        private bool burnerOn, running, ready;
+        private string status;
+
+        private void Start()
+        {
+            try
+            {
+                Initialize();
+                ready = true;
+            }
+            catch (Exception exception)
+            {
+                status = exception.Message;
+                Debug.LogException(exception, this);
+            }
+        }
+
+        private void Initialize()
+        {
+            var asset = Resources.Load<ComputeShader>("ThreePhase3D/SolidBeakerConduction");
+            if (!SystemInfo.supportsComputeShaders || asset == null)
+                throw new InvalidOperationException("S08 requires compute shader support and the solid conduction shader.");
+
+            var setup = GetComponent<Beaker3DSetup>();
+            var geometry = setup.scenario.physical.geometry;
+            geometry.innerRadiusM = largerBeaker ? .06 : .033;
+            geometry.cavityHeightM = largerBeaker ? .16 : .06;
+            geometry.tripodRingRadiusM = geometry.OuterRadiusM * .75;
+            setup.scenario.display.showSetupReport = false;
+            setup.Refresh();
+
+            var cellCapacity = new double[CellCount];
+            var unitPower = new double[CellCount];
+            var initial = new double[CellCount];
+            var faces = new List<SolidConduction.Face>();
+            double dr = geometry.OuterRadiusM / RadialCells;
+            double dz = geometry.baseThicknessM / DepthCells;
+            var edges = new double[RadialCells];
+            for (int r = 0; r < RadialCells; r++) edges[r] = (r + 1) * dr;
+            var facePower = RadialHeatFluxBoundary.GaussianFacePowerW(1, .015, edges);
+            for (int r = 0; r < RadialCells; r++)
+            {
+                int bottom = r * DepthCells;
+                double area = Math.PI * (2 * r + 1) * dr * dr;
+                unitPower[bottom] = facePower[r];
+                for (int z = 0; z < DepthCells; z++)
+                {
+                    int cell = bottom + z;
+                    cellCapacity[cell] = VolumetricCapacity * area * dz;
+                    if (z + 1 < DepthCells)
+                        faces.Add(new SolidConduction.Face(cell, cell + 1, Conductivity * area / dz));
+                    if (r + 1 < RadialCells)
+                        faces.Add(new SolidConduction.Face(cell, cell + DepthCells,
+                            Conductivity * 2 * Math.PI * edges[r] * dz / dr));
+                }
+            }
+
+            cellCapacity[Support] = 10;
+            int contactRing = Math.Min(RadialCells - 1, (int)(geometry.tripodRingRadiusM / dr));
+            double supportG = CoupledHeatFaces.HeatRateW(1e-4, 2, 1, dz / 2, Conductivity, .001, .003, 16);
+            faces.Add(new SolidConduction.Face(contactRing * DepthCells, Support, supportG));
+            for (int i = 0; i < CellCount; i++) initial[i] = InitialK;
+
+            var reference = new SolidConduction(cellCapacity, initial, faces.ToArray());
+            stepSeconds = Math.Min(.01, reference.MaximumStepSeconds * .5);
+            var adjacency = new List<FaceLink>[CellCount];
+            for (int i = 0; i < CellCount; i++) adjacency[i] = new List<FaceLink>();
+            foreach (var face in faces)
+            {
+                adjacency[face.A].Add(new FaceLink { Other = face.B, Conductance = (float)face.ConductanceWPerK });
+                adjacency[face.B].Add(new FaceLink { Other = face.A, Conductance = (float)face.ConductanceWPerK });
+            }
+            var starts = new int[CellCount + 1];
+            var flattened = new List<FaceLink>();
+            for (int i = 0; i < CellCount; i++)
+            {
+                starts[i] = flattened.Count;
+                flattened.AddRange(adjacency[i]);
+            }
+            starts[CellCount] = flattened.Count;
+
+            shader = Instantiate(asset);
+            kernel = shader.FindKernel("Conduct");
+            read = new ComputeBuffer(CellCount, sizeof(float));
+            write = new ComputeBuffer(CellCount, sizeof(float));
+            capacity = new ComputeBuffer(CellCount, sizeof(float));
+            burner = new ComputeBuffer(CellCount, sizeof(float));
+            faceStart = new ComputeBuffer(starts.Length, sizeof(int));
+            links = new ComputeBuffer(flattened.Count, sizeof(int) + sizeof(float));
+            capacity.SetData(Array.ConvertAll(cellCapacity, value => (float)value));
+            burner.SetData(Array.ConvertAll(unitPower, value => (float)value));
+            faceStart.SetData(starts);
+            links.SetData(flattened);
+            shader.SetInt("CellCount", CellCount);
+            shader.SetFloat("StepSeconds", (float)stepSeconds);
+            shader.SetBuffer(kernel, "Capacity", capacity);
+            shader.SetBuffer(kernel, "BurnerPower", burner);
+            shader.SetBuffer(kernel, "FaceStart", faceStart);
+            shader.SetBuffer(kernel, "FaceLinks", links);
+            map = new Texture2D(RadialCells, DepthCells, TextureFormat.RGBA32, false)
+                { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
+
+            ResetTemperatures();
+            var checkPower = Array.ConvertAll(unitPower, value => value * 10);
+            for (int i = 0; i < 20; i++)
+            {
+                Dispatch(10);
+                reference.Step(stepSeconds, checkPower);
+            }
+            read.GetData(snapshot);
+            double maxError = 0;
+            for (int i = 0; i < CellCount; i++)
+            {
+                if (float.IsNaN(snapshot[i]) || float.IsInfinity(snapshot[i]))
+                    throw new InvalidOperationException("S08 GPU conduction returned a non-finite temperature.");
+                maxError = Math.Max(maxError, Math.Abs(snapshot[i] - reference.TemperatureK[i]));
+            }
+            if (maxError > .001)
+                throw new InvalidOperationException($"S08 CPU/GPU comparison failed: {maxError:G4} K.");
+            status = $"GPU check passed · max error {maxError:G3} K";
+            Debug.Log($"S08 {status}", this);
+            ResetTemperatures();
+        }
+
+        private void Update()
+        {
+            if (!ready || !running) return;
+            pendingSeconds += Math.Min(Time.unscaledDeltaTime, .1f);
+            while (pendingSeconds >= stepSeconds)
+            {
+                Dispatch(burnerOn ? absorbedBurnerPowerW : 0);
+                pendingSeconds -= stepSeconds;
+                simulatedSeconds += stepSeconds;
+            }
+            if (simulatedSeconds >= nextSnapshot)
+            {
+                read.GetData(snapshot);
+                RefreshMap();
+                nextSnapshot = simulatedSeconds + .25;
+            }
+        }
+
+        private void Dispatch(float watts)
+        {
+            shader.SetFloat("AbsorbedPowerW", watts);
+            shader.SetBuffer(kernel, "TemperatureRead", read);
+            shader.SetBuffer(kernel, "TemperatureWrite", write);
+            shader.Dispatch(kernel, (CellCount + 63) / 64, 1, 1);
+            (read, write) = (write, read);
+        }
+
+        private void ResetTemperatures()
+        {
+            for (int i = 0; i < snapshot.Length; i++) snapshot[i] = (float)InitialK;
+            read.SetData(snapshot);
+            simulatedSeconds = pendingSeconds = nextSnapshot = 0;
+            running = burnerOn = false;
+            RefreshMap();
+        }
+
+        private void RefreshMap()
+        {
+            for (int r = 0; r < RadialCells; r++)
+                for (int z = 0; z < DepthCells; z++)
+                {
+                    float rise = Mathf.Clamp01((snapshot[r * DepthCells + z] - (float)InitialK) / 25);
+                    pixels[z * RadialCells + r] = Color.Lerp(new Color(.12f, .32f, .65f), new Color(1, .3f, .04f), rise);
+                }
+            map.SetPixels32(pixels);
+            map.Apply(false);
+        }
+
+        private void OnGUI()
+        {
+            GUILayout.BeginArea(new Rect(12, 12, Mathf.Max(1, Mathf.Min(430, Screen.width - 24)), 300), GUI.skin.box);
+            GUILayout.Label(largerBeaker ? "S08 · 120 mm beaker" : "S08 · 66 mm beaker");
+            GUILayout.Label(status ?? "Initialising GPU conduction");
+            if (ready)
+            {
+                GUILayout.BeginHorizontal();
+                if (GUILayout.Button(running ? "Pause" : "Run")) running = !running;
+                if (GUILayout.Button(burnerOn ? "Burner off" : "Burner on"))
+                {
+                    burnerOn = !burnerOn;
+                    if (burnerOn) running = true;
+                }
+                if (GUILayout.Button("Reset")) ResetTemperatures();
+                GUILayout.EndHorizontal();
+                GUILayout.Label($"Absorbed power: {absorbedBurnerPowerW:F0} W · {simulatedSeconds:F2} s");
+                absorbedBurnerPowerW = GUILayout.HorizontalSlider(absorbedBurnerPowerW, 0, 100);
+                GUILayout.Label($"Underside centre {snapshot[0] - 273.15:F2} °C · Upper centre {snapshot[DepthCells - 1] - 273.15:F2} °C");
+                GUILayout.Label($"Outer underside {snapshot[(RadialCells - 1) * DepthCells] - 273.15:F2} °C · Support {snapshot[Support] - 273.15:F2} °C");
+                GUILayout.Label("Glass base cross-section · centre to rim · 20–45 °C");
+                Rect rect = GUILayoutUtility.GetRect(1, 70, GUILayout.ExpandWidth(true));
+                GUI.DrawTexture(rect, map, ScaleMode.StretchToFill);
+                GUILayout.Label("Synthetic dry-base test · no water or ambient exchange");
+            }
+            GUILayout.EndArea();
+        }
+
+        private void OnDestroy()
+        {
+            read?.Release();
+            write?.Release();
+            capacity?.Release();
+            burner?.Release();
+            faceStart?.Release();
+            links?.Release();
+            if (map != null) Destroy(map);
+            if (shader != null) Destroy(shader);
+        }
+    }
+}

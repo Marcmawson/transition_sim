@@ -1,0 +1,26 @@
+#pragma kernel Conduct
+StructuredBuffer<float> TemperatureRead;
+RWStructuredBuffer<float> TemperatureWrite;
+StructuredBuffer<float> Capacity;
+StructuredBuffer<float> BurnerPower;
+StructuredBuffer<int> FaceStart;
+struct FaceLink { int Other; float Conductance; };
+StructuredBuffer<FaceLink> FaceLinks;
+int CellCount;
+float StepSeconds;
+float AbsorbedPowerW;
+
+[numthreads(64, 1, 1)]
+void Conduct(uint3 id : SV_DispatchThreadID)
+{
+    uint cell = id.x;
+    if (cell >= (uint)CellCount) return;
+    float temperature = TemperatureRead[cell];
+    float power = AbsorbedPowerW * BurnerPower[cell];
+    for (int i = FaceStart[cell]; i < FaceStart[cell + 1]; i++)
+    {
+        FaceLink link = FaceLinks[i];
+        power += link.Conductance * (TemperatureRead[link.Other] - temperature);
+    }
+    TemperatureWrite[cell] = temperature + StepSeconds * power / Capacity[cell];
+}
