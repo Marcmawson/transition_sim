@@ -3,6 +3,7 @@ using System.Linq;
 using PhysicsSim.ThreePhase3D.Verification;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
+using PhysicsSim.ThreePhase3D.Geometry;
 using PhysicsSim.ThreePhase3D.PhaseChange;
 using PhysicsSim.ThreePhase3D.Materials;
 
@@ -46,6 +47,7 @@ internal static class SurfaceGeometryMain
         CheckAlternateAxis();
         CheckSphericalDrop();
         CheckThermocapillarySlab();
+        CheckWetting();
     }
 
     private static void CheckSphericalDrop()
@@ -144,6 +146,62 @@ internal static class SurfaceGeometryMain
         if (!(Math.Abs(stress / expected - 1) < .03) || !(Math.Abs(netForce) < 1e-16) ||
             !(coldwardSpeed > 0) || !step.Pressure.Converged)
             throw new InvalidOperationException("Thermocapillary slab check failed.");
+    }
+
+    private static void CheckWetting()
+    {
+        var profile = new WettingProfile("Synthetic flat wall", "Analytical test fixture", 65, .001, .01,
+            new[] { new WettingMeasurement(0, 80), new WettingMeasurement(.02, 100) },
+            new[] { new WettingMeasurement(0, 50), new WettingMeasurement(.02, 30) });
+        if (profile.AngleDegrees(0, 70) != 70 || profile.AngleDegrees(0, 90) != 80 ||
+            profile.AngleDegrees(.01, 65) != 90 || profile.AngleDegrees(-.01, 65) != 40)
+            throw new InvalidOperationException("Wetting branches or hysteresis limits failed.");
+        try
+        {
+            profile.AngleDegrees(.03, 65);
+            throw new InvalidOperationException("An uncalibrated contact-line speed was accepted.");
+        }
+        catch (ArgumentOutOfRangeException) { }
+
+        var grid = new Grid3D(4, 1, 1, new D3(1, 1, 1));
+        var slab = SurfacePrimitives.Box(new D3(-1, -1, -1), new D3(5, .4, 2));
+        var geometry = CutCellGeometry.Build(grid, slab);
+        int cell = grid.Cells.Index(1, 0, 0);
+        var patch = geometry.Patches.First(p => p.Cell == cell && p.FluidExposedAreaM2 > 0);
+        var contact = new WettingContact(profile, patch, -.01);
+        var normal = contact.InterfaceNormal(new D3(-1, 0, 0));
+        double angle = Math.Acos(D3.Dot(normal, patch.NormalLocal)) * 180 / Math.PI;
+        var traction = profile.WallTractionPa(new D3(2, 7, 0), patch.NormalLocal, .004, .01);
+        if (Math.Abs(angle - 40) > 1e-12 || (traction - new D3(-4, 0, 0)).Length > 1e-12)
+            throw new InvalidOperationException("Contact-angle orientation or Navier traction failed.");
+
+        var open = new FlowBoundary(FlowBoundaryKind.OpenPressure);
+        var wall = new FlowBoundary(FlowBoundaryKind.NoSlip);
+        var plan = new VariableCoefficientProjection(geometry,
+            new BoundaryConditions3D(open, open, wall, wall, wall, wall), _ => 997, _ => 0);
+        var liquid = plan.Volumes.Select((v, i) => v * (.2 + .15 * i)).ToArray();
+        var gas = plan.Volumes.Zip(liquid, (volume, water) => volume - water).ToArray();
+        var state = new CutCellInventories(liquid, gas, new double[gas.Length],
+            new double[gas.Length], new double[gas.Length]);
+        var velocity = new double[plan.FaceCount];
+        for (int i = 0; i <= 4; i++)
+        {
+            int f = plan.FaceIndex(0, i, 0, 0);
+            velocity[f] = .06 / plan.Faces[f].Area;
+        }
+        var transport = new CutCellVofTransport(plan, donor => donor == cell ? contact : null);
+        var result = transport.Advance(state, velocity, 1, _ => new CutCellInflow(0, 0, 0, 0));
+        var clipped = new CutCellVofGeometry(geometry);
+        int group = plan.GroupByCell[cell];
+        double target = liquid[group] / plan.Volumes[group] * geometry.FluidVolumeM3[cell];
+        var plane = clipped.Reconstruct(cell, normal, target);
+        double swept = clipped.Sweep(cell, 0, true, .06, plane);
+        double ledger = result.Fields.LiquidM3.Sum() - liquid.Sum() - result.BoundaryInflow[0];
+        if (Math.Abs(clipped.LiquidVolume(cell, plane) - target) > 1e-10 ||
+            Math.Abs(result.LiquidFaceM3[plan.FaceIndex(0, 2, 0, 0)] - swept) > 1e-10 ||
+            Math.Abs(ledger) > 1e-10)
+            throw new InvalidOperationException("Wetting reconstruction or transport ledger failed.");
+        Console.WriteLine($"Synthetic wetting: receding angle={angle:G8}°, traction={traction.X:G8} Pa, liquid ledger={ledger:G8} m^3");
     }
 
     private static void CheckAlternateAxis()

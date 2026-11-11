@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Geometry;
+using PhysicsSim.ThreePhase3D.PhaseChange;
 
 namespace PhysicsSim.ThreePhase3D.Flow
 {
@@ -17,9 +18,23 @@ namespace PhysicsSim.ThreePhase3D.Flow
         private readonly int[] parent, parentFace;
         private readonly List<int> order = new List<int>();
 
-        public CutCellVofTransport(VariableCoefficientProjection plan)
+        private readonly Func<int, WettingContact> contactAtCell;
+        private readonly HashSet<InterfacePatch> wettablePatches;
+
+        public CutCellVofTransport(VariableCoefficientProjection plan) : this(plan, null) { }
+
+        // The caller supplies the active contact cells and wall-relative speeds for the accepted step.
+        public CutCellVofTransport(VariableCoefficientProjection plan, Func<int, WettingContact> contactAtCell)
         {
             this.plan = plan ?? throw new ArgumentNullException(nameof(plan));
+            this.contactAtCell = contactAtCell;
+            if (contactAtCell != null)
+            {
+                wettablePatches = new HashSet<InterfacePatch>();
+                foreach (var patch in plan.Geometry.Patches)
+                    if (patch.Role == SolidRole.Fixed && patch.FluidExposedAreaM2 > 0)
+                        wettablePatches.Add(patch);
+            }
             geometry = new CutCellVofGeometry(plan.Geometry);
             momentum = new CutCellMomentum(plan);
             lowCell = new int[plan.FaceCount];
@@ -348,7 +363,12 @@ namespace PhysicsSim.ThreePhase3D.Flow
         {
             plan.Grid.Cells.Coordinates(cell, out int i, out int j, out int k);
             double alpha = liquid[group] / plan.Volumes[group];
-            return new D3(Difference(0), Difference(1), Difference(2));
+            var normal = new D3(Difference(0), Difference(1), Difference(2));
+            var contact = contactAtCell?.Invoke(cell);
+            if (contact == null) return normal;
+            if (contact.Wall.Cell != cell || !wettablePatches.Contains(contact.Wall))
+                throw new ArgumentException("Contact requires an exposed fixed-wall patch of the donor cell.");
+            return contact.InterfaceNormal(normal);
 
             double Difference(int axis) => (SampleAt(axis, -1) - SampleAt(axis, 1)) / plan.Grid.Spacing[axis];
 
