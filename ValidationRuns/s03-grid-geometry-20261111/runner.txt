@@ -1,0 +1,7 @@
+Managed executable SHA256: c3231f0e739600203ca0d8514df757e35578ff0190ddf3158ad5080e2576d509
+Managed runtime: 4.0.30319.42000
+Host OS: Microsoft Windows NT 6.2.9200.0
+Compiler/reference environment: Unity 2022.3.46f1; see RunGeometryChecks.ps1
+CPU geometry timings include clipping and metric assembly; no GPU speed claim.
+GPU executed: false
+Stage complete: false
