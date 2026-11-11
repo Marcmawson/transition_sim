@@ -44,6 +44,8 @@ Gate: V03–V05 and V32. Deliver property plots and machine-readable comparisons
 
 Dependencies: S00, S01.
 
+Current implementation and evidence: [S03 grid/geometry checkpoint](S03-Grid-Geometry.md). CPU geometry checks and pinned-Unity C# compilation pass; measured execution of the S03 GPU checks remains pending. Flow and thermal operators are subsequent stages.
+
 Implement Core/Grid3D and Geometry/CutCellGeometry. Provide cell volumes, x/y/z face areas, solid fractions, normals and interface distances. Distinguish fixed solid, moving ice and accessible fluid volume.
 
 Implement GPU resource allocation, indexing, stride checks, ghost regions and a kernel binding registry. Use the same authoritative geometry for thermal transfer, collision and surface rendering. Define tiny-cell treatment with conservative accounting.
