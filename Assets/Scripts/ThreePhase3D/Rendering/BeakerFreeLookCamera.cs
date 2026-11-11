@@ -5,7 +5,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     [RequireComponent(typeof(Camera))]
     public sealed class BeakerFreeLookCamera : MonoBehaviour
     {
+        private const string InvertMouseKey = "PhysicsSim.S07.InvertMouseY";
         private Camera view;
+        public bool InvertMouseY { get; private set; }
         private Vector3 homePosition;
         private Quaternion homeRotation;
         private float homeSize, yaw, pitch;
@@ -16,6 +18,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void Awake()
         {
             view = GetComponent<Camera>();
+            InvertMouseY = PlayerPrefs.GetInt(InvertMouseKey, 0) != 0;
             homePosition = transform.position;
             homeRotation = transform.rotation;
             homeSize = view.orthographicSize;
@@ -25,6 +28,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void Update()
         {
             if (!Application.isFocused) return;
+            if (Input.GetKeyDown(KeyCode.I))
+            {
+                InvertMouseY = !InvertMouseY;
+                PlayerPrefs.SetInt(InvertMouseKey, InvertMouseY ? 1 : 0);
+                PlayerPrefs.Save();
+            }
             if (Input.GetKeyDown(KeyCode.R))
             {
                 transform.SetPositionAndRotation(homePosition, homeRotation);
@@ -46,7 +55,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             else if (looking)
             {
                 yaw += Input.GetAxisRaw("Mouse X") * 2f;
-                pitch = Mathf.Clamp(pitch - Input.GetAxisRaw("Mouse Y") * 2f, -85f, 85f);
+                pitch = Mathf.Clamp(pitch + Input.GetAxisRaw("Mouse Y") * (InvertMouseY ? 2f : -2f), -85f, 85f);
                 transform.rotation = Quaternion.Euler(pitch, yaw, 0);
             }
 

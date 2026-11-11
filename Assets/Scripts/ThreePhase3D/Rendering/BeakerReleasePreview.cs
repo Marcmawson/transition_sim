@@ -207,7 +207,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(16, 16, Mathf.Min(Screen.width - 32, 370), 216), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(16, 16, Mathf.Min(Screen.width - 32, 370), 236), GUI.skin.box);
             GUILayout.Label("S07 Beaker release");
             GUILayout.BeginHorizontal();
             bool controlsEnabled = GUI.enabled;
@@ -240,6 +240,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (error != null) GUILayout.Label(error);
             GUILayout.Label("WASD move · Q/E down/up · Shift faster");
             GUILayout.Label("Right mouse look · Wheel zoom · R reset");
+            GUILayout.Label("I invert vertical mouse look");
             GUILayout.EndArea();
         }
 
