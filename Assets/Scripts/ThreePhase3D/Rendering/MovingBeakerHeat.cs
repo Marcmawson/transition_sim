@@ -20,13 +20,42 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             public float Conductance;
         }
 
+        private struct FlowSample
+        {
+            public double WarmCount, WarmHeight, WarmSpeed, CoolCount, CoolSpeed;
+
+            public void Add(Vector4 totals, Vector4 counts)
+            {
+                WarmCount += totals.x;
+                WarmHeight += totals.y;
+                WarmSpeed += totals.z;
+                CoolSpeed += totals.w;
+                CoolCount += counts.x;
+            }
+
+            public string Describe()
+            {
+                string warm = WarmCount > 0
+                    ? FormattableString.Invariant($"warm {WarmCount:F0} · height {1000 * WarmHeight / WarmCount:F2} mm · vertical {1000 * WarmSpeed / WarmCount:+0.000;-0.000;0.000} mm/s")
+                    : "no particles at ≥21 °C";
+                string cool = CoolCount > 0
+                    ? FormattableString.Invariant($"cool vertical {1000 * CoolSpeed / CoolCount:+0.000;-0.000;0.000} mm/s")
+                    : "no cooler particles";
+                return warm + " · " + cool;
+            }
+        }
+
         private const int Rings = BeakerSolidMesh.InnerRadialCells;
         private const int Depth = BeakerSolidMesh.BaseDepthCells;
         private readonly BeakerSolidMesh mesh;
         private readonly FluidSim fluid;
         private readonly ComputeShader shader;
         private readonly List<ComputeBuffer> owned = new List<ComputeBuffer>();
-        private readonly int clear, find, exchange, reduce, conduct, particleGroups, solidGroups;
+        private readonly int clear, find, exchange, reduce, conduct, measureFlow, particleGroups, solidGroups;
+        private readonly ComputeBuffer flowTotals;
+        private readonly Vector4[] flowSnapshot;
+        private FlowSample sampledFlow;
+        public string FlowDescription => sampledFlow.Describe();
         private readonly double maxStep, particleCapacity;
         private readonly float[] solidSnapshot, particleSnapshot;
         private ComputeBuffer glassRead, glassWrite;
@@ -45,6 +74,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             mesh = new BeakerSolidMesh(geometry);
             int count = fluid.positionBuffer.count;
             particleGroups = (count + 63) / 64;
+            flowSnapshot = new Vector4[2 * particleGroups];
             solidGroups = (mesh.CapacityJPerK.Length + 63) / 64;
             solidSnapshot = new float[mesh.CapacityJPerK.Length];
             particleSnapshot = new float[count];
@@ -71,6 +101,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 exchange = Kernel("ExchangeHeat");
                 reduce = Kernel("ReduceRingHeat");
                 conduct = Kernel("ConductGlass");
+                measureFlow = Kernel("MeasureVerticalFlow");
+                flowTotals = Allocate(flowSnapshot.Length, 16);
+                shader.SetFloat("BeakerRim", fluid.beakerRimY);
+                shader.SetBuffer(measureFlow, "Positions", fluid.positionBuffer);
+                shader.SetBuffer(measureFlow, "Velocities", fluid.velocityBuffer);
+                shader.SetBuffer(measureFlow, "TemperatureRise", fluid.TemperatureRise);
+                shader.SetBuffer(measureFlow, "FlowTotals", flowTotals);
                 glassRead = Allocate(solidSnapshot.Length, 4);
                 glassWrite = Allocate(solidSnapshot.Length, 4);
                 var capacity = Allocate(solidSnapshot.Length, 4);
@@ -135,6 +172,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             inputJ = SampledInputJ = SampledSolidJ = SampledWaterJ = 0;
             sampleRevision++;
             samplePending = sampleDirty = false;
+            sampledFlow = default;
             nextSampleTime = 0;
         }
 
@@ -175,7 +213,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             int revision = sampleRevision;
             double sampledInput = inputJ, solidJ = 0, waterJ = 0;
             bool failed = false;
-            int remaining = 2;
+            int remaining = 3;
+            FlowSample flow = default;
+            shader.Dispatch(measureFlow, particleGroups, 1, 1);
 
             void Complete()
             {
@@ -183,6 +223,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 samplePending = false;
                 if (failed) { sampleDirty = true; return; }
                 PublishSample(sampledInput, solidJ, waterJ);
+                sampledFlow = flow;
             }
 
             AsyncGPUReadback.Request(glassRead, result =>
@@ -208,6 +249,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 }
                 Complete();
             });
+            AsyncGPUReadback.Request(flowTotals, result =>
+            {
+                if (revision != sampleRevision) return;
+                failed |= result.hasError;
+                if (!result.hasError)
+                {
+                    var data = result.GetData<Vector4>();
+                    for (int i = 0; i < data.Length; i += 2) flow.Add(data[i], data[i + 1]);
+                }
+                Complete();
+            });
         }
 
         private void PublishSample(double absorbed, double solid, double water)
@@ -219,6 +271,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         public string Measure()
         {
+            shader.Dispatch(measureFlow, particleGroups, 1, 1);
+            flowTotals.GetData(flowSnapshot);
+            sampledFlow = default;
+            for (int i = 0; i < flowSnapshot.Length; i += 2)
+                sampledFlow.Add(flowSnapshot[i], flowSnapshot[i + 1]);
             glassRead.GetData(solidSnapshot);
             fluid.TemperatureRise.GetData(particleSnapshot);
             double solidJ = solidSnapshot.Select((value, i) => value * mesh.CapacityJPerK[i]).Sum();
@@ -227,7 +284,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             samplePending = sampleDirty = false;
             PublishSample(inputJ, solidJ, liquidJ);
             double residual = solidJ + liquidJ - inputJ;
-            return FormattableString.Invariant($"burner {inputJ:F4} J · solids {solidJ:F4} J · water {liquidJ:F4} J · residual {residual:G4} J");
+            return FormattableString.Invariant($"burner {inputJ:F4} J · solids {solidJ:F4} J · water {liquidJ:F4} J · residual {residual:G4} J · {FlowDescription}");
         }
 
         private int Kernel(string name)

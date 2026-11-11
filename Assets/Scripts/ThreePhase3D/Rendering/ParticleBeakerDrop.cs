@@ -16,6 +16,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const float DropGapM = .01f;
         private const int TargetFrameRate = 60;
         private const int BenchmarkMicroseconds = 400000;
+        private const int CirculationMicroseconds = 30000000;
         private const double MaxPendingSeconds = 0.032;
         private enum SolverTimestep
         {
@@ -250,7 +251,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             lastTick = Time.realtimeSinceStartupAsDouble;
         }
 
-        private void StartMeasurement()
+        private void StartMeasurement(int durationMicroseconds = BenchmarkMicroseconds)
         {
             fluid.ResetParticles();
             movingHeat?.Reset();
@@ -258,7 +259,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             measuredFrames = 0;
             solverSteps = 0;
             measuredPlaybackSpeed = playbackSpeed;
-            benchmarkSteps = BenchmarkMicroseconds / StepMicroseconds;
+            benchmarkSteps = durationMicroseconds / StepMicroseconds;
             SetRunning(true);
             startTime = lastTick;
             measuring = true;
@@ -270,7 +271,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             double elapsed = Time.realtimeSinceStartupAsDouble - startTime;
             string timing = FormattableString.Invariant(
                 $"GPU drop: {measuredFrames} frames, {measuredFrames / elapsed:F1} FPS, {fluid.SimulatedSeconds:F3} s simulated in {elapsed:F3} s at {measuredPlaybackSpeed:P0} playback · {StepMicroseconds / 1000.0:0.##} ms per step · {solverSteps} solver steps · {releaseVolumeMl:F0} mL release");
-            if (movingHeat != null) timing += $" · buoyancy {(thermalBuoyancy ? "on" : "off")} · " + movingHeat.Measure();
+            if (movingHeat != null) timing += $" · {absorbedBurnerWatts:F0} W · buoyancy {(thermalBuoyancy ? "on" : "off")} · " + movingHeat.Measure();
             evidence = timing;
             if (!SystemInfo.supportsAsyncGPUReadback)
             {
@@ -316,7 +317,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void OnGUI()
         {
             var bounds = new Rect(16, 16, Mathf.Max(1, Mathf.Min(460, Screen.width - 32)),
-                Mathf.Max(1, Mathf.Min(heatMovingWater ? 535 : 400, Screen.height - 32)));
+                Mathf.Max(1, Mathf.Min(heatMovingWater ? 590 : 400, Screen.height - 32)));
             GUILayout.BeginArea(bounds, GUI.skin.box);
             panelScroll = GUILayout.BeginScrollView(panelScroll);
             GUILayout.Label($"Simulation Controls · {releaseVolumeMl:F0} mL release", GUI.skin.box);
@@ -333,6 +334,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     double solid = movingHeat.SampledSolidJ, water = movingHeat.SampledWaterJ;
                     GUILayout.Label($"Absorbed {movingHeat.SampledInputJ:F4} J · Retained {solid + water:F4} J");
                     GUILayout.Label($"Solids {solid:F4} J · Water {water:F4} J");
+                    GUILayout.Label(movingHeat.FlowDescription);
                     bool selected = GUILayout.Toolbar(showTemperature ? 0 : 1, ColourViews) == 0;
                     if (selected != showTemperature)
                     {
@@ -364,6 +366,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 }
                 if (GUILayout.Button("Measure drop + slosh")) StartMeasurement();
                 GUILayout.EndHorizontal();
+                if (movingHeat != null && GUILayout.Button("Measure circulation · 30 simulated s"))
+                    StartMeasurement(CirculationMicroseconds);
 
                 GUI.enabled = !running && !measuring && !readbackPending && !finishOnNextFrame;
                 if (GUILayout.Button("Step once"))

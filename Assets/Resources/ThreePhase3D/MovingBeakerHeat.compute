@@ -3,8 +3,12 @@
 #pragma kernel ExchangeHeat
 #pragma kernel ReduceRingHeat
 #pragma kernel ConductGlass
+#pragma kernel MeasureVerticalFlow
 
 StructuredBuffer<float3> Positions;
+StructuredBuffer<float3> Velocities;
+RWStructuredBuffer<float4> FlowTotals;
+float BeakerRim;
 RWStructuredBuffer<float> TemperatureRise;
 StructuredBuffer<float> GlassRead;
 RWStructuredBuffer<float> GlassWrite;
@@ -21,6 +25,8 @@ uint ParticleCount, RingCount, BaseDepth, SolidCount;
 float RingWidth, ContactRadius, ContactFloor, ContactDepth;
 float ParticleArea, ParticleCapacity, ConductancePerArea, Dt, BurnerWatts;
 groupshared float partial[64];
+groupshared float4 partialFlow[64];
+groupshared float partialCoolCount[64];
 
 [numthreads(64,1,1)]
 void ClearContacts(uint3 id : SV_DispatchThreadID)
@@ -91,4 +97,42 @@ void ConductGlass(uint3 id : SV_DispatchThreadID)
     uint ring = cell / BaseDepth;
     float loss = cell % BaseDepth == BaseDepth - 1 && ring < RingCount ? RingGain[ring] : 0;
     GlassWrite[cell] = rise + (Dt * power - loss) / GlassCapacity[cell];
+}
+
+[numthreads(64,1,1)]
+void MeasureVerticalFlow(uint3 group : SV_GroupID, uint lane : SV_GroupIndex, uint3 id : SV_DispatchThreadID)
+{
+    float4 flow = 0;
+    float coolCount = 0;
+    if (id.x < ParticleCount)
+    {
+        float3 p = Positions[id.x];
+        float speedY = Velocities[id.x].y;
+        float rise = TemperatureRise[id.x];
+        if (p.y >= ContactFloor - 1e-5 && p.y < BeakerRim &&
+            dot(p.xz, p.xz) <= ContactRadius * ContactRadius + 1e-8 &&
+            !isnan(speedY) && !isinf(speedY) && !isnan(rise) && !isinf(rise))
+        {
+            if (rise >= 1) flow = float4(1, max(0, p.y - ContactFloor), speedY, 0);
+            else { flow.w = speedY; coolCount = 1; }
+        }
+    }
+
+    partialFlow[lane] = flow;
+    partialCoolCount[lane] = coolCount;
+    GroupMemoryBarrierWithGroupSync();
+    for (uint stride = 32; stride > 0; stride >>= 1)
+    {
+        if (lane < stride)
+        {
+            partialFlow[lane] += partialFlow[lane + stride];
+            partialCoolCount[lane] += partialCoolCount[lane + stride];
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if (lane == 0)
+    {
+        FlowTotals[2 * group.x] = partialFlow[0];
+        FlowTotals[2 * group.x + 1] = float4(partialCoolCount[0], 0, 0, 0);
+    }
 }
