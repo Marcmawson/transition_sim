@@ -13,11 +13,15 @@ Shader "Fluid/ParticleBillboard" {
 			#pragma vertex vert
 			#pragma fragment frag
 			#pragma target 4.5
+			#pragma multi_compile_local __ PARTICLE_TEMPERATURE
 
 			#include "UnityCG.cginc"
 			
 			StructuredBuffer<float3> Positions;
 			StructuredBuffer<float3> Velocities;
+			#ifdef PARTICLE_TEMPERATURE
+			StructuredBuffer<float> TemperatureRise;
+			#endif
 			Texture2D<float4> ColourMap;
 			SamplerState linear_clamp_sampler;
 			float velocityMax;
@@ -47,9 +51,11 @@ Shader "Fluid/ParticleBillboard" {
 				o.pos = mul(UNITY_MATRIX_P, viewPos);
 
 
-				float speed = length(Velocities[instanceID]);
-				float speedT = saturate(speed / velocityMax);
-				float colT = speedT;
+				#ifdef PARTICLE_TEMPERATURE
+				float colT = saturate(TemperatureRise[instanceID] / 10);
+				#else
+				float colT = saturate(length(Velocities[instanceID]) / velocityMax);
+				#endif
 				o.colour = ColourMap.SampleLevel(linear_clamp_sampler, float2(colT, 0.5), 0);
 
 				return o;

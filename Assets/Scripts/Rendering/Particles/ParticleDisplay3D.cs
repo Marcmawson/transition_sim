@@ -71,6 +71,11 @@ namespace Seb.Fluid.Rendering
 					mat.SetBuffer("Positions", sim.positionBuffer);
 					mat.SetBuffer("Velocities", sim.velocityBuffer);
 					mat.SetBuffer("DebugBuffer", sim.debugBuffer);
+					if (mode == DisplayMode.Billboard && sim.TemperatureRise != null)
+					{
+						mat.EnableKeyword("PARTICLE_TEMPERATURE");
+						mat.SetBuffer("TemperatureRise", sim.TemperatureRise);
+					}
 				}
 			}
 

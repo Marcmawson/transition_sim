@@ -36,6 +36,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         [SerializeField, Tooltip("Use the 120 mm beaker and release 250 mL instead of 9 mL.")]
         private bool largerBeaker = false;
 
+        [Header("Thermal Coupling")]
+        [SerializeField] private bool heatMovingWater = false;
+        [SerializeField, Range(0f, 100f)] private float absorbedBurnerWatts = 10f;
+
         [Header("Simulation Settings")]
         [SerializeField] private SolverTimestep solverTimestep = SolverTimestep.Ms040;
         [SerializeField, Range(5f, 100f)] private float playbackPercent = 25f;
@@ -47,6 +51,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         [SerializeField, Range(0f, 1f)] private float wallBounce = .2f;
 
         private FluidSim fluid;
+        private MovingBeakerHeat movingHeat;
         private ComputeShader computeInstance;
         private GameObject solverObject;
         private GeometryInputs geometry;
@@ -125,6 +130,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.compute = computeInstance;
             fluid.spawner = spawner;
             fluid.manualControl = true;
+            fluid.transportTemperature = heatMovingWater;
             // Start from the demo's liquid parameters scaled to metre-sized particles.
             fluid.smoothingRadius = .002f;
             fluid.targetDensity = 630e6f;
@@ -147,7 +153,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             display.colourMap.SetKeys(new[]
             {
                 new GradientColorKey(new Color(.05f, .55f, .88f), 0),
-                new GradientColorKey(new Color(.52f, .92f, 1f), 1)
+                new GradientColorKey(heatMovingWater ? new Color(1f, .08f, .04f) : new Color(.52f, .92f, 1f), 1)
             }, new[] { new GradientAlphaKey(1, 0), new GradientAlphaKey(1, 1) });
             solverObject.SetActive(true);
         }
@@ -161,7 +167,19 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 finishOnNextFrame = false;
                 FinishMeasurement();
             }
-            if (!running || fluid == null || fluid.positionBuffer == null) return;
+            if (fluid == null || fluid.positionBuffer == null) return;
+            if (heatMovingWater && movingHeat == null)
+            {
+                try { movingHeat = new MovingBeakerHeat(fluid, geometry, releaseVolumeMl * 1e-6); }
+                catch (Exception exception)
+                {
+                    evidence = exception.Message;
+                    Debug.LogException(exception, this);
+                    enabled = false;
+                    return;
+                }
+            }
+            if (!running) return;
             double now = Time.realtimeSinceStartupAsDouble;
             double stepSeconds = StepSeconds;
             float speed = measuring ? measuredPlaybackSpeed : playbackSpeed;
@@ -174,7 +192,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 steps = (int)Math.Min(steps, benchmarkSteps - solverSteps);
             }
             if (steps == 0) return;
-            fluid.AdvanceManually((float)stepSeconds, steps);
+            AdvanceDrop(stepSeconds, steps);
             solverSteps += steps;
             pendingSeconds -= steps * stepSeconds;
             if (measuring && solverSteps == benchmarkSteps)
@@ -182,6 +200,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 running = false;
                 finishOnNextFrame = true;
             }
+        }
+
+        private void AdvanceDrop(double stepSeconds, int steps)
+        {
+            fluid.AdvanceManually((float)stepSeconds, steps);
+            movingHeat?.Advance(stepSeconds * steps, absorbedBurnerWatts);
         }
 
         private void SetRunning(bool value)
@@ -194,6 +218,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void StartMeasurement()
         {
             fluid.ResetParticles();
+            movingHeat?.Reset();
             evidence = null;
             measuredFrames = 0;
             solverSteps = 0;
@@ -210,6 +235,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             double elapsed = Time.realtimeSinceStartupAsDouble - startTime;
             string timing = FormattableString.Invariant(
                 $"GPU drop: {measuredFrames} frames, {measuredFrames / elapsed:F1} FPS, {fluid.SimulatedSeconds:F3} s simulated in {elapsed:F3} s at {measuredPlaybackSpeed:P0} playback · {StepMicroseconds / 1000.0:0.##} ms per step · {solverSteps} solver steps · {releaseVolumeMl:F0} mL release");
+            if (movingHeat != null) timing += " · " + movingHeat.Measure();
             evidence = timing;
             if (!SystemInfo.supportsAsyncGPUReadback)
             {
@@ -275,6 +301,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     SetRunning(false);
                     measuring = false;
                     fluid.ResetParticles();
+                    movingHeat?.Reset();
                     solverSteps = 0;
                     evidence = null;
                 }
@@ -284,7 +311,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUI.enabled = !running && !measuring && !readbackPending && !finishOnNextFrame;
                 if (GUILayout.Button("Step once"))
                 {
-                    fluid.AdvanceManually((float)StepSeconds, 1);
+                    AdvanceDrop(StepSeconds, 1);
                     solverSteps++;
                 }
 
@@ -304,6 +331,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 fluid.nearPressureMultiplier = Slider($"Near pressure  {fluid.nearPressureMultiplier:F4}", fluid.nearPressureMultiplier, 0, .1f);
                 fluid.viscosityStrength = Slider($"Viscosity strength  {fluid.viscosityStrength:F2}", fluid.viscosityStrength, 0, 1);
                 fluid.collisionDamping = Slider($"Wall bounce  {fluid.collisionDamping:P0}", fluid.collisionDamping, 0, 1);
+                if (movingHeat != null)
+                    absorbedBurnerWatts = Slider($"Burner {absorbedBurnerWatts:F0} W", absorbedBurnerWatts, 0, 100);
                 if (GUILayout.Button("Restore scene settings"))
                 {
                     ApplySceneSettings();
@@ -342,6 +371,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnDestroy()
         {
+            movingHeat?.Dispose();
             if (solverObject != null) Destroy(solverObject);
             if (computeInstance != null) Destroy(computeInstance);
         }

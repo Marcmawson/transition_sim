@@ -1,0 +1,94 @@
+#pragma kernel ClearContacts
+#pragma kernel FindContacts
+#pragma kernel ExchangeHeat
+#pragma kernel ReduceRingHeat
+#pragma kernel ConductGlass
+
+StructuredBuffer<float3> Positions;
+RWStructuredBuffer<float> TemperatureRise;
+StructuredBuffer<float> GlassRead;
+RWStructuredBuffer<float> GlassWrite;
+StructuredBuffer<float> GlassCapacity;
+StructuredBuffer<float> BurnerWeight;
+StructuredBuffer<int> FaceStart;
+struct Link { int Other; float Conductance; };
+StructuredBuffer<Link> FaceLinks;
+RWStructuredBuffer<uint> ContactCounts;
+RWStructuredBuffer<int> ContactRing;
+RWStructuredBuffer<float> ParticleGain;
+RWStructuredBuffer<float> RingGain;
+uint ParticleCount, RingCount, BaseDepth, SolidCount;
+float RingWidth, ContactRadius, ContactFloor, ContactDepth;
+float ParticleArea, ParticleCapacity, ConductancePerArea, Dt, BurnerWatts;
+groupshared float partial[64];
+
+[numthreads(64,1,1)]
+void ClearContacts(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x < RingCount) ContactCounts[id.x] = 0;
+}
+
+[numthreads(64,1,1)]
+void FindContacts(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= ParticleCount) return;
+    float3 p = Positions[id.x];
+    float radius = length(p.xz);
+    int ring = -1;
+    if (radius < ContactRadius && p.y >= ContactFloor - 1e-5 && p.y <= ContactFloor + ContactDepth)
+    {
+        ring = min((int)(radius / RingWidth), (int)RingCount - 1);
+        InterlockedAdd(ContactCounts[ring], 1);
+    }
+    ContactRing[id.x] = ring;
+}
+
+[numthreads(64,1,1)]
+void ExchangeHeat(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= ParticleCount) return;
+    int ring = ContactRing[id.x];
+    float gain = 0;
+    if (ring >= 0)
+    {
+        float area = 3.14159265 * (2 * ring + 1) * RingWidth * RingWidth;
+        float wetted = min(ParticleArea, area / ContactCounts[ring]);
+        uint glass = (ring + 1) * BaseDepth - 1;
+        gain = Dt * ConductancePerArea * wetted * (GlassRead[glass] - TemperatureRise[id.x]);
+        TemperatureRise[id.x] += gain / ParticleCapacity;
+    }
+    ParticleGain[id.x] = gain;
+}
+
+[numthreads(64,1,1)]
+void ReduceRingHeat(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
+{
+    float sum = 0;
+    for (uint i = lane; i < ParticleCount; i += 64)
+        if (ContactRing[i] == (int)group.x) sum += ParticleGain[i];
+    partial[lane] = sum;
+    GroupMemoryBarrierWithGroupSync();
+    for (uint stride = 32; stride > 0; stride >>= 1)
+    {
+        if (lane < stride) partial[lane] += partial[lane + stride];
+        GroupMemoryBarrierWithGroupSync();
+    }
+    if (lane == 0) RingGain[group.x] = partial[0];
+}
+
+[numthreads(64,1,1)]
+void ConductGlass(uint3 id : SV_DispatchThreadID)
+{
+    uint cell = id.x;
+    if (cell >= SolidCount) return;
+    float rise = GlassRead[cell];
+    float power = BurnerWatts * BurnerWeight[cell];
+    for (int i = FaceStart[cell]; i < FaceStart[cell+1]; i++)
+    {
+        Link link = FaceLinks[i];
+        power += link.Conductance * (GlassRead[link.Other] - rise);
+    }
+    uint ring = cell / BaseDepth;
+    float loss = cell % BaseDepth == BaseDepth - 1 && ring < RingCount ? RingGain[ring] : 0;
+    GlassWrite[cell] = rise + (Dt * power - loss) / GlassCapacity[cell];
+}

@@ -10,6 +10,9 @@
 #pragma kernel UpdateWhiteParticles
 #pragma kernel WhiteParticlePrepareNextFrame;
 
+#pragma kernel ReorderWithHeat THERMAL_PARTICLES
+#pragma kernel ReorderCopyBackWithHeat THERMAL_PARTICLES
+
 // Includes
 #include "./FluidMaths3D.hlsl"
 #include "./SpatialHash3D.hlsl"
@@ -192,9 +195,10 @@ void UpdateSpatialHash(uint3 id : SV_DispatchThreadID)
 RWStructuredBuffer<float3> SortTarget_Positions;
 RWStructuredBuffer<float3> SortTarget_PredictedPositions;
 RWStructuredBuffer<float3> SortTarget_Velocities;
+RWStructuredBuffer<float> TemperatureRise;
+RWStructuredBuffer<float> SortedTemperatureRise;
 
-[numthreads(ThreadGroupSize, 1, 1)]
-void Reorder(uint3 id : SV_DispatchThreadID)
+void ReorderData(uint3 id)
 {
     if (id.x >= numParticles)
         return;
@@ -202,10 +206,12 @@ void Reorder(uint3 id : SV_DispatchThreadID)
     SortTarget_Positions[id.x] = Positions[sortedIndex];
     SortTarget_PredictedPositions[id.x] = PredictedPositions[sortedIndex];
     SortTarget_Velocities[id.x] = Velocities[sortedIndex];
+#ifdef THERMAL_PARTICLES
+    SortedTemperatureRise[id.x] = TemperatureRise[sortedIndex];
+#endif
 }
 
-[numthreads(ThreadGroupSize, 1, 1)]
-void ReorderCopyBack(uint3 id : SV_DispatchThreadID)
+void CopyReorderedData(uint3 id)
 {
     if (id.x >= numParticles)
         return;
@@ -213,7 +219,19 @@ void ReorderCopyBack(uint3 id : SV_DispatchThreadID)
     Positions[id.x] = SortTarget_Positions[id.x];
     PredictedPositions[id.x] = SortTarget_PredictedPositions[id.x];
     Velocities[id.x] = SortTarget_Velocities[id.x];
+#ifdef THERMAL_PARTICLES
+    TemperatureRise[id.x] = SortedTemperatureRise[id.x];
+#endif
 }
+
+[numthreads(ThreadGroupSize, 1, 1)]
+void Reorder(uint3 id : SV_DispatchThreadID) { ReorderData(id); }
+[numthreads(ThreadGroupSize, 1, 1)]
+void ReorderCopyBack(uint3 id : SV_DispatchThreadID) { CopyReorderedData(id); }
+[numthreads(ThreadGroupSize, 1, 1)]
+void ReorderWithHeat(uint3 id : SV_DispatchThreadID) { ReorderData(id); }
+[numthreads(ThreadGroupSize, 1, 1)]
+void ReorderCopyBackWithHeat(uint3 id : SV_DispatchThreadID) { CopyReorderedData(id); }
 
 float2 CalculateDensitiesAtPoint(float3 pos)
 {

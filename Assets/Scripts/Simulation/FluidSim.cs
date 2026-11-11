@@ -86,6 +86,11 @@ namespace Seb.Fluid.Simulation
 		Dictionary<ComputeBuffer, string> bufferNameLookup;
 
 		[HideInInspector] public bool manualControl;
+		[HideInInspector] public bool transportTemperature;
+		public ComputeBuffer TemperatureRise { get; private set; }
+		ComputeBuffer sortedTemperature;
+		float[] initialTemperature;
+		int activeReorderKernel = reorderKernel, activeCopyBackKernel = reorderCopybackKernel;
 		[HideInInspector] public Vector4 beakerCollision; // Centre X/Z, inner radius, floor height.
 		[HideInInspector] public float beakerRimY;
 		public float SimulatedSeconds => simTimer;
@@ -149,6 +154,21 @@ namespace Seb.Fluid.Simulation
 				{ debugBuffer, "Debug" }
 			};
 
+			if (transportTemperature)
+			{
+				activeReorderKernel = compute.FindKernel("ReorderWithHeat");
+				activeCopyBackKernel = compute.FindKernel("ReorderCopyBackWithHeat");
+				TemperatureRise = CreateStructuredBuffer<float>(numParticles);
+				bufferNameLookup.Add(TemperatureRise, "TemperatureRise");
+				sortedTemperature = CreateStructuredBuffer<float>(numParticles);
+				bufferNameLookup.Add(sortedTemperature, "SortedTemperatureRise");
+				initialTemperature = new float[numParticles];
+				compute.SetBuffer(activeReorderKernel, "TemperatureRise", TemperatureRise);
+				compute.SetBuffer(activeReorderKernel, "SortedTemperatureRise", sortedTemperature);
+				compute.SetBuffer(activeCopyBackKernel, "TemperatureRise", TemperatureRise);
+				compute.SetBuffer(activeCopyBackKernel, "SortedTemperatureRise", sortedTemperature);
+			}
+
 			// Set buffer data
 			SetInitialBufferData(spawnData);
 
@@ -170,7 +190,7 @@ namespace Seb.Fluid.Simulation
 			});
 
 			// Reorder kernel
-			SetBuffers(compute, reorderKernel, bufferNameLookup, new ComputeBuffer[]
+			SetBuffers(compute, activeReorderKernel, bufferNameLookup, new ComputeBuffer[]
 			{
 				positionBuffer,
 				sortTarget_positionBuffer,
@@ -182,7 +202,7 @@ namespace Seb.Fluid.Simulation
 			});
 
 			// Reorder copyback kernel
-			SetBuffers(compute, reorderCopybackKernel, bufferNameLookup, new ComputeBuffer[]
+			SetBuffers(compute, activeCopyBackKernel, bufferNameLookup, new ComputeBuffer[]
 			{
 				positionBuffer,
 				sortTarget_positionBuffer,
@@ -347,8 +367,8 @@ namespace Seb.Fluid.Simulation
 			Dispatch(compute, positionBuffer.count, kernelIndex: spatialHashKernel);
 			spatialHash.Run();
 			
-			Dispatch(compute, positionBuffer.count, kernelIndex: reorderKernel);
-			Dispatch(compute, positionBuffer.count, kernelIndex: reorderCopybackKernel);
+			Dispatch(compute, positionBuffer.count, kernelIndex: activeReorderKernel);
+			Dispatch(compute, positionBuffer.count, kernelIndex: activeCopyBackKernel);
 
 			Dispatch(compute, positionBuffer.count, kernelIndex: densityKernel);
 			Dispatch(compute, positionBuffer.count, kernelIndex: pressureKernel);
@@ -416,6 +436,7 @@ namespace Seb.Fluid.Simulation
 			positionBuffer.SetData(spawnData.points);
 			predictedPositionsBuffer.SetData(spawnData.points);
 			velocityBuffer.SetData(spawnData.velocities);
+			if (TemperatureRise != null) TemperatureRise.SetData(initialTemperature);
 
 			foamBuffer.SetData(new FoamParticle[foamBuffer.count]);
 
