@@ -411,12 +411,12 @@
         {
           "path": "Assets/Scripts/ThreePhase3D/Flow/VariableCoefficientProjection.cs",
           "symbol": "PhysicsSim.ThreePhase3D.Flow.VariableCoefficientProjection.PressureGroup",
-          "source_sha256": "1367b580f3f0eca7d42752081b30f5aa1ecc880deb6a81ec7cb86ac0e7cfefd3"
+          "source_sha256": "ece66b00447188821ff9ad107bbcd0d54fc378a8c5f749ce59396461b8281cb5"
         },
         {
           "path": "Assets/Scripts/ThreePhase3D/Flow/MomentumPredictor3D.cs",
           "symbol": "PhysicsSim.ThreePhase3D.Flow.MomentumPredictor3D.SelectTimestep",
-          "source_sha256": "1ac0e7e0c76a1d1532d709de1fad4da53bb214b82868768a8b1ffaee4f143a90"
+          "source_sha256": "176f8b93f785fb05be1feddfc6a8a97bdf39597808da86eb602648a4eaecc6bd"
         },
         {
           "path": "Assets/Scripts/ThreePhase3D/Flow/FlowStep.cs",
@@ -429,7 +429,8 @@
         "M10"
       ],
       "source_locators": [
-        "Specification.md section 6.3, variable-coefficient projection equation"
+        "Specification.md section 6.3, variable-coefficient projection equation",
+        "S04-Embedded-Wall-Viscosity.md, discrete wall flux"
       ],
       "validation_ids": [
         "V07",

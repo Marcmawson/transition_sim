@@ -14,7 +14,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
         private readonly MomentumPredictor3D predictor;
         private readonly ComputeShader shader;
         private readonly int predictKernel, pressureKernel, correctKernel;
-        private readonly ComputeBuffer faces, stencil, rows, incidence, pressureRows;
+        private readonly ComputeBuffer faces, stencil, viscousRates, rows, incidence, pressureRows;
         private readonly ComputeBuffer velocity, predicted, corrected, pressureA, pressureB;
         private readonly List<ComputeBuffer> owned = new List<ComputeBuffer>();
         private readonly float[] pressureReadback, predictedReadback, correctedReadback, pressureZero;
@@ -44,12 +44,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 int faceStride = Marshal.SizeOf<VariableCoefficientProjection.Face>();
                 if (faceStride != 32) throw new InvalidOperationException("Flow face layout must match the 32-byte shader struct.");
                 long requiredBytes = (faceStride + 12L) * plan.FaceCount +
-                    4L * (predictor.Stencil.Length + (long)plan.Rows.Length + Math.Max(1, plan.Incidence.Length)) +
+                    4L * (predictor.Stencil.Length + (long)predictor.Diffusion.Rates.Length + plan.Rows.Length + Math.Max(1, plan.Incidence.Length)) +
                     16L * plan.GroupCount + 16;
                 if (requiredBytes > BufferBudgetBytes)
                     throw new NotSupportedException("S04 buffer allocation exceeds its 512 MiB payload budget.");
                 faces = Upload(plan.Faces, faceStride);
                 stencil = Upload(predictor.Stencil, 4);
+                viscousRates = Upload(predictor.Diffusion.Rates, 4);
                 rows = Upload(plan.Rows, 4);
                 incidence = Upload(plan.Incidence, 4);
                 pressureRows = Allocate(plan.GroupCount, 8);
@@ -94,6 +95,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             var clock = Stopwatch.StartNew();
             shader.SetBuffer(predictKernel, "Faces", faces);
             shader.SetBuffer(predictKernel, "Stencil", stencil);
+            shader.SetBuffer(predictKernel, "ViscousRates", viscousRates);
             shader.SetBuffer(predictKernel, "VelocityIn", velocity);
             shader.SetBuffer(predictKernel, "PredictedOut", predicted);
             Dispatch(predictKernel, plan.FaceCount);

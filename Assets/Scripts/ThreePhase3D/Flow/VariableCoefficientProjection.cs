@@ -31,6 +31,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
         }
 
         internal readonly Grid3D Grid;
+        internal readonly CutCellGeometry Geometry;
         internal readonly BoundaryConditions3D Boundaries;
         internal readonly Face[] Faces;
         internal readonly double[] Volumes;
@@ -52,6 +53,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             if (geometry == null || boundaries == null || densityKgM3 == null || viscosityPaS == null)
                 throw new ArgumentNullException("Flow geometry, boundaries and material callbacks are required.");
             Grid = geometry.Grid;
+            Geometry = geometry;
             Boundaries = boundaries;
             HasEmbeddedSolid = geometry.Patches.Count != 0;
             var merge = new TinyCellMergePlan(geometry, .05, RoundoffFaceFraction);

@@ -45,6 +45,21 @@ namespace PhysicsSim.ThreePhase3D.Geometry
             foreach(var f in faces)for(int i=1;i+1<f.Count;i++)volume+=D3.Dot(f[0]-origin,D3.Cross(f[i]-origin,f[i+1]-origin))/6;
             return Math.Abs(volume);
         }
+        internal static D3 VolumeCentroid(List<List<D3>> faces)
+        {
+            D3 origin=faces[0][0], moment=new D3();
+            double volume=0;
+            foreach(var face in faces)
+            for(int i=1;i+1<face.Count;i++)
+            {
+                D3 a=face[0]-origin,b=face[i]-origin,c=face[i+1]-origin;
+                double weight=D3.Dot(a,D3.Cross(b,c))/6;
+                moment+=(a+b+c)*(weight*.25);
+                volume+=weight;
+            }
+            return volume==0?origin:origin+moment/volume;
+        }
+
         internal static double Area(IList<D3> polygon)
         {if(polygon.Count<3)return 0;D3 sum=new D3();for(int i=1;i+1<polygon.Count;i++)sum+=D3.Cross(polygon[i]-polygon[0],polygon[i+1]-polygon[0]);return sum.Length*.5;}
         internal static D3 Centroid(IList<D3> polygon)
@@ -64,12 +79,14 @@ namespace PhysicsSim.ThreePhase3D.Geometry
             for(int i=0;i<4;i++)
             {D3 x=p[indices[i,0]],y=p[indices[i,1]],z=p[indices[i,2]],other=p[indices[i,3]];D3 n=D3.Cross(y-x,z-x);if(D3.Dot(n,other-x)>0){D3 temp=y;y=z;z=temp;n=-n;}Faces.Add(new List<D3>{x,y,z});Planes.Add(new ClipPlane(n,x));}
         }
-        internal double InBox(D3 lo,D3 hi)
+        internal double InBox(D3 lo,D3 hi) => InBox(lo,hi,false,out _);
+        internal double InBox(D3 lo,D3 hi,bool needCentroid,out D3 centroid)
         {
+            centroid=(lo+hi)*.5;
             D3 centre=(lo+hi)*.5,half=(hi-lo)*.5;bool inside=true;
             foreach(var plane in Planes){double d=plane.Distance(centre),r=Math.Abs(plane.N.X)*half.X+Math.Abs(plane.N.Y)*half.Y+Math.Abs(plane.N.Z)*half.Z;if(d-r>=0)return 0;if(d+r>0)inside=false;}
             if(inside)return Sign*8*half.X*half.Y*half.Z;
-            var faces=Faces;foreach(var plane in PolyhedronClip.Bounds(lo,hi)){faces=PolyhedronClip.Clip(faces,plane);if(faces.Count==0)return 0;}return Sign*PolyhedronClip.Volume(faces);
+            var faces=Faces;foreach(var plane in PolyhedronClip.Bounds(lo,hi)){faces=PolyhedronClip.Clip(faces,plane);if(faces.Count==0)return 0;}if(needCentroid)centroid=PolyhedronClip.VolumeCentroid(faces);return Sign*PolyhedronClip.Volume(faces);
         }
         internal double OnFace(int axis,double coordinate,D3 lo,D3 hi)
         {

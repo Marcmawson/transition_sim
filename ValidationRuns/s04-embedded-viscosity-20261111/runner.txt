@@ -1,0 +1,6 @@
+Base GitHub commit: 8c9eff6c2caae6bdd366fa85a1301da2a5c21cf1.
+CPU reference: .NET 8.0.428, Linux x86_64, Tools/ThreePhase3D/FlowMain.cs.
+Shaders: DXC cs_6_0 with warnings as errors, DXIL and SPIR-V.
+Standalone shader execution: SwiftShader software Vulkan, using the staged kernels with descriptor annotations, production diffusion rates and CPU field parity.
+CPU and software Vulkan: 106/106 checks each.
+Unity Editor import and Direct3D 11 hardware execution of these changes remain pending.

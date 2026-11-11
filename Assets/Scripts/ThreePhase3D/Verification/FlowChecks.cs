@@ -36,6 +36,9 @@ namespace PhysicsSim.ThreePhase3D.Verification
             Hydrostatic("hydrostatic-disconnected-cut", cutGrid, slab, true);
             Hydrostatic("hydrostatic-variable-density", cutGrid, null, false, j => j < 2 ? 700 : 1300);
             Channel();
+            EmbeddedShear();
+            ViscousBeaker();
+            CurvedWallChannel();
             Decay();
             Rollback();
         }
@@ -94,6 +97,87 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 for (int chamber = 0; chamber < 2; chamber++)
                     Check(id, "closed chamber mean gauge [Pa] " + chamber, moments[chamber] / volume[chamber], 0, 1e-6);
             }
+        }
+
+        private void EmbeddedShear()
+        {
+            const string id = "embedded-no-slip";
+            var open = new FlowBoundary(FlowBoundaryKind.OpenPressure);
+            var slip = new FlowBoundary(FlowBoundaryKind.FreeSlip);
+            var boundary = new BoundaryConditions3D(open, open, slip, slip, slip, slip);
+            var grid = new Grid3D(4, 8, 3, new D3(.005, .005, .005));
+            const double wallY = .0073, shear = 3;
+            var slab = SurfacePrimitives.Box(new D3(-.01, -.01, -.01), new D3(.03, wallY, .025));
+            var geometry = CutCellGeometry.Build(grid, slab);
+            var plan = new VariableCoefficientProjection(geometry, boundary, _ => 1000, _ => .001);
+            var predictor = new MomentumPredictor3D(plan);
+            var u = XProfile(plan, j =>
+            {
+                double low = Math.Max(wallY, j * grid.Spacing.Y), high = (j + 1) * grid.Spacing.Y;
+                return low < high ? shear * (.5 * (low + high) - wallY) : 0;
+            });
+            int probe = plan.FaceIndex(0, 2, 1, 1);
+            var step = RunStep(id, predictor, u, new D3(), .01);
+            Check(id, "linear shear at an off-grid wall [m/s]", step.VelocityMPerS[probe], u[probe], 2e-8);
+            double cutHeight = 2 * grid.Spacing.Y - wallY;
+            double expectedRate = 1e-6 / (cutHeight * .5 * cutHeight);
+            Check(id, "wall rate from the analytical dual volume and centroid [1/s]",
+                predictor.Diffusion.Rates[probe * EmbeddedViscousStencil.Stride + 6], expectedRate, 2e-6);
+            var plug = XProfile(plan, j => j == 0 ? 0 : .05);
+            var damped = RunStep(id + "-decay", predictor, plug, new D3(), .01);
+            Check(id, "wall damps uniform tangential speed by the expected amount [m/s]",
+                damped.VelocityMPerS[probe], plug[probe] * (1 - damped.Diagnostics.Dt * expectedRate), 2e-8);
+            Check(id, "wall damping reduces the velocity norm", Energy(damped.VelocityMPerS) < Energy(plug) ? 1 : 0, 1, 0);
+        }
+
+        private void ViscousBeaker()
+        {
+            const string id = "viscous-beaker-rest";
+            var frame = new RigidFrame(new D3(-.08,-.025,-.08), new D3(1,0,0), new D3(0,1,0), new D3(0,0,1));
+            var grid = new Grid3D(16, 13, 16, new D3(.01,.01,.01), frame);
+            var surface = ApparatusSurface.Beaker(new GeometryInputs
+            {
+                innerRadiusM = .033, wallThicknessM = .031, baseThicknessM = .031, cavityHeightM = .06
+            }, 24);
+            var geometry = CutCellGeometry.Build(grid, surface);
+            var plan = new VariableCoefficientProjection(geometry, BoundaryConditions3D.Closed, _ => 997, _ => .001);
+            var predictor = new MomentumPredictor3D(plan);
+            Check(id, "embedded wall rates are present", predictor.Diffusion.MaximumDiagonal > 0 ? 1 : 0, 1, 0);
+            var rest = RunStep(id, predictor, new float[plan.FaceCount], new D3(), .005);
+            Check(id, "stationary unforced viscous beaker stays at rest [m/s]", Energy(rest.VelocityMPerS), 0, 0);
+        }
+
+        private void CurvedWallChannel()
+        {
+            const string id = "embedded-curved-channel";
+            var open = new FlowBoundary(FlowBoundaryKind.OpenPressure);
+            var wall = new FlowBoundary(FlowBoundaryKind.NoSlip);
+            var boundaries = new BoundaryConditions3D(wall, wall, open, open, wall, wall);
+            var frame = new RigidFrame(new D3(-.08, 0, -.08), new D3(1,0,0), new D3(0,1,0), new D3(0,0,1));
+            var grid = new Grid3D(16, 3, 16, new D3(.01,.01,.01), frame);
+            // The cylindrical wall spans the test domain; its base and rim lie
+            // beyond the axial ends. This isolates curved-wall diffusion.
+            var solid = ApparatusSurface.Beaker(new GeometryInputs
+            {
+                innerRadiusM = .034, wallThicknessM = .085, baseThicknessM = .031,
+                cavityHeightM = .15, externalBaseHeightM = -.1
+            }, 48);
+            var geometry = CutCellGeometry.Build(grid, solid);
+            var plan = new VariableCoefficientProjection(geometry, boundaries, _ => 1000, _ => .001);
+            var predictor = new MomentumPredictor3D(plan);
+            var initial = new float[plan.FaceCount];
+            for (int k = 0; k < grid.Cells.Z; k++)
+            for (int j = 0; j <= grid.Cells.Y; j++)
+            for (int i = 0; i < grid.Cells.X; i++)
+            {
+                int face = plan.FaceIndex(1, i, j, k);
+                if (plan.Faces[face].Active != 0) initial[face] = .04f;
+            }
+            var step = RunStep(id, predictor, initial, new D3(), .01);
+            int core = plan.FaceIndex(1, 7, 1, 7);
+            Check(id, "core plug speed before wall diffusion reaches it [m/s]", step.VelocityMPerS[core], initial[core], 2e-8);
+            Check(id, "curved wall does not reverse the plug flow", Array.Exists(step.VelocityMPerS, speed => speed < -1e-9f) ? 1 : 0, 0, 0);
+            Check(id, "curved wall reduces axial plug velocity norm", Energy(step.VelocityMPerS) < Energy(initial) ? 1 : 0, 1, 0);
         }
 
         private void Channel()

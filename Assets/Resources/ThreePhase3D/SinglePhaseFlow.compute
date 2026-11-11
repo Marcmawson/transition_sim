@@ -10,6 +10,7 @@ struct Face
 
 StructuredBuffer<Face> Faces;
 StructuredBuffer<int> Stencil;
+StructuredBuffer<float> ViscousRates;
 StructuredBuffer<int> Rows;
 StructuredBuffer<int> Incidence;
 StructuredBuffer<float2> PressureRows; // diagonal, tentative outward volume flux / Dt
@@ -54,7 +55,8 @@ void PredictMomentum(uint3 id : SV_DispatchThreadID)
     }
 
     float centre = VelocityIn[index];
-    float change = Acceleration[face.axis];
+    int row = (int)index * 7;
+    float change = Acceleration[face.axis] - ViscousRates[row + 6] * centre;
     int start = (int)index * 18;
     for (int axis = 0; axis < 3; axis++)
     {
@@ -65,7 +67,8 @@ void PredictMomentum(uint3 id : SV_DispatchThreadID)
             transport += SampleVelocity(Stencil[start + 6 + 4 * axis + sample], centre) * 0.25;
         float derivative = transport >= 0 ? centre - lower : upper - centre;
         float inverse = InverseSpacing[axis];
-        change += face.viscosity * (upper - 2 * centre + lower) * inverse * inverse
+        change += ViscousRates[row + 2 * axis] * (lower - centre)
+            + ViscousRates[row + 2 * axis + 1] * (upper - centre)
             - transport * derivative * inverse;
     }
     PredictedOut[index] = centre + Dt * change;

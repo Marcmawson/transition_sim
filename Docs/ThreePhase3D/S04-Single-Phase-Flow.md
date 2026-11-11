@@ -50,4 +50,4 @@ Standalone CPU command in PowerShell:
 .\Tools\ThreePhase3D\RunFlowChecks.ps1
 ```
 
-Embedded-wall viscous stress still needs a cut-face no-slip closure. Phase transport, water–air free surfaces and the beaker dam-break case follow in later stages. No beaker scene is changed by this checkpoint.
+The [embedded-wall viscosity follow-up](S04-Embedded-Wall-Viscosity.md) adds the stationary no-slip closure and records its verification. Phase transport, water–air free surfaces and the beaker dam-break case follow in later stages. No beaker scene is changed by this checkpoint.

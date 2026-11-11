@@ -13,21 +13,22 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // State-Ownership: immutable stencils; a trial reads the accepted velocity field.
     // Conservation: blocked faces carry zero volume flux; advective momentum form is used.
     // Discretisation: forward Euler, first-order upwind advection, centred diffusion.
-    // Validity: uniform-property viscous regular grids; inviscid stationary embedded walls.
+    // Validity: uniform-property flow with stationary walls.
     // Validation: V07 V08 V35
     // Evidence: ValidationRuns/s04-flow-20261111/cpu-results.txt
     // Status: IMPLEMENTED_UNVERIFIED
-    // Limitations: embedded no-slip stress, variable-viscosity stress and conservative phase transport are open.
+    // Limitations: variable-viscosity stress and conservative phase transport are open.
     public sealed class MomentumPredictor3D
     {
         internal const int Stride = 18;
         internal readonly int[] Stencil;
         internal readonly VariableCoefficientProjection Plan;
-        private readonly double maximumViscosity;
+        internal readonly EmbeddedViscousStencil Diffusion;
 
         public MomentumPredictor3D(VariableCoefficientProjection plan)
         {
             Plan = plan ?? throw new ArgumentNullException(nameof(plan));
+            double maximumViscosity = 0;
             Stencil = new int[checked(plan.FaceCount * Stride)];
             for (int axis = 0; axis < 3; axis++)
             {
@@ -58,8 +59,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             }
             if (plan.HasVariableProperties && maximumViscosity > 0)
                 throw new NotSupportedException("The viscous predictor requires uniform density and dynamic viscosity.");
-            if (plan.HasEmbeddedSolid && maximumViscosity > 0)
-                throw new NotSupportedException("Viscous embedded-wall momentum requires a verified cut-face stress closure.");
+            Diffusion = new EmbeddedViscousStencil(plan, Stencil, plan.HasEmbeddedSolid && maximumViscosity > 0);
         }
 
         private int Neighbour(int axis, int direction, int i, int j, int k, int sign)
@@ -105,15 +105,14 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 speed[axis] = Math.Max(speed[axis], Math.Abs(velocity[face]));
             }
             D3 h = Plan.Grid.Spacing, a = LocalAcceleration(worldAcceleration);
-            double advective = 0, acceleration = 0, diffusion = 0;
+            double advective = 0, acceleration = 0;
             for (int axis = 0; axis < 3; axis++)
             {
                 advective += speed[axis] / h[axis];
                 acceleration += Math.Abs(a[axis]) / h[axis];
-                diffusion += 2 * maximumViscosity / (h[axis] * h[axis]);
             }
             // Bound the sum of the explicit upwind and diffusion weights.
-            double rate = advective + diffusion;
+            double rate = advective + Diffusion.MaximumDiagonal;
             double stable = 0.9 / (rate + Math.Sqrt(rate * rate + 1.8 * acceleration));
             double dt = Math.Min(requestedSeconds, stable);
             float gpuDt = (float)dt;
@@ -134,7 +133,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 var data = Plan.Faces[face];
                 if (data.Active == 0) continue;
                 double centre = velocity[face], change = a[data.Axis];
-                int start = face * Stride;
+                int start = face * Stride, row = face * EmbeddedViscousStencil.Stride;
+                change -= Diffusion.Rates[row + 6] * centre;
                 for (int axis = 0; axis < 3; axis++)
                 {
                     double lower = Sample(velocity, Stencil[start + 2 * axis], centre);
@@ -143,7 +143,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     for (int sample = 0; sample < 4; sample++)
                         transport += Sample(velocity, Stencil[start + 6 + 4 * axis + sample], centre) * .25;
                     double derivative = transport >= 0 ? centre - lower : upper - centre;
-                    change += data.Viscosity * (upper - 2 * centre + lower) / (h[axis] * h[axis])
+                    change += Diffusion.Rates[row + 2 * axis] * (lower - centre)
+                        + Diffusion.Rates[row + 2 * axis + 1] * (upper - centre)
                         - transport * derivative / h[axis];
                 }
                 output[face] = (float)(centre + dt * change);

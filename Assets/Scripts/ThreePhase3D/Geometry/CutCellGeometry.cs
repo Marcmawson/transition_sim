@@ -72,6 +72,23 @@ namespace PhysicsSim.ThreePhase3D.Geometry
     public sealed class CutCellGeometry
     {
         public readonly Grid3D Grid;
+        private TriangleSurface fixedInput, iceInput;
+        private D3[] solidMomentOffsets;
+        internal D3 FluidCentroidOffset(int cell) => -solidMomentOffsets[cell] / _FluidVolumeM3[cell];
+
+        internal CutCellGeometry BuildVelocityDual(int axis)
+        {
+            var shape=Grid.Shape((GridLocation)(axis+1));
+            var shift=new D3(axis==0?-.5*Grid.Spacing.X:0,axis==1?-.5*Grid.Spacing.Y:0,axis==2?-.5*Grid.Spacing.Z:0);
+            var frame=new RigidFrame(Grid.Frame.ToWorld(shift),Grid.Frame.U,Grid.Frame.V,Grid.Frame.W);
+            return Build(new Grid3D(shape.X,shape.Y,shape.Z,Grid.Spacing,frame,shape.Ghost),fixedInput,iceInput,true);
+        }
+
+        private static TriangleSurface CopySurface(TriangleSurface surface) => surface==null?null:new TriangleSurface
+        {
+            positionsM=(double[])surface.positionsM.Clone(),
+            triangles=(int[])surface.triangles.Clone()
+        };
         private readonly double[] _FixedVolumeM3,_IceVolumeM3,_FluidVolumeM3,_OpenAreaX,_OpenAreaY,_OpenAreaZ;
         private readonly D3[] _FixedNormalArea,_IceNormalArea;
         private readonly double[] _FixedAreaM2,_IceAreaM2,_FixedDistanceM,_IceDistanceM;
@@ -100,9 +117,16 @@ namespace PhysicsSim.ThreePhase3D.Geometry
             FixedVolumeM3=Array.AsReadOnly(_FixedVolumeM3);IceVolumeM3=Array.AsReadOnly(_IceVolumeM3);FluidVolumeM3=Array.AsReadOnly(_FluidVolumeM3);OpenAreaX=Array.AsReadOnly(_OpenAreaX);OpenAreaY=Array.AsReadOnly(_OpenAreaY);OpenAreaZ=Array.AsReadOnly(_OpenAreaZ);FixedAreaM2=Array.AsReadOnly(_FixedAreaM2);IceAreaM2=Array.AsReadOnly(_IceAreaM2);FixedDistanceM=Array.AsReadOnly(_FixedDistanceM);IceDistanceM=Array.AsReadOnly(_IceDistanceM);FixedNormalArea=Array.AsReadOnly(_FixedNormalArea);IceNormalArea=Array.AsReadOnly(_IceNormalArea);
         }
         public static CutCellGeometry Build(Grid3D grid,TriangleSurface fixedSurface=null,TriangleSurface iceSurface=null)
+            => Build(grid,fixedSurface,iceSurface,false);
+
+        private static CutCellGeometry Build(Grid3D grid,TriangleSurface fixedSurface,TriangleSurface iceSurface,bool moments)
         {
-            if(grid==null)throw new ArgumentNullException(nameof(grid));var result=new CutCellGeometry(grid);
+            if(grid==null)throw new ArgumentNullException(nameof(grid));var result=new CutCellGeometry(grid)
+            {
+                solidMomentOffsets=moments?new D3[grid.Cells.Count]:null
+            };
             var fixedMesh=fixedSurface==null?null:new ClosedSurface(fixedSurface,grid);var iceMesh=iceSurface==null?null:new ClosedSurface(iceSurface,grid);
+            result.fixedInput=CopySurface(fixedSurface);result.iceInput=CopySurface(iceSurface);
             if(fixedMesh!=null&&iceMesh!=null)RejectOverlap(fixedMesh,iceMesh,grid.CellVolume);
             if(fixedMesh!=null)result.Accumulate(fixedMesh,SolidRole.Fixed,iceMesh);if(iceMesh!=null)result.Accumulate(iceMesh,SolidRole.Ice,fixedMesh);
             for(int k=0;k<grid.Cells.Z;k++)for(int j=0;j<grid.Cells.Y;j++)for(int i=0;i<grid.Cells.X;i++)
@@ -138,7 +162,9 @@ namespace PhysicsSim.ThreePhase3D.Geometry
             foreach(var tetra in mesh.Tetrahedra)
             {
                 int[] lo=new int[3],hi=new int[3];for(int a=0;a<3;a++){lo[a]=Math.Max(0,(int)Math.Floor(tetra.Min[a]/grid.Spacing[a]));hi[a]=Math.Min((a==0?grid.Cells.X:a==1?grid.Cells.Y:grid.Cells.Z)-1,(int)Math.Floor(tetra.Max[a]/grid.Spacing[a]));}
-                for(int k=lo[2];k<=hi[2];k++)for(int j=lo[1];j<=hi[1];j++)for(int i=lo[0];i<=hi[0];i++){D3 lower=grid.Lower(i,j,k);volume[grid.Cells.Index(i,j,k)]+=tetra.InBox(lower,lower+grid.Spacing);}
+                for(int k=lo[2];k<=hi[2];k++)for(int j=lo[1];j<=hi[1];j++)for(int i=lo[0];i<=hi[0];i++){D3 lower=grid.Lower(i,j,k);int cell=grid.Cells.Index(i,j,k);double clipped=tetra.InBox(lower,lower+grid.Spacing,solidMomentOffsets!=null,out D3 centroid);
+                    volume[cell]+=clipped;
+                    if(solidMomentOffsets!=null&&clipped!=0)solidMomentOffsets[cell]+=(centroid-lower-grid.Spacing*.5)*clipped;}
             }
             // Signed cone sections are evaluated on both one-sided limits, avoiding
             // double-counted tetra boundaries and blocking an exactly aligned wall.
