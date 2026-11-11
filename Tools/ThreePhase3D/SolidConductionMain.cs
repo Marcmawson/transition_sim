@@ -21,6 +21,8 @@ internal static class SolidConductionMain
         HeatedApparatus(.06, .16);
         HeatedWater(.033, .06, 9);
         HeatedWater(.06, .16, 250);
+        Cooldown(.033, .06, 9);
+        Cooldown(.06, .16, 250);
     }
 
     private static double SlabError(int count)
@@ -158,6 +160,37 @@ internal static class SolidConductionMain
             i >= mesh.WaterStart ? capacity * (solver.TemperatureK[i] - initial) : 0).Sum();
         if (!(waterJ > 0 && waterJ < watts * duration)) throw new Exception("Expected heat transfer into water.");
         Console.WriteLine($"PASS {waterMl} mL water, {mesh.WaterDepthM * 1000:F3} mm deep: {waterJ:F3} J in water, {waterJ / waterCapacity:F4} K mean rise");
+    }
+
+    private static void Cooldown(double radius, double height, int waterMl)
+    {
+        const double room = 293.15, film = 8, watts = 10, dt = .005;
+        var geometry = new GeometryInputs { innerRadiusM = radius, cavityHeightM = height };
+        geometry.tripodRingRadiusM = geometry.OuterRadiusM * .75;
+        var mesh = new BeakerSolidMesh(geometry, waterMl * 1e-6);
+        if (mesh.ExposedAreaM2.Any(area => area < 0))
+            throw new Exception("Negative exposed area.");
+        var solver = new SolidConduction(mesh.CapacityJPerK,
+            Enumerable.Repeat(room, mesh.CapacityJPerK.Length).ToArray(), mesh.Faces);
+        double lost = 0, before = 0;
+        var power = new double[mesh.CapacityJPerK.Length];
+        const int heatingSteps = 6000;
+        for (int step = 0; step < 2 * heatingSteps; step++)
+        {
+            if (step == heatingSteps) before = StoredJ(solver, mesh.CapacityJPerK, room);
+            for (int i = 0; i < power.Length; i++)
+            {
+                double roomPower = film * mesh.ExposedAreaM2[i] * (solver.TemperatureK[i] - room);
+                lost += dt * roomPower;
+                power[i] = (step < heatingSteps ? watts * mesh.BurnerWeights[i] : 0) - roomPower;
+            }
+            solver.Step(dt, power);
+        }
+        double after = StoredJ(solver, mesh.CapacityJPerK, room);
+        if (!(after > 0 && after < before && lost > 0))
+            throw new Exception("Expected the stored energy to fall after switch-off.");
+        Near(after + lost, heatingSteps * dt * watts, 1e-7);
+        Console.WriteLine($"PASS {waterMl} mL cooldown: stored {before:F3} to {after:F3} J, room gained {lost:F3} J");
     }
 
     private static double StoredJ(SolidConduction solver, double[] capacity, double referenceK)

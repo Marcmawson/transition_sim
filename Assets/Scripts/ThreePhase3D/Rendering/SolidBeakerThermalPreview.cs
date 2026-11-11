@@ -20,6 +20,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         [SerializeField] private bool includeWater = true;
         [SerializeField, Range(21f, 100f)] private float hotWaterColourC = 30f;
         [SerializeField, Range(0f, 100f)] private float absorbedBurnerPowerW = 10f;
+        [SerializeField, Range(0f, 30f), Tooltip("Synthetic film coefficient to a 20 °C room, in W/(m² K).")]
+        private float roomFilmWm2K = 8f;
 
         [StructLayout(LayoutKind.Sequential)]
         private struct FaceLink
@@ -29,7 +31,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         }
 
         private ComputeShader shader;
-        private ComputeBuffer read, write, capacity, burner, faceStart, links;
+        private ComputeBuffer read, write, capacity, burner, faceStart, links, exposedArea, roomEnergy;
         private Texture2D map;
         private GameObject waterDisplay;
         private Mesh waterMesh;
@@ -38,6 +40,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private Color32[] waterVertexColours;
         private BeakerSolidMesh mesh;
         private float[] snapshot;
+        private float[] roomSnapshot;
+        private double lostJ;
         private readonly Color32[] pixels = new Color32[RadialCells * DepthCells];
         private double absorbedJ, sampledAbsorbedJ, storedJ, waterJ, waterCapacity;
         private int kernel;
@@ -80,11 +84,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 waterCapacity += mesh.CapacityJPerK[i];
             int cellCount = mesh.CapacityJPerK.Length;
             snapshot = new float[cellCount];
+            roomSnapshot = new float[cellCount];
             var initial = new double[cellCount];
             for (int i = 0; i < cellCount; i++) initial[i] = InitialK + (i % 7) * .5;
 
             var reference = new SolidConduction(mesh.CapacityJPerK, initial, mesh.Faces);
             stepSeconds = Math.Min(.01, reference.MaximumStepSeconds * .5);
+            for (int i = 0; i < cellCount; i++)
+                if (mesh.ExposedAreaM2[i] > 0)
+                    stepSeconds = Math.Min(stepSeconds, .5 * mesh.CapacityJPerK[i] / (30 * mesh.ExposedAreaM2[i]));
             var adjacency = new List<FaceLink>[cellCount];
             for (int i = 0; i < cellCount; i++) adjacency[i] = new List<FaceLink>();
             foreach (var face in mesh.Faces)
@@ -107,6 +115,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             write = new ComputeBuffer(cellCount, sizeof(float));
             capacity = new ComputeBuffer(cellCount, sizeof(float));
             burner = new ComputeBuffer(cellCount, sizeof(float));
+            exposedArea = new ComputeBuffer(cellCount, sizeof(float));
+            roomEnergy = new ComputeBuffer(cellCount, sizeof(float));
             faceStart = new ComputeBuffer(starts.Length, sizeof(int));
             links = new ComputeBuffer(flattened.Count, sizeof(int) + sizeof(float));
             capacity.SetData(Array.ConvertAll(mesh.CapacityJPerK, value => (float)value));
@@ -117,16 +127,23 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             shader.SetFloat("StepSeconds", (float)stepSeconds);
             shader.SetBuffer(kernel, "Capacity", capacity);
             shader.SetBuffer(kernel, "BurnerPower", burner);
+            exposedArea.SetData(Array.ConvertAll(mesh.ExposedAreaM2, value => (float)value));
+            roomEnergy.SetData(roomSnapshot);
+            shader.SetBuffer(kernel, "ExposedArea", exposedArea);
+            shader.SetBuffer(kernel, "RoomEnergyJ", roomEnergy);
             shader.SetBuffer(kernel, "FaceStart", faceStart);
             shader.SetBuffer(kernel, "FaceLinks", links);
             map = new Texture2D(RadialCells, DepthCells, TextureFormat.RGBA32, false)
                 { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
 
             read.SetData(Array.ConvertAll(initial, value => (float)(value - InitialK)));
-            var checkPower = Array.ConvertAll(mesh.BurnerWeights, value => value * 10);
+            var checkPower = new double[cellCount];
             for (int i = 0; i < 20; i++)
             {
                 Dispatch(10);
+                for (int j = 0; j < cellCount; j++)
+                    checkPower[j] = 10 * mesh.BurnerWeights[j] -
+                        Mathf.Clamp(roomFilmWm2K, 0, 30) * mesh.ExposedAreaM2[j] * (reference.TemperatureK[j] - InitialK);
                 reference.Step(stepSeconds, checkPower);
             }
             read.GetData(snapshot);
@@ -276,11 +293,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (simulatedSeconds >= nextSnapshot)
             {
                 read.GetData(snapshot);
-                storedJ = waterJ = 0;
+                roomEnergy.GetData(roomSnapshot);
+                storedJ = waterJ = lostJ = 0;
                 for (int i = 0; i < snapshot.Length; i++)
                 {
                     double cellJ = snapshot[i] * mesh.CapacityJPerK[i];
                     storedJ += cellJ;
+                    lostJ += roomSnapshot[i];
                     if (i >= mesh.WaterStart) waterJ += cellJ;
                 }
                 sampledAbsorbedJ = absorbedJ;
@@ -293,6 +312,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void Dispatch(float watts)
         {
             shader.SetFloat("AbsorbedPowerW", watts);
+            shader.SetFloat("RoomFilmWm2K", Mathf.Clamp(roomFilmWm2K, 0, 30));
             shader.SetBuffer(kernel, "TemperatureRead", read);
             shader.SetBuffer(kernel, "TemperatureWrite", write);
             shader.Dispatch(kernel, (snapshot.Length + 63) / 64, 1, 1);
@@ -302,7 +322,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void ResetTemperatures()
         {
             Array.Clear(snapshot, 0, snapshot.Length);
-            absorbedJ = sampledAbsorbedJ = storedJ = waterJ = 0;
+            absorbedJ = sampledAbsorbedJ = storedJ = waterJ = lostJ = 0;
+            Array.Clear(roomSnapshot, 0, roomSnapshot.Length);
+            roomEnergy.SetData(roomSnapshot);
             read.SetData(snapshot);
             simulatedSeconds = pendingSeconds = nextSnapshot = 0;
             running = burnerOn = false;
@@ -346,7 +368,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.Label($"Underside centre {snapshot[0] + 20:F2} °C · Upper centre {snapshot[DepthCells - 1] + 20:F2} °C");
                 GUILayout.Label($"Lower wall {snapshot[mesh.LowerWall] + 20:F2} °C · Rim {snapshot[mesh.Rim] + 20:F2} °C");
                 GUILayout.Label($"Support ring {snapshot[mesh.Ring] + 20:F2} °C · Leg top {snapshot[mesh.LegTop] + 20:F2} °C · Foot {snapshot[mesh.Foot] + 20:F2} °C");
-                GUILayout.Label($"Absorbed {sampledAbsorbedJ:F2} J · Stored {storedJ:F2} J");
+                GUILayout.Label($"Absorbed {sampledAbsorbedJ:F2} J · Stored {storedJ:F2} J · To room {lostJ:F2} J");
                 GUILayout.Label("Glass base cross-section · centre to rim · 20–45 °C");
                 Rect rect = GUILayoutUtility.GetRect(1, 70, GUILayout.ExpandWidth(true));
                 GUI.DrawTexture(rect, map, ScaleMode.StretchToFill);
@@ -367,6 +389,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             write?.Release();
             capacity?.Release();
             burner?.Release();
+            exposedArea?.Release();
+            roomEnergy?.Release();
             faceStart?.Release();
             links?.Release();
             if (waterDisplay != null) Destroy(waterDisplay);

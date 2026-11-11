@@ -19,6 +19,7 @@ namespace PhysicsSim.ThreePhase3D.Thermal
 
         public readonly double[] CapacityJPerK;
         public readonly double[] BurnerWeights;
+        public readonly double[] ExposedAreaM2;
         public readonly SolidConduction.Face[] Faces;
         public int Ring { get; }
         public int LowerWall { get; }
@@ -45,6 +46,7 @@ namespace PhysicsSim.ThreePhase3D.Thermal
             int waterCount = waterVolumeM3 > 0 ? InnerRadialCells * WaterHeightCells : 0;
             CapacityJPerK = new double[WaterStart + waterCount];
             BurnerWeights = new double[CapacityJPerK.Length];
+            ExposedAreaM2 = new double[CapacityJPerK.Length];
             var faces = new List<SolidConduction.Face>();
             double drWall = geometry.wallThicknessM / WallRadialCells;
             double dzBase = geometry.baseThicknessM / BaseDepthCells;
@@ -63,10 +65,15 @@ namespace PhysicsSim.ThreePhase3D.Thermal
                 double area = Annulus(edges[r], edges[r + 1]);
                 int bottom = r * BaseDepthCells;
                 BurnerWeights[bottom] = burner[r];
+                ExposedAreaM2[bottom] = area;
+                if (waterCount == 0 && r < InnerRadialCells)
+                    ExposedAreaM2[bottom + BaseDepthCells - 1] += area;
                 for (int z = 0; z < BaseDepthCells; z++)
                 {
                     int cell = bottom + z;
                     CapacityJPerK[cell] = GlassVolumetricCp * area * dzBase;
+                    if (r == BaseRadialCells - 1)
+                        ExposedAreaM2[cell] += 2 * Math.PI * geometry.OuterRadiusM * dzBase;
                     if (z + 1 < BaseDepthCells)
                         faces.Add(new SolidConduction.Face(cell, cell + 1, GlassK * area / dzBase));
                     if (r + 1 < BaseRadialCells)
@@ -84,6 +91,14 @@ namespace PhysicsSim.ThreePhase3D.Thermal
                     int cell = wallStart + z * WallRadialCells + r;
                     double area = Annulus(edges[InnerRadialCells + r], edges[InnerRadialCells + r + 1]);
                     CapacityJPerK[cell] = GlassVolumetricCp * area * dzWall;
+                    if (r == 0)
+                    {
+                        double exposedHeight = Math.Max(0, (z + 1) * dzWall - Math.Max(z * dzWall, WaterDepthM));
+                        ExposedAreaM2[cell] += 2 * Math.PI * geometry.innerRadiusM * exposedHeight;
+                    }
+                    if (r == WallRadialCells - 1)
+                        ExposedAreaM2[cell] += 2 * Math.PI * geometry.OuterRadiusM * dzWall;
+                    if (z == WallHeightCells - 1) ExposedAreaM2[cell] += area;
                     if (z + 1 < WallHeightCells)
                         faces.Add(new SolidConduction.Face(cell, cell + WallRadialCells, GlassK * area / dzWall));
                     if (r + 1 < WallRadialCells)
@@ -94,6 +109,8 @@ namespace PhysicsSim.ThreePhase3D.Thermal
             double tubeRadius = geometry.tripodTubeRadiusM;
             double section = Math.PI * tubeRadius * tubeRadius;
             CapacityJPerK[Ring] = SteelVolumetricCp * section * (2 * Math.PI * geometry.tripodRingRadiusM);
+            ExposedAreaM2[Ring] = 4 * Math.PI * Math.PI * geometry.tripodRingRadiusM * tubeRadius
+                - ContactAreaM2 - LegCount * section;
             // Distribute a synthetic finite contact patch across its overlap with base annuli.
             double patchInner = geometry.tripodRingRadiusM - tubeRadius;
             double patchOuter = geometry.tripodRingRadiusM + tubeRadius;
@@ -104,6 +121,7 @@ namespace PhysicsSim.ThreePhase3D.Thermal
                 double outer = Math.Min(patchOuter, edges[r + 1]);
                 if (outer <= inner) continue;
                 double area = ContactAreaM2 * Annulus(inner, outer) / patchArea;
+                ExposedAreaM2[r * BaseDepthCells] -= area;
                 double conductance = CoupledHeatFaces.HeatRateW(area, 2, 1,
                     dzBase / 2, GlassK, ContactResistanceM2KW, tubeRadius, SteelK);
                 faces.Add(new SolidConduction.Face(r * BaseDepthCells, Ring, conductance));
@@ -120,6 +138,7 @@ namespace PhysicsSim.ThreePhase3D.Thermal
                 {
                     int cell = top + i;
                     CapacityJPerK[cell] = SteelVolumetricCp * section * legSpacing;
+                    ExposedAreaM2[cell] = 2 * Math.PI * tubeRadius * legSpacing;
                     if (i + 1 < LegCells)
                         faces.Add(new SolidConduction.Face(cell, cell + 1, SteelK * section / legSpacing));
                 }
@@ -148,6 +167,7 @@ namespace PhysicsSim.ThreePhase3D.Thermal
                 {
                     int cell = bottom + z;
                     CapacityJPerK[cell] = volumetricCapacity * area * dz;
+                    if (z == WaterHeightCells - 1) ExposedAreaM2[cell] = area;
                     if (z + 1 < WaterHeightCells)
                         faces.Add(new SolidConduction.Face(cell, cell + 1, waterK * area / dz));
                     if (r + 1 < InnerRadialCells)

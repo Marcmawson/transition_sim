@@ -3,12 +3,15 @@ StructuredBuffer<float> TemperatureRead;
 RWStructuredBuffer<float> TemperatureWrite;
 StructuredBuffer<float> Capacity;
 StructuredBuffer<float> BurnerPower;
+StructuredBuffer<float> ExposedArea;
+RWStructuredBuffer<float> RoomEnergyJ;
 StructuredBuffer<int> FaceStart;
 struct FaceLink { int Other; float Conductance; };
 StructuredBuffer<FaceLink> FaceLinks;
 int CellCount;
 float StepSeconds;
 float AbsorbedPowerW;
+float RoomFilmWm2K;
 
 [numthreads(64, 1, 1)]
 void Conduct(uint3 id : SV_DispatchThreadID)
@@ -22,5 +25,8 @@ void Conduct(uint3 id : SV_DispatchThreadID)
         FaceLink link = FaceLinks[i];
         power += link.Conductance * (TemperatureRead[link.Other] - temperature);
     }
-    TemperatureWrite[cell] = temperature + StepSeconds * power / Capacity[cell];
+    // Temperature is stored relative to the 20 C room.
+    float roomPower = RoomFilmWm2K * ExposedArea[cell] * temperature;
+    RoomEnergyJ[cell] += StepSeconds * roomPower;
+    TemperatureWrite[cell] = temperature + StepSeconds * (power - roomPower) / Capacity[cell];
 }
