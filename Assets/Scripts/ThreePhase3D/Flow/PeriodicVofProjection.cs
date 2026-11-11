@@ -28,7 +28,15 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         public PeriodicVofStep AdvanceCapillary(VofFields state, double dt, double surfaceTensionNPerM,
             int maxIterations = 4096) =>
-            Advance(state, dt, maxIterations, transport.Advance, FlowCpuReference.Project, surfaceTensionNPerM);
+            Advance(state, dt, maxIterations, surfaceTensionNPerM > 0 ? AdvectCapillary : transport.Advance,
+                FlowCpuReference.Project, surfaceTensionNPerM);
+
+        internal VofAdvance AdvectCapillary(VofFields state, double[][] velocity, double dt)
+        {
+            var normals = new D3[transport.CellCount];
+            SurfaceGeometry.Evaluate(transport, state.LiquidFraction, -1, 0, extendColumns: true, normals: normals);
+            return transport.Advance(state, velocity, dt, normals);
+        }
 
         // Prescribed interface-temperature extension in compact periodic cell order,
         // evaluated at the projection time. This entry point does not evolve temperature.

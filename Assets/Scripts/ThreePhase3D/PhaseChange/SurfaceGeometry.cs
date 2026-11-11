@@ -32,7 +32,7 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
             Evaluate(transport, liquidFraction, -1, 0);
 
         internal static SurfaceCurvature[] Evaluate(GeometricVof3D transport, double[] liquidFraction,
-            int wallRow, double contactCotangent, Func<int, int, double> wallCotangent = null, bool extendColumns = false)
+            int wallRow, double contactCotangent, Func<int, int, double> wallCotangent = null, bool extendColumns = false, D3[] normals = null)
         {
             if (transport == null) throw new ArgumentNullException(nameof(transport));
             if (liquidFraction == null || liquidFraction.Length != transport.CellCount)
@@ -159,6 +159,15 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
                     double du = grid.Spacing[u], dv = grid.Spacing[v];
                     double hu = (heights[5] - heights[3]) / (2 * du);
                     double hv = (heights[7] - heights[1]) / (2 * dv);
+                    if (normals != null)
+                    {
+                        // PLIC clips in unit-cell coordinates, so scale the
+                        // physical normal components by their cell spacings.
+                        normals[cell] = new D3(Component(0), Component(1), Component(2));
+                    }
+
+                    double Component(int component) => grid.Spacing[component] *
+                        (component == axis ? direction : component == u ? -hu : -hv);
                     double huu = (heights[5] - 2 * heights[4] + heights[3]) / (du * du);
                     double hvv = (heights[7] - 2 * heights[4] + heights[1]) / (dv * dv);
                     double huv = (heights[8] - heights[6] - heights[2] + heights[0]) / (4 * du * dv);

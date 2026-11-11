@@ -204,3 +204,11 @@ Run the CPU diagnostics with `dotnet run -c Release --project Tools/ThreePhase3D
 | Estimator on resampled sphere | 0.700% | 0.0432 mm/s | 1.407% |
 
 Both substitutions pass the unchanged limits. The pressure correction balances constant curvature on the transported field, and the existing estimator stays within tolerance when given a clean translated sphere. The failed production result appears when the estimator consumes the numerically transported interface. The diagnostic replacements do not advance the production validation gate.
+
+### Height-function normals for capillary advection
+
+The CPU periodic isothermal capillary path uses the supported height graph to form the PLIC normal before geometric advection. Its axial component follows the outward column direction and its transverse components are the negative height slopes. Components are scaled by grid spacing because PLIC operates in unit-cell coordinates. Cells without height support fall back to the original fraction-gradient normal. The geometric inventory limiter and pressure projection retain their existing roles. Ordinary VOF transport and the temperature-dependent capillary entry point retain the original advection path.
+
+The 1 mm translating case now passes the original limits. Moving-frame speed error is 0.118 mm/s, pressure error is 0.851%, and shape L1 error is 0.288% over 1 mm of travel. The two curvature diagnostics use the same updated capillary advection path. The V11 matrix also runs the translating case at 0.75 mm spacing with the same timestep and travel distance. Static viscous decay remains open.
+
+The refined translating run also passes. At 0.75 mm spacing, the maximum speed error is 0.169 mm/s, pressure error is 0.337%, and shape L1 error is 0.154%. The finer grid improves pressure and shape error and increases the maximum moving-frame speed relative to the 1 mm case. Both remain below 0.51 mm/s.

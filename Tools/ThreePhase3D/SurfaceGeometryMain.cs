@@ -131,6 +131,7 @@ internal static class SurfaceGeometryMain
             Check("fine", 24, .001, .007, 0, 6);
             Check("smaller", 22, .001, .006, 0, 6);
             Check("translating", 24, .001, .007, .5, 20);
+            Check("translating refined", 32, .00075, .007, .5, 20);
         }
         return passed ? 0 : 1;
 
@@ -173,7 +174,7 @@ internal static class SurfaceGeometryMain
                 else
                 {
                     double displacementAtStep = translation * (float)dt * iteration;
-                    step = flow.Advance(state, dt, 16384, vof.Advance, FlowCpuReference.Project, sigma,
+                    step = flow.Advance(state, dt, 16384, flow.AdvectCapillary, FlowCpuReference.Project, sigma,
                         evaluateCurvature: _ => exactCurvature ?? flow.EvaluateCapillaryCurvature(
                             SampleSphere(vof, centre + new D3(displacementAtStep, 0, 0), radius, 12)));
                 }

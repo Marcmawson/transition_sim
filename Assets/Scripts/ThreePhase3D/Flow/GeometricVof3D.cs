@@ -64,7 +64,10 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return (k * Grid.Cells.Y + j) * Grid.Cells.X + i;
         }
 
-        public VofAdvance Advance(VofFields state, double[][] transportingVelocity, double dt)
+        public VofAdvance Advance(VofFields state, double[][] transportingVelocity, double dt) =>
+            Advance(state, transportingVelocity, dt, null);
+
+        internal VofAdvance Advance(VofFields state, double[][] transportingVelocity, double dt, D3[] normals)
         {
             var total = PrepareCourant(state, transportingVelocity, dt, out var outgoing);
             var liquid = Axes();
@@ -77,11 +80,14 @@ namespace PhysicsSim.ThreePhase3D.Flow
             for (int cell = 0; cell < CellCount; cell++)
             {
                 double alpha = state.LiquidFraction[cell];
-                if (alpha > 0 && alpha < 1)
-                    plane[cell] = VofPlane.Reconstruct(new D3(
+                if (alpha <= 0 || alpha >= 1) continue;
+                var normal = normals == null ? default : normals[cell];
+                if (normal.Length == 0)
+                    normal = new D3(
                         state.LiquidFraction[previous[0][cell]] - state.LiquidFraction[next[0][cell]],
                         state.LiquidFraction[previous[1][cell]] - state.LiquidFraction[next[1][cell]],
-                        state.LiquidFraction[previous[2][cell]] - state.LiquidFraction[next[2][cell]]), alpha);
+                        state.LiquidFraction[previous[2][cell]] - state.LiquidFraction[next[2][cell]]);
+                plane[cell] = VofPlane.Reconstruct(normal, alpha);
             }
 
             // The donor-cell baseline is feasible. Limit each geometric
