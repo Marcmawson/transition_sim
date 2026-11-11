@@ -1,6 +1,7 @@
 using System;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Geometry;
+using PhysicsSim.ThreePhase3D.PhaseChange;
 
 namespace PhysicsSim.ThreePhase3D.Flow
 {
@@ -24,12 +25,27 @@ namespace PhysicsSim.ThreePhase3D.Flow
         public PeriodicVofStep Advance(VofFields state, double dt, int maxIterations = 4096) =>
             Advance(state, dt, maxIterations, transport.Advance, FlowCpuReference.Project);
 
+        public PeriodicVofStep AdvanceCapillary(VofFields state, double dt, double surfaceTensionNPerM,
+            int maxIterations = 4096) =>
+            Advance(state, dt, maxIterations, transport.Advance, FlowCpuReference.Project, surfaceTensionNPerM);
+
         internal PeriodicVofStep Advance(VofFields state, double dt, int maxIterations,
-            Func<VofFields, double[][], double, VofAdvance> advect, PressureSolve project)
+            Func<VofFields, double[][], double, VofAdvance> advect, PressureSolve project, double surfaceTensionNPerM = 0)
         {
             dt = (float)dt;
             if (state == null || !SiUnits.IsFinite(dt) || dt <= 0 || maxIterations < 1)
                 throw new ArgumentException("Invalid periodic flow step.");
+            if (!SiUnits.IsFinite(surfaceTensionNPerM) || surfaceTensionNPerM < 0)
+                throw new ArgumentOutOfRangeException(nameof(surfaceTensionNPerM));
+            if (surfaceTensionNPerM > 0)
+            {
+                var spacing = geometry.Grid.Spacing;
+                double h = Math.Min(spacing.X, Math.Min(spacing.Y, spacing.Z));
+                double capillaryLimit = Math.Sqrt((liquidDensity + gasDensity) * h * h * h /
+                    (4 * Math.PI * surfaceTensionNPerM));
+                if (dt > capillaryLimit)
+                    throw new ArgumentOutOfRangeException(nameof(dt), "Step exceeds the explicit capillary timestep limit.");
+            }
             var moved = advect(state, state.FaceVelocity, dt).Fields;
             var grid = geometry.Grid;
             var shape = grid.Cells;
@@ -40,13 +56,64 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 return liquidDensity * fraction + gasDensity * (1 - fraction);
             }, _ => 0, true);
             var tentative = new float[plan.FaceCount];
-            ForEachFace((a, c, i, j, k) => tentative[plan.FaceIndex(a, i, j, k)] = (float)moved.FaceVelocity[a][c]);
+            var curvature = surfaceTensionNPerM > 0 ? SurfaceGeometry.Evaluate(transport, moved.LiquidFraction) : null;
+            int extrapolatedFaces = 0;
+            ForEachFace((axis, cell, i, j, k) =>
+            {
+                int face = plan.FaceIndex(axis, i, j, k);
+                double predicted = moved.FaceVelocity[axis][cell];
+                if (curvature != null)
+                {
+                    int high = transport.CellIndex(i % shape.X, j % shape.Y, k % shape.Z);
+                    double jump = moved.LiquidFraction[high] - moved.LiquidFraction[cell];
+                    if (jump != 0)
+                    {
+                        double lowCurvature = curvature[cell].InverseMetres;
+                        double highCurvature = curvature[high].InverseMetres;
+                        double faceCurvature = SiUnits.IsFinite(lowCurvature)
+                            ? (SiUnits.IsFinite(highCurvature) ? .5 * (lowCurvature + highCurvature) : lowCurvature)
+                            : highCurvature;
+                        if (!SiUnits.IsFinite(faceCurvature))
+                        {
+                            faceCurvature = NearbyCurvature(curvature, axis, i, j, k);
+                            extrapolatedFaces++;
+                        }
+                        predicted += dt * plan.Faces[face].Mobility * surfaceTensionNPerM * faceCurvature * jump;
+                    }
+                }
+                tentative[face] = (float)predicted;
+                if (!SiUnits.IsFinite(tentative[face]))
+                    throw new InvalidOperationException("Predicted face velocity exceeds FP32 range.");
+            });
             var pressure = project(plan, tentative, dt, maxIterations);
             var velocity = new[] { new double[transport.CellCount], new double[transport.CellCount], new double[transport.CellCount] };
             ForEachFace((a, c, i, j, k) => velocity[a][c] = pressure.VelocityMPerS[plan.FaceIndex(a, i, j, k)]);
             double correction = ReconcileDivergence(velocity, dt);
             return new PeriodicVofStep(new VofFields(moved.LiquidFraction, velocity, moved.LiquidEnergyJ,
-                moved.GasEnergyJ, moved.VapourKg), pressure.Diagnostics, correction);
+                moved.GasEnergyJ, moved.VapourKg), pressure.Diagnostics, correction, pressure.GroupPressurePa, extrapolatedFaces);
+        }
+
+        private double NearbyCurvature(SurfaceCurvature[] curvature, int axis, int i, int j, int k)
+        {
+            // Symmetric one-cell extension around the two face-adjacent cells.
+            var shape = geometry.Grid.Cells;
+            int count = 0;
+            double sum = 0;
+            for (int dz = axis == 2 ? -2 : -1; dz <= 1; dz++)
+            for (int dy = axis == 1 ? -2 : -1; dy <= 1; dy++)
+            for (int dx = axis == 0 ? -2 : -1; dx <= 1; dx++)
+            {
+                int x = ((i + dx) % shape.X + shape.X) % shape.X;
+                int y = ((j + dy) % shape.Y + shape.Y) % shape.Y;
+                int z = ((k + dz) % shape.Z + shape.Z) % shape.Z;
+                double value = curvature[transport.CellIndex(x, y, z)].InverseMetres;
+                if (!SiUnits.IsFinite(value)) continue;
+                sum += value;
+                count++;
+            }
+            if (count == 0)
+                throw new InvalidOperationException($"No supported capillary curvature near axis {axis} face ({i}, {j}, {k}).");
+            return sum / count;
         }
 
         private void ForEachFace(Action<int, int, int, int, int> visit)
@@ -95,11 +162,17 @@ namespace PhysicsSim.ThreePhase3D.Flow
         public readonly VofFields Fields;
         public readonly FlowDiagnostics Pressure;
         public readonly double MaxFluxCorrectionCourant;
-        internal PeriodicVofStep(VofFields fields, FlowDiagnostics pressure, double correction)
+        // Regular periodic projection has one pressure group per cell, in compact VOF order.
+        public readonly double[] CellPressurePa;
+        public readonly int ExtrapolatedCurvatureFaces;
+        internal PeriodicVofStep(VofFields fields, FlowDiagnostics pressure, double correction, double[] cellPressurePa,
+            int extrapolatedCurvatureFaces)
         {
             Fields = fields;
             Pressure = pressure;
             MaxFluxCorrectionCourant = correction;
+            CellPressurePa = cellPressurePa;
+            ExtrapolatedCurvatureFaces = extrapolatedCurvatureFaces;
         }
     }
 }

@@ -1,4 +1,6 @@
 using System;
+using System.Linq;
+using PhysicsSim.ThreePhase3D.Verification;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
 using PhysicsSim.ThreePhase3D.PhaseChange;
@@ -41,6 +43,57 @@ internal static class SurfaceGeometryMain
             throw new InvalidOperationException("Incorrect support diagnostic for an isolated mixed cell.");
         Console.WriteLine("Isolated mixed cell: unresolved; pure cell: pure phase.");
         CheckAlternateAxis();
+        CheckSphericalDrop();
+    }
+
+    private static void CheckSphericalDrop()
+    {
+        const int n = 24, samples = 12;
+        const double h = .001, radius = .007, sigma = .072, dt = .0001;
+        var grid = new Grid3D(n, n, n, new D3(h, h, h));
+        var transport = new GeometricVof3D(grid, 997, 1.2);
+        var alpha = new double[transport.CellCount];
+        for (int k = 0; k < n; k++)
+        for (int j = 0; j < n; j++)
+        for (int i = 0; i < n; i++)
+        {
+            int inside = 0;
+            for (int z = 0; z < samples; z++)
+            for (int y = 0; y < samples; y++)
+            for (int x = 0; x < samples; x++)
+            {
+                double dx = (i + (x + .5) / samples - n / 2.0) * h;
+                double dy = (j + (y + .5) / samples - n / 2.0) * h;
+                double dz = (k + (z + .5) / samples - n / 2.0) * h;
+                if (dx * dx + dy * dy + dz * dz < radius * radius) inside++;
+            }
+            alpha[transport.CellIndex(i, j, k)] = inside / (double)(samples * samples * samples);
+        }
+
+        var flow = new PeriodicVofProjection(grid, 997, 1.2);
+        var state = VofChecks.Fields(grid, alpha, VofChecks.Uniform(alpha.Length, 0, 0, 0));
+        var baseline = flow.Advance(state, dt);
+        var disabled = flow.AdvanceCapillary(state, dt, 0);
+        if (!baseline.CellPressurePa.SequenceEqual(disabled.CellPressurePa) ||
+            !baseline.Fields.FaceVelocity.SelectMany(axis => axis)
+                .SequenceEqual(disabled.Fields.FaceVelocity.SelectMany(axis => axis)))
+            throw new InvalidOperationException("Zero surface tension changed the S05 projection.");
+        Console.WriteLine("Zero surface tension: identical to the S05 projection.");
+
+        double expected = 2 * sigma / radius;
+        double initialVolume = alpha.Sum() * grid.CellVolume;
+        for (int iteration = 1; iteration <= 3; iteration++)
+        {
+            var step = flow.AdvanceCapillary(state, dt, sigma, 16384);
+            double jump = step.CellPressurePa[transport.CellIndex(n / 2, n / 2, n / 2)] - step.CellPressurePa[0];
+            double speed = step.Fields.FaceVelocity.Max(axis => axis.Max(value => Math.Abs(value)));
+            double drift = step.Fields.LiquidFraction.Sum() * grid.CellVolume - initialVolume;
+            Console.WriteLine($"Drop step {iteration}: jump={jump:G8} Pa (expected {expected:G8}), max face speed={speed:G8} m/s, volume drift={drift:G8} m^3, extrapolated faces={step.ExtrapolatedCurvatureFaces}");
+            if (!step.Pressure.Converged || !(Math.Abs(jump / expected - 1) <= .05) ||
+                !(speed <= .0002) || !(Math.Abs(drift) <= initialVolume * 1e-10))
+                throw new InvalidOperationException("Stationary sphere capillary check failed.");
+            state = step.Fields;
+        }
     }
 
     private static void CheckAlternateAxis()
