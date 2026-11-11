@@ -12,6 +12,7 @@ internal static class SurfaceGeometryMain
     private static int Main(string[] args)
     {
         if (args.Contains("--v11-diagnostics")) return RunV11(diagnostics: true);
+        if (args.Contains("--v11-residual-exact")) return RunV11Residual(exactCurvature: true);
         if (args.Contains("--v11-residual-refined-time")) return RunV11Residual(refinedTime: true);
         if (args.Contains("--v11-residual")) return RunV11Residual();
         if (args.Contains("--v11-decay"))
@@ -277,16 +278,16 @@ internal static class SurfaceGeometryMain
         double Mode(int j) => Math.Sin(2 * Math.PI * waves * (j + .5) / n);
     }
 
-    private static int RunV11Residual(bool refinedTime = false)
+    private static int RunV11Residual(bool refinedTime = false, bool exactCurvature = false)
     {
         bool passed = true;
-        if (!refinedTime) Check(20, .0014, .0008);
+        if (!refinedTime && !exactCurvature) Check(20, .0014, .0008);
         Check(24, .001, refinedTime ? .0004 : .0008);
         return passed ? 0 : 1;
 
         void Check(int n, double h, double dt)
         {
-            try { CheckV11Residual(n, h, dt); }
+            try { CheckV11Residual(n, h, dt, exactCurvature); }
             catch (Exception failure)
             {
                 passed = false;
@@ -295,7 +296,7 @@ internal static class SurfaceGeometryMain
         }
     }
 
-    private static void CheckV11Residual(int n, double h, double dt)
+    private static void CheckV11Residual(int n, double h, double dt, bool exactCurvature)
     {
         const double rhoL = 997, rhoG = 1.2, muL = .001, muG = .000018;
         const double radius = .007, sigma = .072;
@@ -309,11 +310,19 @@ internal static class SurfaceGeometryMain
         double initialVolume = alpha.Sum() * grid.CellVolume;
         double speedLimit = .005 * Math.Sqrt(sigma / (rhoL * radius));
         double expectedJump = 2 * sigma / radius;
+        var prescribed = exactCurvature ? Enumerable.Repeat(
+            new SurfaceCurvature(CurvatureSupport.HeightFunction, 2 / radius), alpha.Length).ToArray() : null;
         double earlierRms = 0, laterRms = 0, maxSpeed = 0;
         for (int step = 1; step <= steps; step++)
         {
             PeriodicVofStep result;
-            try { result = flow.AdvanceViscousCapillary(fields, dt, sigma, muL, muG, 16384); }
+            try
+            {
+                result = exactCurvature
+                    ? flow.Advance(fields, dt, 16384, flow.AdvectCapillary, FlowCpuReference.Project, sigma,
+                        evaluateCurvature: _ => prescribed, liquidViscosity: muL, gasViscosity: muG)
+                    : flow.AdvanceViscousCapillary(fields, dt, sigma, muL, muG, 16384);
+            }
             catch (Exception failure)
             {
                 throw new InvalidOperationException($"Step {step} failed after t={(step - 1) * dt:G6} s. {failure.Message}", failure);
@@ -336,7 +345,7 @@ internal static class SurfaceGeometryMain
         }
         Console.WriteLine(FormattableString.Invariant(
             $"V11 residual windows: h={h:G5} m earlier_rms={earlierRms:E5} m/s later_rms={laterRms:E5} m/s peak={maxSpeed:E5} m/s"));
-        if (!(laterRms <= 1.1 * earlierRms))
+        if (!exactCurvature && !(laterRms <= 1.1 * earlierRms))
             throw new InvalidOperationException("Near-interface RMS increased by more than 10% between the final two windows.");
 
         double InterfaceRms(VofFields state)
