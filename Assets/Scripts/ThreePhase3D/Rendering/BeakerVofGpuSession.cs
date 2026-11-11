@@ -49,7 +49,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 var step = traction == null
                     ? scalars.AdvanceCoupled(state, flow, Simulation.LiquidDensityKgM3,
-                        BeakerVofTimeIntegration.GasDensity, momentum, pressure, BeakerVofTimeIntegration.IterationLimit, acceleration)
+                        BeakerVofTimeIntegration.GasDensity, momentum, pressure, BeakerVofTimeIntegration.IterationLimit, acceleration,
+                        acceleration.Length > 0 ? BeakerVofTimeIntegration.ReleaseMaxStepS : (double?)null)
                     : scalars.AdvanceCoupledWithWetting(state, flow, momentum, pressure, traction);
                 contacts = step.Momentum.ContactTractionPatches;
                 return step;

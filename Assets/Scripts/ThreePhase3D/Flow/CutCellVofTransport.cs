@@ -193,9 +193,9 @@ namespace PhysicsSim.ThreePhase3D.Flow
             PeriodicVofProjection.PressureSolve project,
             Func<CutCellScalarWork, CutCellScalarOutput> apply = null, CutCellGeometryBatch clip = null,
             Func<CutCellInventories, CutCellTransportResult, double[], double, double, CutCellMomentumResult> remap = null,
-            D3 worldAccelerationMPerS2 = default)
+            D3 worldAccelerationMPerS2 = default, double? adaptiveMaxStepS = null)
         {
-            var transported = AdvanceProjected(state, transportingFlow, inflow, apply, clip);
+            var transported = AdvanceProjected(state, transportingFlow, inflow, apply, clip, adaptiveMaxStepS, out double dt);
             var previousVelocity = Array.ConvertAll(transportingFlow.VelocityMPerS, value => (double)value);
             var advected = remap == null ? AdvanceMomentum(state, transported, previousVelocity, liquidDensity, gasDensity) :
                 remap(state, transported, previousVelocity, liquidDensity, gasDensity);
@@ -211,7 +211,6 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 var frame = nextPlan.Grid.Frame;
                 var acceleration = new D3(D3.Dot(worldAccelerationMPerS2, frame.U),
                     D3.Dot(worldAccelerationMPerS2, frame.V), D3.Dot(worldAccelerationMPerS2, frame.W));
-                double dt = transportingFlow.Diagnostics.Dt;
                 for (int f = 0; f < nextPlan.FaceCount; f++)
                 {
                     var face = nextPlan.Faces[f];
@@ -237,8 +236,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 }
             }
             capillarity?.Apply(nextPlan, transported.Fields, lowCell, highCell, liquidDensity, gasDensity,
-                transportingFlow.Diagnostics.Dt, tentative, angles);
-            var pressure = project(nextPlan, tentative, transportingFlow.Diagnostics.Dt, maxIterations);
+                dt, tentative, angles);
+            var pressure = project(nextPlan, tentative, dt, maxIterations);
             return new CutCellCoupledStep(transported, advected, pressure, angles?.Count ?? 0);
         }
 
@@ -252,19 +251,51 @@ namespace PhysicsSim.ThreePhase3D.Flow
         }
 
         public CutCellTransportResult AdvanceProjected(CutCellInventories state, FlowStep pressure,
-            Func<int, CutCellInflow> inflow = null) => AdvanceProjected(state, pressure, inflow, null, null);
+            Func<int, CutCellInflow> inflow = null) => AdvanceProjected(state, pressure, inflow, null, null, null, out _);
 
         private CutCellTransportResult AdvanceProjected(CutCellInventories state, FlowStep pressure,
-            Func<int, CutCellInflow> inflow, Func<CutCellScalarWork, CutCellScalarOutput> apply, CutCellGeometryBatch clip)
+            Func<int, CutCellInflow> inflow, Func<CutCellScalarWork, CutCellScalarOutput> apply, CutCellGeometryBatch clip,
+            double? adaptiveMaxStepS, out double dt)
         {
             if (pressure == null || !pressure.Diagnostics.Converged || pressure.VelocityMPerS.Length != plan.FaceCount)
                 throw new ArgumentException("A converged compatible pressure result is required.");
-            double dt = pressure.Diagnostics.Dt;
+            dt = adaptiveMaxStepS ?? pressure.Diagnostics.Dt;
+            if (!SiUnits.IsFinite(dt) || dt <= 0) throw new ArgumentOutOfRangeException(nameof(adaptiveMaxStepS));
             var velocity = new double[plan.FaceCount];
             double maximum = ReconcilePressureFlux(pressure.VelocityMPerS, dt, velocity, out double absolute);
+            if (adaptiveMaxStepS.HasValue)
+            {
+                double courant = OutgoingCourant(velocity, dt);
+                if (courant > .5)
+                {
+                    dt *= .45 / courant;
+                    maximum = ReconcilePressureFlux(pressure.VelocityMPerS, dt, velocity, out absolute);
+                }
+            }
             if (maximum > PressureCorrectionLimit)
                 throw new InvalidOperationException($"Cut-cell pressure flux correction {maximum:E3} exceeds 1e-6 Courant units.");
             return Advance(state, velocity, dt, inflow, absolute, apply, clip);
+        }
+
+        private double OutgoingCourant(double[] velocity, double dt)
+        {
+            var outgoing = new double[plan.GroupCount];
+            double maximum = 0;
+            for (int f = 0; f < velocity.Length; f++)
+            {
+                var metric = plan.Faces[f];
+                if (metric.Active == 0 || velocity[f] == 0) continue;
+                bool positive = velocity[f] > 0;
+                int donor = positive ? metric.Low : metric.High;
+                if (donor < 0) continue;
+                int cell = positive ? lowCell[f] : highCell[f];
+                double volume = Math.Abs(velocity[f]) * metric.Area * dt;
+                outgoing[donor] += volume;
+                maximum = Math.Max(maximum, volume / plan.Geometry.FluidVolumeM3[cell]);
+            }
+            for (int group = 0; group < outgoing.Length; group++)
+                maximum = Math.Max(maximum, outgoing[group] / plan.Volumes[group]);
+            return maximum;
         }
 
         private FlowStep ProjectCpu(VariableCoefficientProjection nextPlan, float[] tentative, double dt, int maxIterations)
@@ -360,8 +391,10 @@ namespace PhysicsSim.ThreePhase3D.Flow
             for (int c = 0; c < groups; c++)
             {
                 double volume = plan.Volumes[c];
-                if (Math.Abs(divergence[c]) > Tolerance * volume || outgoing[c] > .5 * volume)
-                    throw new ArgumentException("Cut-cell transport requires closed group volume balance and outgoing CFL at most 0.5.");
+                if (Math.Abs(divergence[c]) > Tolerance * volume)
+                    throw new ArgumentException($"Cut-cell group {c} has relative volume imbalance {Math.Abs(divergence[c]) / volume:E3} (limit {Tolerance:E3}).");
+                if (outgoing[c] > .5 * volume)
+                    throw new ArgumentException($"Cut-cell group {c} outgoing CFL {outgoing[c] / volume:G6} exceeds 0.5.");
             }
             for (int f = 0; f < faces; f++)
             {

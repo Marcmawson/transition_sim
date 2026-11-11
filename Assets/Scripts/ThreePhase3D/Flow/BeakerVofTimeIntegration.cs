@@ -13,6 +13,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
     {
         public const int Segments = 24, IterationLimit = 16384;
         public const double LiquidDensity = 997, GasDensity = 1.2, Dt = .025;
+        public const double ReleaseMaxStepS = .001;
         public const double LiquidViscosityPaS = .001, GasViscosityPaS = .000018;
         public static WettingProfile SyntheticWettingProfile() =>
             new WettingProfile("Synthetic beaker wall", "S06 numerical fixture", 65, .001, .01,
@@ -97,7 +98,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             var u = new float[Plan.FaceCount];
             for (int s = 0; loop != null && s < loop.Length; s++)
                 u[loop[s]] = (float)((s < 2 ? 1 : -1) * 4e-7 / Plan.Faces[loop[s]].Area);
-            Pressure = (pressure ?? FlowCpuReference.Project)(Plan,u,releaseVolumeM3.HasValue ? .001 : Dt,IterationLimit);
+            Pressure = (pressure ?? FlowCpuReference.Project)(Plan,u,releaseVolumeM3.HasValue ? ReleaseMaxStepS : Dt,IterationLimit);
         }
 
         public double LiquidFractionAt(int i, int j, int k)
@@ -132,7 +133,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             if (error > 1e-10)
                 throw new InvalidOperationException("The beaker momentum remap ledger did not close.");
 
-            TimeS += Pressure.Diagnostics.Dt;
+            TimeS += trial.Pressure.Diagnostics.Dt;
             State = trial.Transport.Fields;
             Pressure = trial.Pressure;
             Steps++;

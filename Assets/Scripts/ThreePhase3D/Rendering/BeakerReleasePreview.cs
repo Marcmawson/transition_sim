@@ -163,7 +163,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 surfaceBuildMs = timer.Elapsed.TotalMilliseconds;
                 nextSurfaceRefresh = now + SurfaceRefreshSeconds;
             }
-            waterStatus = $"9 mL water · GPU  |  {release.TimeS:F3} s  |  Step {release.Steps}";
+            waterStatus = $"9 mL water · GPU  |  {release.TimeS:F3} s  |  Step {release.Steps}  |  Δt {release.Pressure.Diagnostics.Dt * 1000:F3} ms";
             volumeStatus = $"Liquid volume drift {release.LiquidDriftM3:E2} m³";
         }
 

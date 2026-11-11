@@ -74,7 +74,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         public CutCellCoupledStep AdvanceCoupled(CutCellInventories state, FlowStep flow,
             double liquidDensity, double gasDensity, CutCellGpuMomentum momentum, ComputeShader pressureShader, int maxIterations,
-            D3 worldAccelerationMPerS2 = default)
+            D3 worldAccelerationMPerS2 = default, double? adaptiveMaxStepS = null)
         {
             if (owned.Count == 0) throw new ObjectDisposedException(nameof(CutCellGpuScalars));
             if (momentum == null || pressureShader == null || clipping == null)
@@ -83,7 +83,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 (next, velocity, dt, cap) => FlowGpuSolver.Project(next, pressureShader, velocity, dt, cap,
                     transport.MeasurePressureCorrection(dt),
                     worldAccelerationMPerS2.Length > 0 ? flow.GroupPressurePa : null),
-                Dispatch, clipping.Clip, momentum.Advance, worldAccelerationMPerS2);
+                Dispatch, clipping.Clip, momentum.Advance, worldAccelerationMPerS2, adaptiveMaxStepS);
         }
 
         internal CutCellCoupledStep AdvanceCoupledWithWetting(CutCellInventories state, FlowStep flow,
