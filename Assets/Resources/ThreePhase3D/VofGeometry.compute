@@ -1,10 +1,7 @@
-#pragma kernel Reconstruct
-#pragma kernel Sweep
+#pragma kernel SweepPlic
 
 StructuredBuffer<float> Alpha;
 StructuredBuffer<float4> Courant;
-StructuredBuffer<float4> PlanesIn;
-RWStructuredBuffer<float4> PlanesOut;
 RWStructuredBuffer<float4> SweepOut;
 int Nx, Ny, Nz, Count;
 
@@ -50,16 +47,12 @@ float Fraction(float3 n, float intercept)
         + Segment(q, r, t, a, b, c) + Segment(r, s, t, a, b, c);
 }
 
-[numthreads(64, 1, 1)]
-void Reconstruct(uint3 id : SV_DispatchThreadID)
+float4 ReconstructPlane(int cell, float alpha)
 {
-    int cell = (int)id.x;
-    if (cell >= Count) return;
-    float alpha = Alpha[cell];
-    if (alpha <= 0 || alpha >= 1) { PlanesOut[cell] = 0; return; }
-    float3 normal;
-    for (int axis = 0; axis < 3; axis++)
-        normal[axis] = Alpha[Neighbour(cell, axis, -1)] - Alpha[Neighbour(cell, axis, 1)];
+    float3 normal = float3(
+        Alpha[Neighbour(cell, 0, -1)] - Alpha[Neighbour(cell, 0, 1)],
+        Alpha[Neighbour(cell, 1, -1)] - Alpha[Neighbour(cell, 1, 1)],
+        Alpha[Neighbour(cell, 2, -1)] - Alpha[Neighbour(cell, 2, 1)]);
     float scale = dot(abs(normal), float3(1, 1, 1));
     normal = scale > 0 ? normal / scale : float3(1, 0, 0);
     float lo = dot(min(normal, 0), float3(1, 1, 1)), hi = lo + 1;
@@ -69,26 +62,29 @@ void Reconstruct(uint3 id : SV_DispatchThreadID)
         if (Fraction(normal, mid) < alpha) lo = mid;
         else hi = mid;
     }
-    PlanesOut[cell] = float4(normal, .5 * (lo + hi));
+    return float4(normal, .5 * (lo + hi));
+}
+
+float SweepFace(int cell, int axis, float signedWidth, float3 axisVector)
+{
+    float width = abs(signedWidth);
+    int donor = signedWidth < 0 ? Neighbour(cell, axis, 1) : cell;
+    float alpha = Alpha[donor];
+    if (alpha <= 0 || alpha >= 1 || width == 0) return alpha;
+    float4 plane = ReconstructPlane(donor, alpha);
+    float3 scaled = plane.xyz * ((1 - axisVector) + axisVector * width);
+    float intercept = plane.w - (signedWidth > 0 ? dot(plane.xyz, axisVector) * (1 - width) : 0);
+    return Fraction(scaled, intercept);
 }
 
 [numthreads(64, 1, 1)]
-void Sweep(uint3 id : SV_DispatchThreadID)
+void SweepPlic(uint3 id : SV_DispatchThreadID)
 {
     int cell = (int)id.x;
     if (cell >= Count) return;
-    float4 result = 0;
-    for (int axis = 0; axis < 3; axis++)
-    {
-        float signedWidth = Courant[cell][axis], width = abs(signedWidth);
-        int donor = signedWidth < 0 ? Neighbour(cell, axis, 1) : cell;
-        float alpha = Alpha[donor];
-        if (alpha <= 0 || alpha >= 1 || width == 0) { result[axis] = alpha; continue; }
-        float4 plane = PlanesIn[donor];
-        float3 scaled = plane.xyz;
-        scaled[axis] *= width;
-        float intercept = plane.w - (signedWidth > 0 ? plane[axis] * (1 - width) : 0);
-        result[axis] = Fraction(scaled, intercept);
-    }
-    SweepOut[cell] = result;
+    float3 width = Courant[cell].xyz;
+    SweepOut[cell] = float4(
+        SweepFace(cell, 0, width.x, float3(1, 0, 0)),
+        SweepFace(cell, 1, width.y, float3(0, 1, 0)),
+        SweepFace(cell, 2, width.z, float3(0, 0, 1)), 0);
 }

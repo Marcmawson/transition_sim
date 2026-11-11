@@ -10,8 +10,12 @@ namespace PhysicsSim.ThreePhase3D.Verification
     {
         public delegate VofAdvance Advance(GeometricVof3D vof, VofFields state, double[][] velocity, double dt);
         private readonly Advance advance;
-        public VofChecks(Advance advance = null)
+        private readonly PeriodicVofProjection.PressureSolve pressureSolve;
+        public VofChecks(Advance advance = null) : this(advance, null) { }
+
+        internal VofChecks(Advance advance, PeriodicVofProjection.PressureSolve pressureSolve)
         {
+            this.pressureSolve = pressureSolve ?? FlowCpuReference.Project;
             this.advance = advance ?? ((vof, state, velocity, dt) => vof.Advance(state, velocity, dt));
         }
 
@@ -32,6 +36,33 @@ namespace PhysicsSim.ThreePhase3D.Verification
             double coarse = Translate(12), fine = Translate(24);
             Check("translation", "fine/coarse shape error ratio", fine / coarse, 0, .85);
             DeformAndReverse();
+            CoupledPressure();
+        }
+
+        private void CoupledPressure()
+        {
+            const string id = "coupled-periodic-pressure";
+            const int n = 6;
+            var grid = new Grid3D(n, n, n, new D3(1.0/n, 1.0/n, 1.0/n));
+            var vof = new GeometricVof3D(grid, LiquidDensity, GasDensity);
+            var coupled = new PeriodicVofProjection(grid, LiquidDensity, GasDensity);
+            var velocity = Uniform(vof.CellCount, 0, 0, 0);
+            for (int k = 0; k < n; k++)
+            for (int j = 0; j < n; j++)
+            for (int i = 0; i < n; i++)
+            {
+                int c = vof.CellIndex(i, j, k);
+                velocity[0][c] = .12 * Math.Sin(2 * Math.PI * j / n);
+                velocity[1][c] = .10 * Math.Sin(2 * Math.PI * i / n);
+            }
+            var start = Fields(grid, Sphere(vof, new D3(.44, .43, .48), .24), velocity);
+            var first = coupled.Advance(start, .04, 4096, (fields, u, dt) => advance(vof, fields, u, dt), pressureSolve);
+            Check(id, "transport generates a nontrivial pressure correction", first.Pressure.Iterations > 0 ? 1 : 0, 1, 0);
+            Check(id, "pressure relative residual", first.Pressure.ResidualL2 / first.Pressure.RhsL2, 0, 1e-6);
+            Check(id, "flux reconciliation [Courant]", first.MaxFluxCorrectionCourant, 0, 1e-6);
+            var second = coupled.Advance(first.Fields, .04, 4096, (fields, u, dt) => advance(vof, fields, u, dt), pressureSolve);
+            Check(id, "second transport conserves liquid volume [m3]",
+                (second.Fields.LiquidFraction.Sum() - start.LiquidFraction.Sum()) * grid.CellVolume, 0, 1e-12);
         }
 
         private void PressureFreeMomentum()

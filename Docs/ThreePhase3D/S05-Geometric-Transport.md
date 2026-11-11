@@ -10,7 +10,7 @@ An unsplit geometric candidate can count an overlapping corner twice when severa
 
 Cell mass flux is the sum of the two phase-volume fluxes weighted by their densities. For a staggered component, average the two neighbouring cell mass fluxes onto each face of its momentum control volume. Its updated mass is the same average of the two updated cell masses. Momentum uses this mass transfer multiplied by the upwind staggered velocity. The benchmark measures the difference between independently updated staggered mass and the mass inferred from phase transport. Each phase's energy and the gas vapour inventory use the same phase transfers with donor concentrations.
 
-The geometric reconstruction kernels can run in FP32 on the GPU. The conservative limiter, scalar and momentum updates and evidence reductions currently run on the CPU in FP64. This is a hybrid verification path. It shares the S03 grid definition and is independent of S04's closed/open pressure boundary operators.
+The geometric reconstruction kernels can run in FP32 on the GPU. The conservative limiter, scalar and momentum updates and evidence reductions currently run on the CPU in FP64. This is a hybrid verification path. It shares the S03 grid definition. The periodic coupling uses S04's pressure iteration and velocity correction with one shared face at each periodic seam.
 
 ## Verification
 
@@ -30,6 +30,10 @@ In Unity, stop Play mode and use the **Physics Sim > Three Phase 3D** top menu:
 
 ## Open integration
 
-The beaker needs interface geometry clipped against solid cut cells and transport across closed/open boundaries. Coupling transported density and staggered momentum to S04 pressure projection and moving the remaining updates to the GPU are open. This checkpoint establishes the periodic verification cases. The existing beaker scene does not run this transport.
+The periodic benchmark transports phase and staggered momentum, rebuilds the face pressure coefficients from the new phase density, and projects the advected velocity using the S04 solver. A shared-face FP64 correction removes the residual divergence before the next volume-of-fluid step. The maximum correction is recorded in Courant units and the trial fails above 1e-6.
+
+The original Unity Direct3D 11 preview reported an invalid `Sweep` kernel. The revised shader reconstructs and sweeps in one `SweepPlic` dispatch. It removes the intermediate plane buffer and uses explicit axis arguments. Direct3D 11 retesting is required. The revised checkpoint passed 61 checks on each of the CPU and software Vulkan paths. [Revised verification logs](../../ValidationRuns/s05-periodic-pressure-20261111)
+
+The beaker needs interface geometry clipped against solid cut cells and transport across closed/open boundaries. Moving the limiter, conservative state updates and momentum transport to the GPU remains open. This checkpoint establishes the periodic verification cases. The existing beaker scene does not run this transport.
 
 Method references are [M04 and M13](Sources.md). The capacity limiter and dual-volume averaging above are the discretisation used by this implementation.

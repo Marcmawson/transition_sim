@@ -12,6 +12,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
         private const long BufferBudgetBytes = 512L * 1024 * 1024;
         private const float Guard = -123456.75f;
         private readonly MomentumPredictor3D predictor;
+        private readonly VariableCoefficientProjection plan;
         private readonly ComputeShader shader;
         private readonly int predictKernel, pressureKernel, correctKernel;
         private readonly ComputeBuffer faces, stencil, viscousRates, rows, incidence, pressureRows;
@@ -27,35 +28,44 @@ namespace PhysicsSim.ThreePhase3D.Flow
         public double CorrectionWallMs { get; private set; }
 
         public FlowGpuSolver(MomentumPredictor3D predictor, ComputeShader shader)
+            : this(predictor?.Plan ?? throw new ArgumentNullException(nameof(predictor)), predictor, shader) { }
+
+        internal FlowGpuSolver(VariableCoefficientProjection plan, ComputeShader shader)
+            : this(plan, null, shader) { }
+
+        private FlowGpuSolver(VariableCoefficientProjection plan, MomentumPredictor3D predictor, ComputeShader shader)
         {
-            this.predictor = predictor ?? throw new ArgumentNullException(nameof(predictor));
+            this.plan = plan;
+            this.predictor = predictor;
             if (shader == null) throw new ArgumentNullException(nameof(shader));
             if (!SystemInfo.supportsComputeShaders) throw new NotSupportedException("S04 requires compute shaders.");
             this.shader = shader;
 
             try
             {
-                predictKernel = shader.FindKernel("PredictMomentum");
+                predictKernel = predictor == null ? -1 : shader.FindKernel("PredictMomentum");
                 pressureKernel = shader.FindKernel("IteratePressure");
                 correctKernel = shader.FindKernel("CorrectVelocity");
-                var plan = predictor.Plan;
                 Groups(plan.FaceCount);
                 Groups(plan.GroupCount);
                 int faceStride = Marshal.SizeOf<VariableCoefficientProjection.Face>();
                 if (faceStride != 32) throw new InvalidOperationException("Flow face layout must match the 32-byte shader struct.");
                 long requiredBytes = (faceStride + 12L) * plan.FaceCount +
-                    4L * (predictor.Stencil.Length + (long)predictor.Diffusion.Rates.Length + plan.Rows.Length + Math.Max(1, plan.Incidence.Length)) +
+                    4L * ((predictor?.Stencil.Length ?? 0) + (long)(predictor?.Diffusion.Rates.Length ?? 0) + plan.Rows.Length + Math.Max(1, plan.Incidence.Length)) +
                     16L * plan.GroupCount + 16;
                 if (requiredBytes > BufferBudgetBytes)
                     throw new NotSupportedException("S04 buffer allocation exceeds its 512 MiB payload budget.");
                 faces = Upload(plan.Faces, faceStride);
-                stencil = Upload(predictor.Stencil, 4);
-                viscousRates = Upload(predictor.Diffusion.Rates, 4);
+                if (predictor != null)
+                {
+                    stencil = Upload(predictor.Stencil, 4);
+                    viscousRates = Upload(predictor.Diffusion.Rates, 4);
+                    velocity = Allocate(plan.FaceCount, 4);
+                }
                 rows = Upload(plan.Rows, 4);
                 incidence = Upload(plan.Incidence, 4);
                 pressureRows = Allocate(plan.GroupCount, 8);
                 pressureRowData = new Vector2[plan.GroupCount];
-                velocity = Allocate(plan.FaceCount, 4);
                 predicted = Allocate(plan.FaceCount + 1, 4);
                 corrected = Allocate(plan.FaceCount + 1, 4);
                 pressureA = Allocate(plan.GroupCount + 1, 4);
@@ -81,7 +91,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             if (disposed) throw new ObjectDisposedException(nameof(FlowGpuSolver));
             if (maxIterations <= 0) throw new ArgumentOutOfRangeException(nameof(maxIterations));
 
-            var plan = predictor.Plan;
+            if (predictor == null) throw new InvalidOperationException("This solver was created for projection only.");
             double dt = predictor.SelectTimestep(input, acceleration, requestedSeconds);
             D3 h = plan.Grid.Spacing, a = predictor.LocalAcceleration(acceleration);
             shader.SetInt("FaceCount", plan.FaceCount);
@@ -90,7 +100,6 @@ namespace PhysicsSim.ThreePhase3D.Flow
             shader.SetVector("InverseSpacing", FloatVector(1 / h.X, 1 / h.Y, 1 / h.Z));
             shader.SetVector("Acceleration", FloatVector(a.X, a.Y, a.Z));
             velocity.SetData(input);
-            pressureA.SetData(pressureZero, 0, 0, pressureZero.Length);
 
             var clock = Stopwatch.StartNew();
             shader.SetBuffer(predictKernel, "Faces", faces);
@@ -103,6 +112,28 @@ namespace PhysicsSim.ThreePhase3D.Flow
             PredictionWallMs += clock.Elapsed.TotalMilliseconds;
             CheckReadback(predictedReadback);
 
+            return SolvePressure(dt, maxIterations);
+        }
+
+        internal FlowStep Project(float[] tentative, double dt, int maxIterations)
+        {
+            if (disposed) throw new ObjectDisposedException(nameof(FlowGpuSolver));
+            if (maxIterations <= 0 || tentative.Length != plan.FaceCount || !SiUnits.IsFinite(dt) || dt <= 0)
+                throw new ArgumentException("Invalid projection input.");
+            shader.SetInt("FaceCount", plan.FaceCount);
+            shader.SetInt("GroupCount", plan.GroupCount);
+            shader.SetFloat("Dt", (float)dt);
+            if (!Array.TrueForAll(tentative, value => SiUnits.IsFinite(value)))
+                throw new ArgumentException("Nonfinite tentative velocity.");
+            Array.Copy(tentative, predictedReadback, tentative.Length);
+            predicted.SetData(tentative, 0, 0, tentative.Length);
+            return SolvePressure(dt, maxIterations);
+        }
+
+        private FlowStep SolvePressure(double dt, int maxIterations)
+        {
+            pressureA.SetData(pressureZero, 0, 0, pressureZero.Length);
+            var clock = new Stopwatch();
             shader.SetBuffer(pressureKernel, "Faces", faces);
             shader.SetBuffer(pressureKernel, "Rows", rows);
             shader.SetBuffer(pressureKernel, "Incidence", incidence);

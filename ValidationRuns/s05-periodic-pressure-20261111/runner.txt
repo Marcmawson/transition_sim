@@ -1,0 +1,5 @@
+Base GitHub commit: 80fbcf570d933e110571690152f92186839d1494.
+CPU reference: .NET 8.0.428, Linux x86_64, Tools/ThreePhase3D/VofMain.cs.
+SweepPlic: DXC cs_6_0, warnings as errors, DXIL and SPIR-V.
+Standalone SwiftShader Vulkan used SweepPlic and the S04 pressure and velocity-correction kernels. The CPU ran the limiter and conservative updates in both paths.
+S05: 61/61 checks passed on each path. Unity Direct3D 11 import and execution are pending.

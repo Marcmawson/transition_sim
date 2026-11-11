@@ -49,6 +49,10 @@ namespace PhysicsSim.ThreePhase3D.Flow
         // The property callback supplies dynamic viscosity, not kinematic viscosity.
         public VariableCoefficientProjection(CutCellGeometry geometry, BoundaryConditions3D boundaries,
             Func<int, double> densityKgM3, Func<int, double> viscosityPaS)
+            : this(geometry, boundaries, densityKgM3, viscosityPaS, false) { }
+
+        internal VariableCoefficientProjection(CutCellGeometry geometry, BoundaryConditions3D boundaries,
+            Func<int, double> densityKgM3, Func<int, double> viscosityPaS, bool periodic)
         {
             if (geometry == null || boundaries == null || densityKgM3 == null || viscosityPaS == null)
                 throw new ArgumentNullException("Flow geometry, boundaries and material callbacks are required.");
@@ -56,6 +60,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             Geometry = geometry;
             Boundaries = boundaries;
             HasEmbeddedSolid = geometry.Patches.Count != 0;
+            if (periodic && HasEmbeddedSolid) throw new NotSupportedException("Periodic pressure requires regular geometry.");
             var merge = new TinyCellMergePlan(geometry, .05, RoundoffFaceFraction);
             var roots = new Dictionary<int, int>();
             var volumes = new List<double>();
@@ -111,10 +116,18 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     }
                     int lowCell = Cell(i - (axis == 0 ? 1 : 0), j - (axis == 1 ? 1 : 0), k - (axis == 2 ? 1 : 0));
                     int highCell = Cell(i, j, k);
+                    if (periodic)
+                    {
+                        // The positive seam owns the face; its negative alias
+                        // stays inactive in the padded S04 arrays.
+                        if (lowCell < 0) continue;
+                        if (highCell < 0)
+                            highCell = Cell(axis == 0 ? 0 : i, axis == 1 ? 0 : j, axis == 2 ? 0 : k);
+                    }
                     int low = lowCell < 0 ? -1 : GroupByCell[lowCell];
                     int high = highCell < 0 ? -1 : GroupByCell[highCell];
                     bool exterior = lowCell < 0 || highCell < 0;
-                    if ((lowCell >= 0 && low < 0) || (highCell >= 0 && high < 0) || low == high) continue;
+                    if ((lowCell >= 0 && low < 0) || (highCell >= 0 && high < 0) || (!periodic && low == high)) continue;
                     var side = exterior ? boundaries.Side(axis, highCell < 0) : default;
                     if (exterior && side.Kind != FlowBoundaryKind.OpenPressure) continue;
 
@@ -130,6 +143,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                         Viscosity = mu == 0 ? 0 : PositiveFloat(mu / rho)
                     };
                     if (float.IsInfinity(Faces[face].BoundaryPressure)) throw new ArgumentException("Boundary pressure exceeds FP32.");
+                    if (low == high) continue;
                     if (low >= 0) links[low].Add(face + 1);
                     if (high >= 0) links[high].Add(-face - 1);
                 }

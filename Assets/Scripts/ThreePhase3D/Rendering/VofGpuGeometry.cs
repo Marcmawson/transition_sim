@@ -8,10 +8,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     {
         private readonly GeometricVof3D vof;
         private readonly ComputeShader shader;
-        private readonly int reconstruct, sweep, groups;
+        private readonly int sweep, groups;
         private readonly float[] alphaData;
         private readonly Vector4[] courantData, sweepData;
-        private ComputeBuffer alpha, courant, planes, swept;
+        private ComputeBuffer alpha, courant, swept;
         public double CandidateRoundoffM3 { get; private set; }
 
         public VofGpuGeometry(GeometricVof3D vof, ComputeShader shader)
@@ -23,8 +23,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             int count = vof.CellCount;
             groups = (int)((count + 63L) / 64);
             if (groups > 65535) throw new NotSupportedException("S05 GPU dispatch exceeds one-dimensional limits.");
-            reconstruct = shader.FindKernel("Reconstruct");
-            sweep = shader.FindKernel("Sweep");
+            sweep = shader.FindKernel("SweepPlic");
+            if (!shader.IsSupported(sweep))
+                throw new NotSupportedException("VofGeometry.compute SweepPlic is unsupported on " +
+                    SystemInfo.graphicsDeviceType + ". Check the Unity shader import messages.");
             alphaData = new float[count];
             courantData = new Vector4[count];
             sweepData = new Vector4[count + 1];
@@ -32,7 +34,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 alpha = new ComputeBuffer(count, 4);
                 courant = new ComputeBuffer(count, 16);
-                planes = new ComputeBuffer(count, 16);
                 swept = new ComputeBuffer(count + 1, 16);
                 swept.SetData(new[] { new Vector4(-1, -1, -1, -1) }, 0, count, 1);
             }
@@ -59,12 +60,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             shader.SetInt("Ny", vof.Grid.Cells.Y);
             shader.SetInt("Nz", vof.Grid.Cells.Z);
             shader.SetInt("Count", count);
-            shader.SetBuffer(reconstruct, "Alpha", alpha);
-            shader.SetBuffer(reconstruct, "PlanesOut", planes);
-            shader.Dispatch(reconstruct, groups, 1, 1);
             shader.SetBuffer(sweep, "Alpha", alpha);
             shader.SetBuffer(sweep, "Courant", courant);
-            shader.SetBuffer(sweep, "PlanesIn", planes);
             shader.SetBuffer(sweep, "SweepOut", swept);
             shader.Dispatch(sweep, groups, 1, 1);
             swept.GetData(sweepData);
@@ -89,7 +86,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             alpha?.Release(); alpha = null;
             courant?.Release(); courant = null;
-            planes?.Release(); planes = null;
             swept?.Release(); swept = null;
         }
     }

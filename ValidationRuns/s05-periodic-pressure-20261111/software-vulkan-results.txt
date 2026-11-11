@@ -1,0 +1,63 @@
+PASS PLIC | axis-aligned cut | 0.3 | 0.3 ± 1E-14
+PASS PLIC | diagonal tetrahedral cut | 0.036 | 0.036 ± 1E-14
+PASS PLIC | negative orientation complement | 0.964 | 0.964 ± 1E-14
+PASS PLIC | two-axis near-degenerate cut | 0.08 | 0.08 ± 1E-14
+PASS PLIC | swept full-cell reconstructs fraction | 0.37 | 0.37 ± 1E-13
+PASS pressure-free momentum | liquid transfers across first face [m3] | 0.25 | 0.25 ± 1E-14
+PASS pressure-free momentum | gas transfers across second face [m3] | 0.25 | 0.25 ± 1E-14
+PASS pressure-free momentum | first face updated momentum [kg m/s] | 1185.2875 | 1185.2875 ± 1E-10
+PASS pressure-free momentum | mass and momentum share dual transfer [kg] | 2.842170943E-14 | 0 ± 1E-10
+PASS pressure-free momentum | CFL rejection | 1 | 1 ± 0
+PASS pressure-free momentum | accepted state preserved | 2 | 2 ± 0
+PASS translation-12 | relative L1 shape error | 0.09150864824 | 0 ± 0.4
+PASS translation-12 | uniform staggered velocity preservation [m/s] | 2.164934898E-15 | 0 ± 2E-11
+PASS translation-12 | minimum liquid fraction bound | 0 | 0 ± 0
+PASS translation-12 | maximum liquid fraction bound | 0 | 0 ± 0
+PASS translation-12 | liquid volume drift [m3] | 2.081668171E-17 | 0 ± 1E-12
+PASS translation-12 | mixture mass drift [kg] | 1.637866797E-14 | 0 ± 1E-09
+PASS translation-12 | vapour mass drift [kg] | 6.383782392E-16 | 0 ± 1E-12
+PASS translation-12 | liquid energy drift [J] | 0 | 0 ± 1E-09
+PASS translation-12 | gas energy drift [J] | 1.998401444E-15 | 0 ± 1E-09
+PASS translation-12 | max dual mass error [kg] | 2.220446049E-16 | 0 ± 1E-11
+PASS translation-12 | cumulative absolute volume reconciliation [m3] | 1.067448377E-16 | 0 ± 1E-12
+PASS translation-12 | cumulative limited geometric transfer [m3] | 0.0008751301923 | 0 ± 0.03
+PASS translation-12 | global momentum drift axis 0 [kg m/s] | 5.684341886E-14 | 0 ± 1E-09
+PASS translation-12 | global momentum drift axis 1 [kg m/s] | 3.375077995E-14 | 0 ± 1E-09
+PASS translation-12 | global momentum drift axis 2 [kg m/s] | -6.394884622E-14 | 0 ± 1E-09
+PASS translation-24 | relative L1 shape error | 0.06457164442 | 0 ± 0.24
+PASS translation-24 | uniform staggered velocity preservation [m/s] | 2.498001805E-15 | 0 ± 2E-11
+PASS translation-24 | minimum liquid fraction bound | 0 | 0 ± 0
+PASS translation-24 | maximum liquid fraction bound | 0 | 0 ± 0
+PASS translation-24 | liquid volume drift [m3] | -2.775557562E-17 | 0 ± 1E-12
+PASS translation-24 | mixture mass drift [kg] | -2.456800195E-14 | 0 ± 1E-09
+PASS translation-24 | vapour mass drift [kg] | 4.107825191E-15 | 0 ± 1E-12
+PASS translation-24 | liquid energy drift [J] | 1.847411113E-13 | 0 ± 1E-09
+PASS translation-24 | gas energy drift [J] | -1.143529715E-14 | 0 ± 1E-09
+PASS translation-24 | max dual mass error [kg] | 4.163336342E-17 | 0 ± 1E-11
+PASS translation-24 | cumulative absolute volume reconciliation [m3] | 1.04531094E-16 | 0 ± 1E-12
+PASS translation-24 | cumulative limited geometric transfer [m3] | 0.0008689612507 | 0 ± 0.03
+PASS translation-24 | global momentum drift axis 0 [kg m/s] | 8.348877145E-14 | 0 ± 1E-09
+PASS translation-24 | global momentum drift axis 1 [kg m/s] | -6.448175327E-13 | 0 ± 1E-09
+PASS translation-24 | global momentum drift axis 2 [kg m/s] | 2.255973186E-13 | 0 ± 1E-09
+PASS translation | fine/coarse shape error ratio | 0.705634338 | 0 ± 0.85
+PASS deform-reverse | reversal error smaller than forward deformation | 1 | 1 ± 0
+PASS deform-reverse | relative L1 reversal error | 0.04159714226 | 0 ± 0.4
+PASS deform-reverse | minimum liquid fraction bound | 0 | 0 ± 0
+PASS deform-reverse | maximum liquid fraction bound | 0 | 0 ± 0
+PASS deform-reverse | liquid volume drift [m3] | -6.245004514E-17 | 0 ± 1E-12
+PASS deform-reverse | mixture mass drift [kg] | -6.218775495E-14 | 0 ± 1E-09
+PASS deform-reverse | vapour mass drift [kg] | -2.664535259E-15 | 0 ± 1E-12
+PASS deform-reverse | liquid energy drift [J] | -1.421085472E-13 | 0 ± 1E-09
+PASS deform-reverse | gas energy drift [J] | 4.440892099E-15 | 0 ± 1E-09
+PASS deform-reverse | max dual mass error [kg] | 8.326672685E-17 | 0 ± 1E-11
+PASS deform-reverse | cumulative absolute volume reconciliation [m3] | 1.194605044E-16 | 0 ± 1E-12
+PASS deform-reverse | cumulative limited geometric transfer [m3] | 7.458411055E-05 | 0 ± 0.03
+PASS deform-reverse | global momentum drift axis 0 [kg m/s] | 9.769962617E-15 | 0 ± 1E-09
+PASS deform-reverse | global momentum drift axis 1 [kg m/s] | -4.374278717E-14 | 0 ± 1E-09
+PASS deform-reverse | global momentum drift axis 2 [kg m/s] | 1.33226763E-15 | 0 ± 1E-09
+PASS coupled-periodic-pressure | transport generates a nontrivial pressure correction | 1 | 1 ± 0
+PASS coupled-periodic-pressure | pressure relative residual | 2.641911675E-07 | 0 ± 1E-06
+PASS coupled-periodic-pressure | flux reconciliation [Courant] | 2.797705685E-08 | 0 ± 1E-06
+PASS coupled-periodic-pressure | second transport conserves liquid volume [m3] | 2.467162277E-17 | 0 ± 1E-12
+candidate roundoff 0 m3
+61/61 passed

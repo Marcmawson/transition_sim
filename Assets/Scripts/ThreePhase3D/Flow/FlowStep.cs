@@ -37,10 +37,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
         public static FlowStep Advance(MomentumPredictor3D predictor, float[] velocity,
             D3 acceleration, double requestedSeconds, int maxIterations = 4096)
         {
-            if (maxIterations <= 0) throw new ArgumentOutOfRangeException(nameof(maxIterations));
             double dt = predictor.SelectTimestep(velocity, acceleration, requestedSeconds);
-            var plan = predictor.Plan;
-            var tentative = predictor.Predict(velocity, acceleration, dt);
+            return Project(predictor.Plan, predictor.Predict(velocity, acceleration, dt), dt, maxIterations);
+        }
+
+        internal static FlowStep Project(VariableCoefficientProjection plan, float[] tentative, double dt, int maxIterations)
+        {
+            if (maxIterations <= 0) throw new ArgumentOutOfRangeException(nameof(maxIterations));
             var corrected = new float[plan.FaceCount];
             var pressure = new double[plan.GroupCount];
             var next = new double[pressure.Length];
