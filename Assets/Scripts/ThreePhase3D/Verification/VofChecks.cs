@@ -16,13 +16,14 @@ namespace PhysicsSim.ThreePhase3D.Verification
             CutCellTransportResult after, double[] velocity, double liquidDensity, double gasDensity);
         private readonly CutMomentumAdvance cutMomentumAdvance;
         private readonly Advance advance;
-        private readonly CutAdvance cutAdvance;
+        private readonly CutAdvance cutAdvance, cutClipAdvance;
         private readonly PeriodicVofProjection.PressureSolve pressureSolve;
         public VofChecks(Advance advance = null) : this(advance, null) { }
 
-        public VofChecks(Advance advance, PeriodicVofProjection.PressureSolve pressureSolve, CutAdvance cutAdvance = null, CutMomentumAdvance cutMomentumAdvance = null)
+        public VofChecks(Advance advance, PeriodicVofProjection.PressureSolve pressureSolve, CutAdvance cutAdvance = null, CutMomentumAdvance cutMomentumAdvance = null, CutAdvance cutClipAdvance = null)
         {
             this.cutAdvance = cutAdvance;
+            this.cutClipAdvance = cutClipAdvance;
             this.cutMomentumAdvance = cutMomentumAdvance;
             this.pressureSolve = pressureSolve ?? FlowCpuReference.Project;
             this.advance = advance ?? ((vof, state, velocity, dt) => vof.Advance(state, velocity, dt));
@@ -230,6 +231,17 @@ namespace PhysicsSim.ThreePhase3D.Verification
             CutCellInventories state, double[] velocity, double dt, Func<int, CutCellInflow> inflow = null)
         {
             var expected = reference.Advance(state, velocity, dt, inflow);
+            if (cutClipAdvance != null)
+            {
+                var clipped = cutClipAdvance(plan, state, velocity, dt, inflow);
+                double faceTolerance = 2e-6 * plan.Grid.CellVolume;
+                Check(id, "GPU PLIC liquid flux [m3]", clipped.LiquidFaceM3.Zip(expected.LiquidFaceM3,
+                    (x,y) => Math.Abs(x-y)).Max(), 0, faceTolerance);
+                Check(id, "GPU PLIC gas flux [m3]", clipped.GasFaceM3.Zip(expected.GasFaceM3,
+                    (x,y) => Math.Abs(x-y)).Max(), 0, faceTolerance);
+                Check(id, "GPU PLIC liquid inventory ledger [m3]", clipped.Fields.LiquidM3.Sum() -
+                    state.LiquidM3.Sum() - clipped.BoundaryInflow[0], 0, 1e-10 * plan.Grid.CellVolume);
+            }
             if (cutAdvance == null) return expected;
             var actual = cutAdvance(plan, state, velocity, dt, inflow);
             for (int plane = 0; plane < 5; plane++)

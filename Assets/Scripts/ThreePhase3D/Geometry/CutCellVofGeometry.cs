@@ -36,6 +36,40 @@ namespace PhysicsSim.ThreePhase3D.Geometry
             }
         }
 
+        internal void PackTetrahedra(int cell, Action<D3, D3, D3, D3, double> emit)
+        {
+            Bounds(cell, out D3 lo, out D3 hi);
+            var bounds = PolyhedronClip.Bounds(lo, hi);
+            Pack(Box(lo, hi), 1);
+            if (solids[cell] == null) return;
+            foreach (var tetra in solids[cell])
+            {
+                var faces = tetra.Faces;
+                foreach (var bound in bounds)
+                {
+                    faces = PolyhedronClip.Clip(faces, bound);
+                    if (faces.Count == 0) break;
+                }
+                Pack(faces, -tetra.Sign);
+            }
+
+            void Pack(List<List<D3>> faces, double sign)
+            {
+                if (faces.Count == 0) return;
+                D3 origin = Unit(faces[0][0]);
+                foreach (var face in faces)
+                for (int i = 1; i + 1 < face.Count; i++)
+                {
+                    D3 a = Unit(face[0]), b = Unit(face[i]), c = Unit(face[i+1]);
+                    double sixVolume = D3.Dot(a-origin, D3.Cross(b-origin,c-origin));
+                    if (sixVolume == 0) continue;
+                    emit(origin,a,b,c,sign * Math.Sign(sixVolume));
+                }
+            }
+
+            D3 Unit(D3 p) => new D3((p.X-lo.X)/grid.Spacing.X,(p.Y-lo.Y)/grid.Spacing.Y,(p.Z-lo.Z)/grid.Spacing.Z);
+        }
+
         internal ClipPlane Reconstruct(int cell, D3 normal, double liquidVolume)
         {
             Bounds(cell, out D3 lo, out D3 hi);

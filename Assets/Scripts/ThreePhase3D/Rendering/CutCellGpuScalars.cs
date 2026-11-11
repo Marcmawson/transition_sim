@@ -11,17 +11,20 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly VariableCoefficientProjection plan;
         private readonly CutCellVofTransport transport;
         private readonly ComputeShader shader;
+        private readonly CutCellGpuClipping clipping;
+        public int ClippingDispatches => clipping?.Dispatches ?? 0;
         private readonly int budget, build, apply, groupDispatch, faceDispatch;
         private readonly List<ComputeBuffer> owned = new List<ComputeBuffer>();
         private readonly ComputeBuffer endpoints, rows, incidence, groups, candidates, transfers, updated, donorBudget;
         private readonly VofFloatPair[] groupData, candidateData, transferData, updatedData;
 
-        public CutCellGpuScalars(VariableCoefficientProjection plan, ComputeShader shader)
+        public CutCellGpuScalars(VariableCoefficientProjection plan, ComputeShader shader, ComputeShader clippingShader = null)
         {
             this.plan = plan ?? throw new ArgumentNullException(nameof(plan));
             if (shader == null || !SystemInfo.supportsComputeShaders)
                 throw new NotSupportedException("Cut-cell scalar compute shader is unavailable.");
             this.shader = shader;
+            if (clippingShader != null) clipping = new CutCellGpuClipping(plan.Grid, clippingShader);
             budget = shader.FindKernel("BuildCutDonorBudget");
             build = shader.FindKernel("BuildCutFaceFlux");
             apply = shader.FindKernel("ApplyCutScalarFlux");
@@ -63,7 +66,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             Func<int, CutCellInflow> inflow = null)
         {
             if (owned.Count == 0) throw new ObjectDisposedException(nameof(CutCellGpuScalars));
-            return transport.Advance(state, velocity, dt, inflow, 0, Dispatch);
+            CutCellGeometryBatch batch = clipping == null ? (CutCellGeometryBatch)null : clipping.Clip;
+            return transport.Advance(state, velocity, dt, inflow, 0, Dispatch, batch);
         }
 
         private CutCellScalarOutput Dispatch(CutCellScalarWork work)

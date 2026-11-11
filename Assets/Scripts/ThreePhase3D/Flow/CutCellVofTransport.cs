@@ -148,7 +148,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             Func<int, CutCellInflow> inflow = null) => Advance(state, faceVelocity, dt, inflow, 0, null);
 
         internal CutCellTransportResult Advance(CutCellInventories state, double[] faceVelocity, double dt,
-            Func<int, CutCellInflow> inflow, double pressureCorrection, Func<CutCellScalarWork, CutCellScalarOutput> apply)
+            Func<int, CutCellInflow> inflow, double pressureCorrection, Func<CutCellScalarWork, CutCellScalarOutput> apply, CutCellGeometryBatch clip = null)
         {
             if (state == null || faceVelocity == null || faceVelocity.Length != plan.FaceCount ||
                 !SiUnits.IsFinite(dt) || dt <= 0) throw new ArgumentException("Invalid cut-cell transport inputs.");
@@ -161,6 +161,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             var outgoing = new double[groups];
             var planes = new ClipPlane?[plan.Grid.Cells.Count];
             var reservoir = new CutCellInflow[faces];
+            var jobs = clip == null ? null : new List<CutCellClipJob>();
             double roundoff = 0;
 
             for (int f = 0; f < faces; f++)
@@ -204,15 +205,37 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     throw new ArgumentException("Cut-face transfer exceeds half its donor member's accessible volume.");
                 double alpha = fields[0][donor] / plan.Volumes[donor];
                 if (alpha == 0 || alpha == 1) continue;
+                if (jobs != null)
+                {
+                    jobs.Add(new CutCellClipJob(f, cell, metric.Axis, q > 0, Normal(cell, donor, fields[0]),
+                        alpha, volume, widthVolume));
+                    continue;
+                }
                 if (!planes[cell].HasValue)
                     planes[cell] = geometry.Reconstruct(cell, Normal(cell, donor, fields[0]), alpha * volume);
-                double raw = geometry.Sweep(cell, metric.Axis, q > 0, widthVolume, planes[cell].Value);
-                if (raw < -Tolerance * volume || raw > widthVolume + Tolerance * volume)
+                Record(f, geometry.Sweep(cell, metric.Axis, q > 0, widthVolume, planes[cell].Value),
+                    widthVolume, alpha, Tolerance * volume);
+            }
+            if (jobs != null && jobs.Count > 0)
+            {
+                var values = clip(geometry, jobs);
+                if (values == null || values.Length != jobs.Count)
+                    throw new InvalidOperationException("GPU clipping returned an incompatible face list.");
+                for (int n = 0; n < jobs.Count; n++)
+                {
+                    var job = jobs[n];
+                    Record(job.Face, values[n], job.SweptVolume, job.Alpha,
+                        2e-6 * plan.Grid.CellVolume);
+                }
+            }
+
+            void Record(int f, double raw, double width, double alpha, double tolerance)
+            {
+                if (!SiUnits.IsFinite(raw) || raw < -tolerance || raw > width + tolerance)
                     throw new InvalidOperationException("Cut PLIC liquid exceeds the accessible swept slab.");
-                double geometric = Math.Max(0, Math.Min(widthVolume, raw));
+                double geometric = Math.Max(0, Math.Min(width, raw));
                 roundoff += Math.Abs(geometric - raw);
-                double delta = geometric - alpha * widthVolume;
-                correction[f] = delta;
+                correction[f] = geometric - alpha * width;
             }
 
             var work = new CutCellScalarWork(plan, fields, swept, correction, outgoing, reservoir);
@@ -356,6 +379,22 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     (fields[1][c] == 0 && (fields[3][c] != 0 || fields[4][c] != 0)))
                     throw new ArgumentException("Invalid cut-cell phase inventory.");
             }
+        }
+    }
+
+    internal delegate double[] CutCellGeometryBatch(CutCellVofGeometry geometry, IReadOnlyList<CutCellClipJob> jobs);
+
+    internal readonly struct CutCellClipJob
+    {
+        internal readonly int Face, Cell, Axis;
+        internal readonly bool Positive;
+        internal readonly D3 Normal;
+        internal readonly double Alpha, FluidVolume, SweptVolume;
+        internal CutCellClipJob(int face, int cell, int axis, bool positive, D3 normal,
+            double alpha, double fluidVolume, double sweptVolume)
+        {
+            Face = face; Cell = cell; Axis = axis; Positive = positive; Normal = normal;
+            Alpha = alpha; FluidVolume = fluidVolume; SweptVolume = sweptVolume;
         }
     }
 

@@ -24,7 +24,7 @@ The CPU and software Vulkan results are in [the recorded verification bundle](..
 
 In Unity, stop Play mode and use the **Physics Sim > Three Phase 3D** top menu:
 
-1. **Run S05 GPU geometry and transport checks**. Look for `gpuExecuted=True; cutCellGpuExecuted=True; cutCellMomentumGpuExecuted=True; passed=True` in the Console. The evidence is saved under `ValidationRuns/local/s05-gpu-*`.
+1. **Run S05 GPU geometry and transport checks**. Look for `gpuExecuted=True; cutCellGpuExecuted=True; cutCellMomentumGpuExecuted=True; cutCellClippingGpuExecuted=True; passed=True` in the Console. The evidence is saved under `ValidationRuns/local/s05-gpu-*`.
 2. **Create S05 droplet transport preview**, press Play and open **Game**. The image is an XY slice through the periodic 3D volume, with liquid volume and drift above it.
 3. **Run S05 CPU transport checks** runs the reference path.
 
@@ -42,14 +42,20 @@ The expanded suite passed 84 checks on the managed reference and on software Vul
 
 ### GPU cut-cell scalar update
 
-The GPU cut-cell path consumes clipped swept-volume candidates and the existing pressure-group incidence lists. It limits the liquid transfer, forms the complementary gas transfer, and transports phase energy and vapour through the same faces. A second kernel gathers those signed transfers into each pressure group. A GPU gather now assembles positive and negative donor budgets from the pressure-group incidence lists. The host computes clipping, records boundary totals and reconciles phase-volume roundoff. GPU and CPU comparisons cover all five inventories, both phase face fluxes and the net boundary ledger on the open channel, closed circulation and curved beaker cases.
+The GPU cut-cell path consumes clipped swept-volume candidates and the existing pressure-group incidence lists. It limits the liquid transfer, forms the complementary gas transfer, and transports phase energy and vapour through the same faces. A second kernel gathers those signed transfers into each pressure group. A GPU gather now assembles positive and negative donor budgets from the pressure-group incidence lists. The host records boundary totals and reconciles phase-volume roundoff. GPU and CPU comparisons cover all five inventories, both phase face fluxes and the net boundary ledger on the open channel, closed circulation and curved beaker cases.
 
 ### GPU cut-cell momentum
 
 The GPU remap gathers changes to each active staggered face from its adjacent pressure groups. It removes each outgoing mass portion with the face’s own velocity and applies incoming mass with the donor’s aperture-weighted velocity. The same kernel reports the boundary momentum and wall impulse for each crossing. The host packs masses from the shared phase fluxes and reduces the ledger. Software Vulkan verification uses the production wrappers and kernels for the cut-cell cases and the managed reference for the periodic and pressure cases. [Donor budget and momentum verification](../../ValidationRuns/s05-cut-gpu-momentum-20261111)
 
+### GPU cut-cell PLIC clipping
+
+The host preprocesses the fixed geometry into signed tetrahedra clipped to each donor cell and packs them in unit-cell coordinates. The GPU finds the interface plane and swept slab by volume inversion, clips the signed tetrahedra to both planes, and returns the liquid volume of the intersection. The host checks the interface, slab and full accessible volume residuals before sending the candidates to the conservative GPU limiter. Fixed-solid preprocessing, job assembly, result checks and the phase-volume ledger remain host operations. The kernel uses FP32 geometry, with explicit inversion and face-volume tolerances.
+
+The open channel, closed circulation and curved beaker tests compare both phase fluxes and the net liquid ledger against the CPU reference. The standalone harness dispatches the production clipping shader and uses the CPU transport reference around it. Unity verification exercises clipping with the GPU scalar kernels. [Clipping verification](../../ValidationRuns/s05-cut-gpu-clipping-20261111)
+
 ## Open integration
 
-The compensated GPU path passed 84 checks on both lavapipe and SwiftShader with shaderFloat64 disabled. The user reported a passing Unity Direct3D 11 run for the periodic checkpoint at commit `9562ce4`. The user also reported a passing Direct3D 11 run for the cut-cell scalar checkpoint at `d91b3c3`. [Compensated GPU verification](../../ValidationRuns/s05-compensated-gpu-20261111) Cut-cell PLIC clipping remains on the CPU. Unity Direct3D 11 still needs to exercise the donor-budget and momentum kernels. The curved beaker test uses prescribed circulation. The beaker scene still needs a coupled time integration and a grid that resolves its embedded viscous wall distances.
+The compensated GPU path passed 84 checks on both lavapipe and SwiftShader with shaderFloat64 disabled. The user reported a passing Unity Direct3D 11 run for the periodic checkpoint at commit `9562ce4`. The user also reported a passing Direct3D 11 run for the cut-cell scalar checkpoint at `d91b3c3`. [Compensated GPU verification](../../ValidationRuns/s05-compensated-gpu-20261111) The user reported that the donor-budget and momentum checkpoint at `e247f7b` passed on Unity Direct3D 11. The new clipping kernel still needs a Direct3D 11 run. The curved beaker test uses prescribed circulation. The beaker scene still needs a coupled time integration and a grid that resolves its embedded viscous wall distances.
 
 Method references are [M04 and M13](Sources.md). The capacity limiter and dual-volume averaging above are the discretisation used by this implementation.

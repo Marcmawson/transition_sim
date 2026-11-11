@@ -18,7 +18,7 @@ namespace PhysicsSim.ThreePhase3D.Editor
         private sealed class Report
         {
             [DataMember] public string Device, GraphicsApi, Unity, Error;
-            [DataMember] public bool GpuExecuted, CutCellGpuExecuted, CutCellMomentumGpuExecuted, Passed;
+            [DataMember] public bool GpuExecuted, CutCellGpuExecuted, CutCellMomentumGpuExecuted, CutCellClippingGpuExecuted, Passed;
             [DataMember] public double CandidateRoundoffM3;
             [DataMember] public FlowCheckRow[] Checks;
         }
@@ -65,6 +65,8 @@ namespace PhysicsSim.ThreePhase3D.Editor
                     var pressureShader = Resources.Load<ComputeShader>("ThreePhase3D/SinglePhaseFlow");
                     var cutShader = Resources.Load<ComputeShader>("ThreePhase3D/CutCellVofScalars");
                     var cutMomentumShader = Resources.Load<ComputeShader>("ThreePhase3D/CutCellVofMomentum");
+                    var clippingShader = Resources.Load<ComputeShader>("ThreePhase3D/CutCellVofClipping");
+                    if (clippingShader == null) throw new InvalidOperationException("Cut-cell clipping shader did not import.");
                     checks = new VofChecks((vof, fields, velocity, dt) =>
                     {
                         if (active != vof)
@@ -98,11 +100,19 @@ namespace PhysicsSim.ThreePhase3D.Editor
                             report.CutCellMomentumGpuExecuted = true;
                             return result;
                         }
+                    }, (plan, state, velocity, dt, inflow) =>
+                    {
+                        using (var cut = new CutCellGpuScalars(plan, cutShader, clippingShader))
+                        {
+                            var result = cut.Advance(state, velocity, dt, inflow);
+                            report.CutCellClippingGpuExecuted |= cut.ClippingDispatches > 0;
+                            return result;
+                        }
                     });
                 }
                 else checks = new VofChecks();
                 checks.Run();
-                report.Passed = checks.Passed && (!useGpu || (report.GpuExecuted && report.CutCellGpuExecuted && report.CutCellMomentumGpuExecuted));
+                report.Passed = checks.Passed && (!useGpu || (report.GpuExecuted && report.CutCellGpuExecuted && report.CutCellMomentumGpuExecuted && report.CutCellClippingGpuExecuted));
                 if (!report.Passed) throw new InvalidOperationException("S05 transport checks failed.");
             }
             catch (Exception e) { report.Error = e.ToString(); throw; }
@@ -113,7 +123,7 @@ namespace PhysicsSim.ThreePhase3D.Editor
                 string file = Path.Combine(output, "transport-results.json");
                 File.WriteAllBytes(file, RecordJson.Encode(report));
                 File.WriteAllText(Path.Combine(output, "files.sha256"), RecordJson.FileHash(file) + "  transport-results.json\n");
-                Debug.Log($"S05 evidence: {output}; gpuExecuted={report.GpuExecuted}; cutCellGpuExecuted={report.CutCellGpuExecuted}; cutCellMomentumGpuExecuted={report.CutCellMomentumGpuExecuted}; passed={report.Passed}");
+                Debug.Log($"S05 evidence: {output}; gpuExecuted={report.GpuExecuted}; cutCellGpuExecuted={report.CutCellGpuExecuted}; cutCellMomentumGpuExecuted={report.CutCellMomentumGpuExecuted}; cutCellClippingGpuExecuted={report.CutCellClippingGpuExecuted}; passed={report.Passed}");
             }
         }
     }

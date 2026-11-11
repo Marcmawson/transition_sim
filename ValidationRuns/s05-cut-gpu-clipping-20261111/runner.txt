@@ -1,0 +1,5 @@
+Base GitHub commit: e247f7b0082e65c1fbc7369a4be21e6f4f0d681c.
+Managed reference: .NET 8, 85/85 S05 checks. Runtime and editor compiled as separate assemblies using Unity API stubs.
+DXC cs_6_0 compiled ClipCutFaces to DXIL and SPIR-V with warnings as errors.
+Standalone SwiftShader Vulkan dispatched the production clipping wrapper and shader. The harness used CPU references for scalar transport, momentum, periodic transport and pressure.
+The expanded harness passed 94/94 checks, including nine clipping comparisons covering open, closed and curved beaker cases. Unity Direct3D 11 execution of the new clipping shader with the existing GPU transport kernels remains pending.
