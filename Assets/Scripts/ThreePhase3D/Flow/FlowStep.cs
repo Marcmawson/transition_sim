@@ -41,7 +41,11 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return Project(predictor.Plan, predictor.Predict(velocity, acceleration, dt), dt, maxIterations);
         }
 
-        internal static FlowStep Project(VariableCoefficientProjection plan, float[] tentative, double dt, int maxIterations)
+        internal static FlowStep Project(VariableCoefficientProjection plan, float[] tentative, double dt, int maxIterations) =>
+            Project(plan, tentative, dt, maxIterations, null);
+
+        internal static FlowStep Project(VariableCoefficientProjection plan, float[] tentative, double dt, int maxIterations,
+            Func<float[], bool> acceptVelocity)
         {
             if (maxIterations <= 0) throw new ArgumentOutOfRangeException(nameof(maxIterations));
             var corrected = new float[plan.FaceCount];
@@ -58,7 +62,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
                         corrected[face] = metric.Active == 0 ? 0 : (float)(tentative[face] - dt * plan.Gradient(metric, pressure));
                     }
                     diagnostics = plan.Measure(tentative, corrected, pressure, dt, iteration);
-                    if (diagnostics.Converged && Array.TrueForAll(corrected, value => SiUnits.IsFinite(value)))
+                    if (diagnostics.Converged && Array.TrueForAll(corrected, value => SiUnits.IsFinite(value)) &&
+                        (acceptVelocity == null || acceptVelocity(corrected)))
                     {
                         plan.SetClosedGauges(pressure);
                         return new FlowStep(corrected, pressure, diagnostics);

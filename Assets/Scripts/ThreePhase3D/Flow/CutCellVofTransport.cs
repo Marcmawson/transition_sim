@@ -10,6 +10,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // extensive; open-boundary inputs use the same signed face ledger.
     public sealed class CutCellVofTransport
     {
+        private const double PressureCorrectionLimit = 1e-6;
         private const double Tolerance = 1e-10;
         private readonly VariableCoefficientProjection plan;
         private readonly CutCellVofGeometry geometry;
@@ -136,14 +137,14 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         public CutCellCoupledStep AdvanceCoupled(CutCellInventories state, FlowStep transportingFlow,
             double liquidDensity, double gasDensity, Func<int, CutCellInflow> inflow = null, int maxIterations = 4096) =>
-            AdvanceCoupled(state, transportingFlow, liquidDensity, gasDensity, inflow, maxIterations, FlowCpuReference.Project);
+            AdvanceCoupled(state, transportingFlow, liquidDensity, gasDensity, inflow, maxIterations, ProjectCpu);
 
         public CutCellCoupledStep AdvanceCoupledWithWetting(CutCellInventories state, FlowStep transportingFlow,
             double liquidDensity, double gasDensity, double liquidViscosityPaS, double gasViscosityPaS,
             Func<int, CutCellInflow> inflow = null, int maxIterations = 4096)
         {
             return AdvanceCoupledWithWetting(state, transportingFlow, liquidDensity, gasDensity,
-                liquidViscosityPaS, gasViscosityPaS, inflow, maxIterations, FlowCpuReference.Project);
+                liquidViscosityPaS, gasViscosityPaS, inflow, maxIterations, ProjectCpu);
         }
 
         internal CutCellCoupledStep AdvanceCoupledWithWetting(CutCellInventories state, FlowStep transportingFlow,
@@ -233,12 +234,33 @@ namespace PhysicsSim.ThreePhase3D.Flow
         {
             if (pressure == null || !pressure.Diagnostics.Converged || pressure.VelocityMPerS.Length != plan.FaceCount)
                 throw new ArgumentException("A converged compatible pressure result is required.");
-            double dt = pressure.Diagnostics.Dt, maximum = 0, absolute = 0;
+            double dt = pressure.Diagnostics.Dt;
             var velocity = new double[plan.FaceCount];
+            double maximum = ReconcilePressureFlux(pressure.VelocityMPerS, dt, velocity, out double absolute);
+            if (maximum > PressureCorrectionLimit)
+                throw new InvalidOperationException("Cut-cell pressure flux correction exceeds 1e-6 Courant units.");
+            return Advance(state, velocity, dt, inflow, absolute, apply, clip);
+        }
+
+        private FlowStep ProjectCpu(VariableCoefficientProjection nextPlan, float[] tentative, double dt, int maxIterations)
+        {
+            if (capillarity == null) return FlowCpuReference.Project(nextPlan, tentative, dt, maxIterations);
+            var scratch = new double[plan.FaceCount];
             var divergence = new double[plan.GroupCount];
+            return FlowCpuReference.Project(nextPlan, tentative, dt, maxIterations,
+                velocity => ReconcilePressureFlux(velocity, dt, scratch, out _, divergence) <= PressureCorrectionLimit);
+        }
+
+        private double ReconcilePressureFlux(float[] accepted, double dt, double[] velocity,
+            out double absolute, double[] divergence = null)
+        {
+            double maximum = 0;
+            absolute = 0;
+            if (divergence == null) divergence = new double[plan.GroupCount];
+            else Array.Clear(divergence, 0, divergence.Length);
             for (int f = 0; f < velocity.Length; f++)
             {
-                velocity[f] = pressure.VelocityMPerS[f];
+                velocity[f] = accepted[f];
                 var metric = plan.Faces[f];
                 if (metric.Active == 0) continue;
                 double q = velocity[f] * metric.Area * dt;
@@ -258,9 +280,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 absolute += Math.Abs(delta);
                 if (parent[group] >= 0) divergence[parent[group]] += divergence[group];
             }
-            if (maximum > 1e-6)
-                throw new InvalidOperationException("Cut-cell pressure flux correction exceeds 1e-6 Courant units.");
-            return Advance(state, velocity, dt, inflow, absolute, apply, clip);
+            return maximum;
         }
 
         public CutCellTransportResult Advance(CutCellInventories state, double[] faceVelocity, double dt,

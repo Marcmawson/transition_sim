@@ -463,8 +463,8 @@ internal static class SurfaceGeometryMain
 
     private static void CheckCapillaryShapeRelaxation()
     {
-        const int n = 26, steps = 8;
-        const double h = .001, radius = .007, sigma = .072, dt = .00005;
+        const int n = 26, steps = 12;
+        const double h = .001, radius = .007, sigma = .072, dt = .0002;
         const double rhoL = 997, rhoG = 1.2, muL = .001, muG = .000018;
         var grid = new Grid3D(n, 14, n, new D3(h, h, h));
         var slab = SurfacePrimitives.Box(new D3(-h, -h, -h), new D3((n + 1) * h, h, (n + 1) * h));
