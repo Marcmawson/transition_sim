@@ -206,6 +206,17 @@ namespace PhysicsSim.ThreePhase3D.Flow
             }
         }
 
+        internal double OutwardFlux(int group, float[] velocity)
+        {
+            double flux = 0;
+            for (int entry = Rows[group]; entry < Rows[group + 1]; entry++)
+            {
+                int signed = Incidence[entry], index = Math.Abs(signed) - 1;
+                flux += Math.Sign(signed) * (double)Faces[index].Area * velocity[index];
+            }
+            return flux;
+        }
+
         internal double Rhs(int group, float[] predicted, double dt)
         {
             double rhs = 0;

@@ -14,10 +14,11 @@ namespace PhysicsSim.ThreePhase3D.Flow
         private readonly MomentumPredictor3D predictor;
         private readonly ComputeShader shader;
         private readonly int predictKernel, pressureKernel, correctKernel;
-        private readonly ComputeBuffer faces, stencil, rows, incidence, diagonal;
+        private readonly ComputeBuffer faces, stencil, rows, incidence, pressureRows;
         private readonly ComputeBuffer velocity, predicted, corrected, pressureA, pressureB;
         private readonly List<ComputeBuffer> owned = new List<ComputeBuffer>();
         private readonly float[] pressureReadback, predictedReadback, correctedReadback, pressureZero;
+        private readonly Vector2[] pressureRowData;
         private bool disposed;
 
         public long AllocatedBytes { get; private set; }
@@ -44,14 +45,15 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 if (faceStride != 32) throw new InvalidOperationException("Flow face layout must match the 32-byte shader struct.");
                 long requiredBytes = (faceStride + 12L) * plan.FaceCount +
                     4L * (predictor.Stencil.Length + (long)plan.Rows.Length + Math.Max(1, plan.Incidence.Length)) +
-                    12L * plan.GroupCount + 16;
+                    16L * plan.GroupCount + 16;
                 if (requiredBytes > BufferBudgetBytes)
                     throw new NotSupportedException("S04 buffer allocation exceeds its 512 MiB payload budget.");
                 faces = Upload(plan.Faces, faceStride);
                 stencil = Upload(predictor.Stencil, 4);
                 rows = Upload(plan.Rows, 4);
                 incidence = Upload(plan.Incidence, 4);
-                diagonal = Upload(plan.Diagonal, 4);
+                pressureRows = Allocate(plan.GroupCount, 8);
+                pressureRowData = new Vector2[plan.GroupCount];
                 velocity = Allocate(plan.FaceCount, 4);
                 predicted = Allocate(plan.FaceCount + 1, 4);
                 corrected = Allocate(plan.FaceCount + 1, 4);
@@ -102,8 +104,10 @@ namespace PhysicsSim.ThreePhase3D.Flow
             shader.SetBuffer(pressureKernel, "Faces", faces);
             shader.SetBuffer(pressureKernel, "Rows", rows);
             shader.SetBuffer(pressureKernel, "Incidence", incidence);
-            shader.SetBuffer(pressureKernel, "Diagonal", diagonal);
-            shader.SetBuffer(pressureKernel, "PredictedIn", predicted);
+            for (int group = 0; group < plan.GroupCount; group++)
+                pressureRowData[group] = new Vector2(plan.Diagonal[group], (float)(plan.OutwardFlux(group, predictedReadback) / dt));
+            pressureRows.SetData(pressureRowData);
+            shader.SetBuffer(pressureKernel, "PressureRows", pressureRows);
             shader.SetBuffer(correctKernel, "Faces", faces);
             shader.SetBuffer(correctKernel, "PredictedIn", predicted);
             shader.SetBuffer(correctKernel, "CorrectedOut", corrected);

@@ -12,7 +12,7 @@ StructuredBuffer<Face> Faces;
 StructuredBuffer<int> Stencil;
 StructuredBuffer<int> Rows;
 StructuredBuffer<int> Incidence;
-StructuredBuffer<float> Diagonal;
+StructuredBuffer<float2> PressureRows; // diagonal, tentative outward volume flux / Dt
 StructuredBuffer<float> VelocityIn;
 StructuredBuffer<float> PredictedIn;
 StructuredBuffer<float> PressureIn;
@@ -76,21 +76,19 @@ void IteratePressure(uint3 id : SV_DispatchThreadID)
 {
     uint group = id.x;
     if (group >= (uint)GroupCount) return;
-    // Accumulate velocity flux separately: a nearly solenoidal, fast
-    // background flow must not hide a small pressure correction in FP32.
-    float velocityFlux = 0;
-    float pressureFlux = 0;
+    // The tentative flux is reduced once in FP64 from the existing predictor
+    // readback, so near-cancelling face velocities retain their small net flux.
+    precise float pressureFlux = 0;
     for (int entry = Rows[group]; entry < Rows[group + 1]; entry++)
     {
         int incidence = Incidence[entry];
         int index = abs(incidence) - 1;
         Face face = Faces[index];
         float area = incidence > 0 ? face.area : -face.area;
-        velocityFlux += area * PredictedIn[index];
         pressureFlux += area * PressureGradient(face);
     }
-    float residual = pressureFlux - velocityFlux / Dt;
-    float diagonal = Diagonal[group];
+    float residual = pressureFlux - PressureRows[group].y;
+    float diagonal = PressureRows[group].x;
     PressureOut[group] = diagonal > 0 ? PressureIn[group] + (2.0 / 3.0) * residual / diagonal : 0;
 }
 

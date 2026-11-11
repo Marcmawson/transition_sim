@@ -50,7 +50,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (solver == null || Time.unscaledTime < nextUpdate) return;
             try
             {
-                var step = solver.Advance(velocity, new D3(), .1);
+                var step = AdvancePreview();
                 velocity = step.VelocityMPerS;
                 UpdateArrows();
                 simulatedSeconds += step.Diagnostics.Dt;
@@ -59,6 +59,19 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 nextUpdate = Time.unscaledTime + .15f;
             }
             catch (Exception failure) { Stop(failure); }
+        }
+
+        private FlowStep AdvancePreview()
+        {
+            double requested = .1;
+            for (int retry = 0; ; retry++)
+            {
+                try { return solver.Advance(velocity, new D3(), requested); }
+                catch (FlowConvergenceException failure) when (retry < 3)
+                {
+                    requested = failure.Diagnostics.Dt * .5;
+                }
+            }
         }
 
         private void Stop(Exception failure)

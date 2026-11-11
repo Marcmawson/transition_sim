@@ -21,7 +21,9 @@ namespace PhysicsSim.ThreePhase3D.Flow
     {
         public readonly FlowDiagnostics Diagnostics;
         internal FlowConvergenceException(FlowDiagnostics diagnostics)
-            : base("Pressure projection failed its convergence criteria. The input field is intact.")
+            : base($"Pressure projection failed after {diagnostics.Iterations} iterations at dt={diagnostics.Dt:G6} s. " +
+                $"Residual={diagnostics.ResidualL2:E3}, RHS={diagnostics.RhsL2:E3} m³/s², " +
+                $"dt × max divergence={diagnostics.Dt * diagnostics.MaxDivergencePerS:E3}.")
         {
             Diagnostics = diagnostics;
         }
