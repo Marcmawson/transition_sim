@@ -1,0 +1,28 @@
+PASS C# compile against installed Unity 2022.3 assemblies (not an Editor import or runtime test).
+PASS V01 SI temperature, pressure, mass and volume
+PASS V01 Preview permits explicit missing physics data; physical run is blocked
+PASS V01 Reject incompatible configuration and nonfinite values
+PASS V01 Mass/volume agreement uses a supplied synthetic provider
+PASS V01 Configuration serialization retains SI identity
+PASS V01 Glass preview scale, winding and polygonal volume
+PASS V02 Compensated reduction retains cancellation-sensitive terms
+PASS V34 Body to Eulerian to parcel to deposition preserves inventory
+PASS V02 Repeated small transfers retain total mass and storage energy
+PASS V02 Unmatched mass energy linear and angular momentum are rejected atomically
+PASS V02 Overdraw and nonfinite inventories are rejected
+PASS V02 Independent audit detects unrecorded mass and heat loss
+PASS V02 Humid inflow heater support radiation and mechanical work close once
+PASS V02 Numerical corrections remain invalid even if they restore the balance
+PASS V33 Bundle export snapshot reload and source identity round trip
+PASS V33 Unmatched transfer and lost heat invalidate exported evidence
+PASS V33 Modified output bytes and missing seal are rejected
+PASS V33 Changed shader table or dependency set makes evidence stale
+PASS V33 Schema and required metric failures cannot be repaired by resealing hashes
+PASS V33 Independent CSV audit rejects fabricated passing balance and transfer flags
+PASS V33 Dirty development bundle is identifiable and rejected for clean review
+PASS V33 Interrupted runs path escapes and writes after sealing are rejected
+PASS V33 Evidence index resolves all requirements and actual code symbols
+PASS V33 Evidence index rejects unknown identifiers and nonexistent symbols
+PASS V02 Exported inventory and external heat close independently
+Run bundle: C:\Users\marcm\Documents\ChatGPT\Physics Sim Tool Kit\transition_sim\ValidationRuns\local\s01-foundation-20261111T003452-fd00c14ac9334c8ea4f3315d7f22afdb
+Source: ef4d6182a7b09cb655d0394f44afb5ac9f1f1e76; dirty=True
