@@ -9,15 +9,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     [RequireComponent(typeof(Beaker3DSetup))]
     public sealed class SolidBeakerThermalPreview : MonoBehaviour
     {
-        private const int RadialCells = 16;
-        private const int DepthCells = 6;
-        private const int Support = RadialCells * DepthCells;
-        private const int CellCount = Support + 1;
+        private const int RadialCells = BeakerSolidMesh.BaseRadialCells;
+        private const int DepthCells = BeakerSolidMesh.BaseDepthCells;
         private const double InitialK = 293.15;
-        private const double Conductivity = 1.2;
-        private const double VolumetricCapacity = 1.8e6;
 
-        [SerializeField] private bool largerBeaker;
+        [SerializeField] private bool largerBeaker = false;
         [SerializeField, Range(0f, 100f)] private float absorbedBurnerPowerW = 10f;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -30,8 +26,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private ComputeShader shader;
         private ComputeBuffer read, write, capacity, burner, faceStart, links;
         private Texture2D map;
-        private readonly float[] snapshot = new float[CellCount];
-        private readonly Color32[] pixels = new Color32[Support];
+        private BeakerSolidMesh mesh;
+        private float[] snapshot;
+        private readonly Color32[] pixels = new Color32[RadialCells * DepthCells];
+        private double absorbedJ, sampledAbsorbedJ, storedJ;
         private int kernel;
         private double stepSeconds, pendingSeconds, simulatedSeconds, nextSnapshot;
         private bool burnerOn, running, ready;
@@ -65,69 +63,43 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             setup.scenario.display.showSetupReport = false;
             setup.Refresh();
 
-            var cellCapacity = new double[CellCount];
-            var unitPower = new double[CellCount];
-            var initial = new double[CellCount];
-            var faces = new List<SolidConduction.Face>();
-            double dr = geometry.OuterRadiusM / RadialCells;
-            double dz = geometry.baseThicknessM / DepthCells;
-            var edges = new double[RadialCells];
-            for (int r = 0; r < RadialCells; r++) edges[r] = (r + 1) * dr;
-            var facePower = RadialHeatFluxBoundary.GaussianFacePowerW(1, .015, edges);
-            for (int r = 0; r < RadialCells; r++)
-            {
-                int bottom = r * DepthCells;
-                double area = Math.PI * (2 * r + 1) * dr * dr;
-                unitPower[bottom] = facePower[r];
-                for (int z = 0; z < DepthCells; z++)
-                {
-                    int cell = bottom + z;
-                    cellCapacity[cell] = VolumetricCapacity * area * dz;
-                    if (z + 1 < DepthCells)
-                        faces.Add(new SolidConduction.Face(cell, cell + 1, Conductivity * area / dz));
-                    if (r + 1 < RadialCells)
-                        faces.Add(new SolidConduction.Face(cell, cell + DepthCells,
-                            Conductivity * 2 * Math.PI * edges[r] * dz / dr));
-                }
-            }
+            mesh = new BeakerSolidMesh(geometry);
+            int cellCount = mesh.CapacityJPerK.Length;
+            snapshot = new float[cellCount];
+            var initial = new double[cellCount];
+            for (int i = 0; i < cellCount; i++) initial[i] = InitialK + (i % 7) * .5;
 
-            cellCapacity[Support] = 10;
-            int contactRing = Math.Min(RadialCells - 1, (int)(geometry.tripodRingRadiusM / dr));
-            double supportG = CoupledHeatFaces.HeatRateW(1e-4, 2, 1, dz / 2, Conductivity, .001, .003, 16);
-            faces.Add(new SolidConduction.Face(contactRing * DepthCells, Support, supportG));
-            for (int i = 0; i < CellCount; i++) initial[i] = InitialK;
-
-            var reference = new SolidConduction(cellCapacity, initial, faces.ToArray());
+            var reference = new SolidConduction(mesh.CapacityJPerK, initial, mesh.Faces);
             stepSeconds = Math.Min(.01, reference.MaximumStepSeconds * .5);
-            var adjacency = new List<FaceLink>[CellCount];
-            for (int i = 0; i < CellCount; i++) adjacency[i] = new List<FaceLink>();
-            foreach (var face in faces)
+            var adjacency = new List<FaceLink>[cellCount];
+            for (int i = 0; i < cellCount; i++) adjacency[i] = new List<FaceLink>();
+            foreach (var face in mesh.Faces)
             {
                 adjacency[face.A].Add(new FaceLink { Other = face.B, Conductance = (float)face.ConductanceWPerK });
                 adjacency[face.B].Add(new FaceLink { Other = face.A, Conductance = (float)face.ConductanceWPerK });
             }
-            var starts = new int[CellCount + 1];
+            var starts = new int[cellCount + 1];
             var flattened = new List<FaceLink>();
-            for (int i = 0; i < CellCount; i++)
+            for (int i = 0; i < cellCount; i++)
             {
                 starts[i] = flattened.Count;
                 flattened.AddRange(adjacency[i]);
             }
-            starts[CellCount] = flattened.Count;
+            starts[cellCount] = flattened.Count;
 
             shader = Instantiate(asset);
             kernel = shader.FindKernel("Conduct");
-            read = new ComputeBuffer(CellCount, sizeof(float));
-            write = new ComputeBuffer(CellCount, sizeof(float));
-            capacity = new ComputeBuffer(CellCount, sizeof(float));
-            burner = new ComputeBuffer(CellCount, sizeof(float));
+            read = new ComputeBuffer(cellCount, sizeof(float));
+            write = new ComputeBuffer(cellCount, sizeof(float));
+            capacity = new ComputeBuffer(cellCount, sizeof(float));
+            burner = new ComputeBuffer(cellCount, sizeof(float));
             faceStart = new ComputeBuffer(starts.Length, sizeof(int));
             links = new ComputeBuffer(flattened.Count, sizeof(int) + sizeof(float));
-            capacity.SetData(Array.ConvertAll(cellCapacity, value => (float)value));
-            burner.SetData(Array.ConvertAll(unitPower, value => (float)value));
+            capacity.SetData(Array.ConvertAll(mesh.CapacityJPerK, value => (float)value));
+            burner.SetData(Array.ConvertAll(mesh.BurnerWeights, value => (float)value));
             faceStart.SetData(starts);
             links.SetData(flattened);
-            shader.SetInt("CellCount", CellCount);
+            shader.SetInt("CellCount", cellCount);
             shader.SetFloat("StepSeconds", (float)stepSeconds);
             shader.SetBuffer(kernel, "Capacity", capacity);
             shader.SetBuffer(kernel, "BurnerPower", burner);
@@ -136,8 +108,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             map = new Texture2D(RadialCells, DepthCells, TextureFormat.RGBA32, false)
                 { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp };
 
-            ResetTemperatures();
-            var checkPower = Array.ConvertAll(unitPower, value => value * 10);
+            read.SetData(Array.ConvertAll(initial, value => (float)(value - InitialK)));
+            var checkPower = Array.ConvertAll(mesh.BurnerWeights, value => value * 10);
             for (int i = 0; i < 20; i++)
             {
                 Dispatch(10);
@@ -145,11 +117,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
             read.GetData(snapshot);
             double maxError = 0;
-            for (int i = 0; i < CellCount; i++)
+            for (int i = 0; i < cellCount; i++)
             {
                 if (float.IsNaN(snapshot[i]) || float.IsInfinity(snapshot[i]))
                     throw new InvalidOperationException("S08 GPU conduction returned a non-finite temperature.");
-                maxError = Math.Max(maxError, Math.Abs(snapshot[i] - reference.TemperatureK[i]));
+                maxError = Math.Max(maxError, Math.Abs(snapshot[i] + InitialK - reference.TemperatureK[i]));
             }
             if (maxError > .001)
                 throw new InvalidOperationException($"S08 CPU/GPU comparison failed: {maxError:G4} K.");
@@ -164,13 +136,18 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             pendingSeconds += Math.Min(Time.unscaledDeltaTime, .1f);
             while (pendingSeconds >= stepSeconds)
             {
-                Dispatch(burnerOn ? absorbedBurnerPowerW : 0);
+                float watts = burnerOn ? absorbedBurnerPowerW : 0;
+                Dispatch(watts);
+                absorbedJ += watts * stepSeconds;
                 pendingSeconds -= stepSeconds;
                 simulatedSeconds += stepSeconds;
             }
             if (simulatedSeconds >= nextSnapshot)
             {
                 read.GetData(snapshot);
+                storedJ = 0;
+                for (int i = 0; i < snapshot.Length; i++) storedJ += snapshot[i] * mesh.CapacityJPerK[i];
+                sampledAbsorbedJ = absorbedJ;
                 RefreshMap();
                 nextSnapshot = simulatedSeconds + .25;
             }
@@ -181,13 +158,14 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             shader.SetFloat("AbsorbedPowerW", watts);
             shader.SetBuffer(kernel, "TemperatureRead", read);
             shader.SetBuffer(kernel, "TemperatureWrite", write);
-            shader.Dispatch(kernel, (CellCount + 63) / 64, 1, 1);
+            shader.Dispatch(kernel, (snapshot.Length + 63) / 64, 1, 1);
             (read, write) = (write, read);
         }
 
         private void ResetTemperatures()
         {
-            for (int i = 0; i < snapshot.Length; i++) snapshot[i] = (float)InitialK;
+            Array.Clear(snapshot, 0, snapshot.Length);
+            absorbedJ = sampledAbsorbedJ = storedJ = 0;
             read.SetData(snapshot);
             simulatedSeconds = pendingSeconds = nextSnapshot = 0;
             running = burnerOn = false;
@@ -199,7 +177,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             for (int r = 0; r < RadialCells; r++)
                 for (int z = 0; z < DepthCells; z++)
                 {
-                    float rise = Mathf.Clamp01((snapshot[r * DepthCells + z] - (float)InitialK) / 25);
+                    float rise = Mathf.Clamp01(snapshot[r * DepthCells + z] / 25);
                     pixels[z * RadialCells + r] = Color.Lerp(new Color(.12f, .32f, .65f), new Color(1, .3f, .04f), rise);
                 }
             map.SetPixels32(pixels);
@@ -224,12 +202,14 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.EndHorizontal();
                 GUILayout.Label($"Absorbed power: {absorbedBurnerPowerW:F0} W · {simulatedSeconds:F2} s");
                 absorbedBurnerPowerW = GUILayout.HorizontalSlider(absorbedBurnerPowerW, 0, 100);
-                GUILayout.Label($"Underside centre {snapshot[0] - 273.15:F2} °C · Upper centre {snapshot[DepthCells - 1] - 273.15:F2} °C");
-                GUILayout.Label($"Outer underside {snapshot[(RadialCells - 1) * DepthCells] - 273.15:F2} °C · Support {snapshot[Support] - 273.15:F2} °C");
+                GUILayout.Label($"Underside centre {snapshot[0] + 20:F2} °C · Upper centre {snapshot[DepthCells - 1] + 20:F2} °C");
+                GUILayout.Label($"Lower wall {snapshot[mesh.LowerWall] + 20:F2} °C · Rim {snapshot[mesh.Rim] + 20:F2} °C");
+                GUILayout.Label($"Support ring {snapshot[mesh.Ring] + 20:F2} °C · Leg top {snapshot[mesh.LegTop] + 20:F2} °C · Foot {snapshot[mesh.Foot] + 20:F2} °C");
+                GUILayout.Label($"Absorbed {sampledAbsorbedJ:F2} J · Stored {storedJ:F2} J");
                 GUILayout.Label("Glass base cross-section · centre to rim · 20–45 °C");
                 Rect rect = GUILayoutUtility.GetRect(1, 70, GUILayout.ExpandWidth(true));
                 GUI.DrawTexture(rect, map, ScaleMode.StretchToFill);
-                GUILayout.Label("Synthetic dry-base test · no water or ambient exchange");
+                GUILayout.Label("Synthetic dry apparatus · no water or ambient exchange");
             }
             GUILayout.EndArea();
         }

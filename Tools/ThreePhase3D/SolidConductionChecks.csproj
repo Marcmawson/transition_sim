@@ -7,6 +7,7 @@
   <ItemGroup>
     <Compile Include="SolidConductionMain.cs" />
     <Compile Include="../../Assets/Scripts/ThreePhase3D/Core/SiUnits.cs" />
+    <Compile Include="../../Assets/Scripts/ThreePhase3D/Core/ScenarioConfigSI.cs" />
     <Compile Include="../../Assets/Scripts/ThreePhase3D/Thermal/*.cs" />
   </ItemGroup>
 </Project>

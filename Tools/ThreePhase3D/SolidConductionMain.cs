@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using PhysicsSim.ThreePhase3D.Thermal;
+using PhysicsSim.ThreePhase3D.Core;
 
 internal static class SolidConductionMain
 {
@@ -15,6 +16,8 @@ internal static class SolidConductionMain
         CompositeContact();
         HeatedBase(.036, 9);
         HeatedBase(.063, 250);
+        HeatedApparatus(.033, .06);
+        HeatedApparatus(.06, .16);
     }
 
     private static double SlabError(int count)
@@ -101,6 +104,30 @@ internal static class SolidConductionMain
         Near(StoredJ(solver, capacity, initial), 30, 1e-8);
         if (solver.TemperatureK[0] >= hotBase) throw new Exception("Hot spot did not cool after switch-off.");
         Console.WriteLine($"PASS {waterMl} mL fixture base geometry: 30 J stored, radial/axial gradients, support warming");
+    }
+
+    private static void HeatedApparatus(double radius, double height)
+    {
+        const double initial = 293.15, watts = 10, seconds = 600;
+        var geometry = new GeometryInputs { innerRadiusM = radius, cavityHeightM = height };
+        geometry.tripodRingRadiusM = geometry.OuterRadiusM * .75;
+        var mesh = new BeakerSolidMesh(geometry);
+        Near(mesh.BurnerWeights.Sum(), 1, 1e-12);
+        var solver = new SolidConduction(mesh.CapacityJPerK,
+            Enumerable.Repeat(initial, mesh.CapacityJPerK.Length).ToArray(), mesh.Faces);
+        var power = mesh.BurnerWeights.Select(value => value * watts).ToArray();
+        int steps = (int)Math.Ceiling(seconds / Math.Min(.01, solver.MaximumStepSeconds * .5));
+        for (int i = 0; i < steps; i++) solver.Step(seconds / steps, power);
+        double stored = StoredJ(solver, mesh.CapacityJPerK, initial);
+        Near(stored, watts * seconds, 1e-7);
+        var t = solver.TemperatureK;
+        if (!(t[mesh.LowerWall] > t[mesh.Rim] && t[mesh.Rim] > initial &&
+            t[mesh.Ring] > t[mesh.LegTop] && t[mesh.LegTop] > t[mesh.Foot] && t[mesh.Foot] > initial))
+            throw new Exception("Expected wall and tripod gradients.");
+        int legCells = mesh.Foot - mesh.LegTop + 1;
+        for (int leg = 1; leg < 3; leg++)
+            Near(t[mesh.Foot], t[mesh.Foot + leg * legCells], 1e-10);
+        Console.WriteLine($"PASS {radius * 2000:F0} mm apparatus: {stored:F6} J, wall and all three legs conduct");
     }
 
     private static double StoredJ(SolidConduction solver, double[] capacity, double referenceK)
