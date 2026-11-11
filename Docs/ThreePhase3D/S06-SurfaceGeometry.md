@@ -87,3 +87,11 @@ The reported Unity run `s06-beaker-20261111T142027-2c19e7c3542a4fb59225a94ec8576
 The CPU suite also seeds a closed four-face circulation across the footprint of a sampled spherical cap. After the initial projection, each timestep takes its liquid inventory and velocity from the preceding accepted solve. Both runs start from the same state and compare 50 µm and 500 µm slip lengths over three 1 ms steps. The fixture checks liquid redistribution, contact activation, volume and staggered-mass closure, pressure convergence, and reduced first-step wall impulse with the longer slip length.
 
 This isolates the response of tracked contact traction to a flow perturbation. The cut-cell momentum step in this fixture includes advection, contact traction, and pressure projection. Wall-compatible capillary forcing and bulk viscosity are required to test free capillary relaxation and compare against a measured sessile-drop trajectory.
+
+### Capillary pressure at a 90° planar wall
+
+`CutCellVofTransport.WithPlanarWallCapillarity` enables a CPU capillary reference for a grid-aligned lower wall. At 90° the liquid fraction is reflected evenly across the wall. The existing height functions then estimate curvature in the reflected field, including at the contact line. Interior faces use the available adjacent curvature estimate or their mean, with a local average of supported estimates if both are missing. The capillary velocity increment and pressure correction share the same staggered face mobility. See [Afkhami and Bussmann (2009)](https://web.njit.edu/~shahriar/download/AB_IJNMF09.pdf) for height-function treatment of wall contact angles.
+
+The configuration requires full fluid cells above the wall, a closed domain, and a three-cell gas buffer at the other boundaries. The CPU fixture advances an initially stationary 7 mm hemisphere for two 0.1 ms steps and checks pressure against the Young–Laplace jump, parasitic face speed, and liquid-volume drift.
+
+This symmetry case supplies the first wall-compatible capillary pressure check. General contact angles, curved walls, bulk viscous relaxation, and the measured-glass V13 benchmark remain open.

@@ -22,6 +22,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
         private readonly HashSet<InterfacePatch> wettablePatches;
         private readonly Dictionary<int, List<InterfacePatch>> trackedPatches;
         private readonly WettingProfile trackedWetting;
+        private readonly PlanarWallCapillarity capillarity;
+
+        public static CutCellVofTransport WithPlanarWallCapillarity(VariableCoefficientProjection plan,
+            int firstFluidY, double surfaceTensionNPerM) =>
+            new CutCellVofTransport(plan, null, null,
+                new PlanarWallCapillarity(plan ?? throw new ArgumentNullException(nameof(plan)),
+                    firstFluidY, surfaceTensionNPerM));
 
         public static CutCellVofTransport WithTrackedWetting(VariableCoefficientProjection plan, WettingProfile profile) =>
             new CutCellVofTransport(plan, null, profile ?? throw new ArgumentNullException(nameof(profile)));
@@ -33,7 +40,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             : this(plan, contactAtCell, null) { }
 
         private CutCellVofTransport(VariableCoefficientProjection plan, Func<int, WettingContact> contactAtCell,
-            WettingProfile trackedWetting)
+            WettingProfile trackedWetting, PlanarWallCapillarity capillarity = null)
         {
             this.plan = plan ?? throw new ArgumentNullException(nameof(plan));
             this.contactAtCell = contactAtCell;
@@ -45,6 +52,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                         wettablePatches.Add(patch);
             }
             this.trackedWetting = trackedWetting;
+            this.capillarity = capillarity;
             if (trackedWetting != null)
             {
                 trackedPatches = new Dictionary<int, List<InterfacePatch>>();
@@ -172,6 +180,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     gasDensity * transported.Fields.GasM3[group]) / plan.Volumes[group];
             }, _ => 0);
             var tentative = Array.ConvertAll(advected.VelocityMPerS, value => (float)value);
+            capillarity?.Apply(nextPlan, transported.Fields, lowCell, highCell, liquidDensity, gasDensity,
+                transportingFlow.Diagnostics.Dt, tentative);
             var pressure = project(nextPlan, tentative, transportingFlow.Diagnostics.Dt, maxIterations);
             return new CutCellCoupledStep(transported, advected, pressure);
         }

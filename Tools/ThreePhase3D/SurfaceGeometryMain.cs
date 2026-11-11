@@ -53,6 +53,7 @@ internal static class SurfaceGeometryMain
         if (!(CheckSessileDrop(24) < coarseContactError))
             throw new InvalidOperationException("Contact patch localisation did not improve under refinement.");
         CheckSessileSlipResponse();
+        CheckSessileCapillaryPressure();
         return 0;
     }
 
@@ -301,7 +302,7 @@ internal static class SurfaceGeometryMain
                     lower.Z + h * (z + .5) / samples) - centre;
                 if (D3.Dot(p, p) < radius * radius) inside++;
             }
-            liquid[group] += plan.Geometry.FluidVolumeM3[cell] * inside / (samples * samples * samples);
+            liquid[group] += plan.Geometry.FluidVolumeM3[cell] * (inside / (double)(samples * samples * samples));
         }
         return liquid;
     }
@@ -361,6 +362,38 @@ internal static class SurfaceGeometryMain
                 throw new InvalidOperationException("The sessile cap must move and apply contact traction.");
             Console.WriteLine($"Evolving sessile cap: slip={slip:G5} m, first wall impulse={firstImpulse:G8} kg m/s, contact patches={patches}, liquid redistribution={moved:G8} m^3");
             return firstImpulse;
+        }
+    }
+
+    private static void CheckSessileCapillaryPressure()
+    {
+        const int n = 24, firstFluidY = 1;
+        const double h = .001, wallY = h, radius = .007, sigma = .072, dt = .0001;
+        const double rhoL = 997, rhoG = 1.2;
+        var grid = new Grid3D(n, 12, n, new D3(h, h, h));
+        var slab = SurfacePrimitives.Box(new D3(-h, -h, -h), new D3((n + 1) * h, wallY, (n + 1) * h));
+        var geometry = CutCellGeometry.Build(grid, slab);
+        var plan = new VariableCoefficientProjection(geometry, BoundaryConditions3D.Closed, _ => rhoG, _ => 0);
+        var solver = CutCellVofTransport.WithPlanarWallCapillarity(plan, firstFluidY, sigma);
+        var liquid = SampleSessileCap(plan, wallY, new D3(.012, wallY, .012), radius);
+        var gas = plan.Volumes.Zip(liquid, (volume, water) => volume - water).ToArray();
+        var state = new CutCellInventories(liquid, gas, new double[gas.Length], new double[gas.Length], new double[gas.Length]);
+        var flow = FlowCpuReference.Project(plan, new float[plan.FaceCount], dt, 16384);
+        int core = plan.GroupByCell[grid.Cells.Index(n / 2, firstFluidY, n / 2)];
+        int ambient = plan.GroupByCell[grid.Cells.Index(0, firstFluidY, 0)];
+        double expected = 2 * sigma / radius;
+        for (int step = 1; step <= 2; step++)
+        {
+            var trial = solver.AdvanceCoupled(state, flow, rhoL, rhoG, maxIterations: 16384);
+            flow = trial.Pressure;
+            state = trial.Transport.Fields;
+            double jump = flow.GroupPressurePa[core] - flow.GroupPressurePa[ambient];
+            double speed = flow.VelocityMPerS.Max(value => Math.Abs(value));
+            double drift = state.LiquidM3.Sum() - liquid.Sum();
+            Console.WriteLine($"90-degree sessile cap step {step}: jump={jump:G8} Pa (expected {expected:G8}), max face speed={speed:G8} m/s, drift={drift:E4} m^3");
+            if (!flow.Diagnostics.Converged || !(Math.Abs(jump / expected - 1) <= .05) ||
+                !(speed <= .00025) || !(Math.Abs(drift) <= 1e-15))
+                throw new InvalidOperationException("Wall-compatible capillary pressure check failed.");
         }
     }
 
