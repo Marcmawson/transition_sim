@@ -266,9 +266,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
             if (adaptiveMaxStepS.HasValue)
             {
                 double courant = OutgoingCourant(velocity, dt);
-                if (courant > .5)
+                double scale = 1;
+                if (courant > .5) scale = .45 / courant;
+                if (maximum > PressureCorrectionLimit)
+                    scale = Math.Min(scale, .9 * PressureCorrectionLimit / maximum);
+                if (scale < 1)
                 {
-                    dt *= .45 / courant;
+                    dt *= scale;
                     maximum = ReconcilePressureFlux(pressure.VelocityMPerS, dt, velocity, out absolute);
                 }
             }
