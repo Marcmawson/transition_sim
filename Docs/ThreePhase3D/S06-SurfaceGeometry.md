@@ -47,3 +47,11 @@ The optional wall-wetting selector on `MomentumPredictor3D` supplies a calibrate
 For an oblique patch, the drag matrix per unit area and unit kinematic viscosity is `n nᵀ / distance + (I - n nᵀ) / (distance + slipLength)`. The two transverse components at each staggered face use the existing four-point MAC interpolation, including zero samples at inactive faces. The explicit timestep bound includes the absolute cross-component rates. This is a local centroid approximation. Patch normals and positive resolved dual-centroid distances are required, and the predictor still requires uniform fluid properties.
 
 The checks cover an off-grid planar wall and a cylindrical section of the beaker geometry. The cylindrical tests check reduced axial plug damping and exercise cross-component coupling with a swirl. Automatic contact-line selection, fully coupled two-phase slip in the beaker, and the sessile-drop benchmark remain open.
+
+### Automatic contact detection for cut-cell transport
+
+Use `CutCellVofTransport.WithTrackedWetting(plan, profile)` to opt in to automatic detection for the calibrated fixed wall. For each mixed donor with wall geometry, the tracker intersects the unconstrained volume-matching PLIC plane with the clipped wall polygons. A polygon must have vertices strictly on both sides of the plane. If several qualify, the largest intersected patch determines the wall normal. Patches partially covered by another solid are excluded because the tracker has the original clipped polygon and the covered area only.
+
+The tracker estimates signed line speed from the aperture-weighted cell velocity projected along the wall-parallel liquid-to-gas normal. This local advection proxy selects the advancing or receding calibration curve. It does not estimate geometric line displacement between timesteps. The synthetic flat-wall fixture checks an intersection, an interface separated from the wall, receding speed and agreement with explicitly prescribed wetting during transport.
+
+Tracking currently supplies the angle constraint during donor reconstruction. Applying the detected contact region to the two-phase beaker wall momentum solve and completing the measured sessile-drop benchmark remain open.

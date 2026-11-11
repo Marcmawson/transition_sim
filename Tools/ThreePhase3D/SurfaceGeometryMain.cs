@@ -201,6 +201,17 @@ internal static class SurfaceGeometryMain
             Math.Abs(result.LiquidFaceM3[plan.FaceIndex(0, 2, 0, 0)] - swept) > 1e-10 ||
             Math.Abs(ledger) > 1e-10)
             throw new InvalidOperationException("Wetting reconstruction or transport ledger failed.");
+        var tracked = CutCellVofTransport.WithTrackedWetting(plan, profile);
+        var slow = velocity.Select(value => value / 10).ToArray();
+        var detected = tracked.TrackContact(cell, group, liquid[group], new D3(-1, 0, 0), slow);
+        var separated = tracked.TrackContact(cell, group, liquid[group], new D3(0, -1, 0), slow);
+        if (detected == null || Math.Abs(detected.SignedSpeedMPerS + .01) > 1e-8 || separated != null)
+            throw new InvalidOperationException("Contact tracking must distinguish an intersecting plane from a separated interface.");
+        var autoResult = tracked.Advance(state, slow, 10, _ => new CutCellInflow(0, 0, 0, 0));
+        int outlet = plan.FaceIndex(0, 2, 0, 0);
+        if (Math.Abs(autoResult.LiquidFaceM3[outlet] - result.LiquidFaceM3[outlet]) > 1e-8)
+            throw new InvalidOperationException("Tracked wetting did not reproduce the prescribed contact flux.");
+        Console.WriteLine($"Tracked wetting: receding speed={detected.SignedSpeedMPerS:G8} m/s; separated interface excluded.");
         Console.WriteLine($"Synthetic wetting: receding angle={angle:G8}°, traction={traction.X:G8} Pa, liquid ledger={ledger:G8} m^3");
     }
 

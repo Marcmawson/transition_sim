@@ -12,8 +12,9 @@ namespace PhysicsSim.ThreePhase3D.Geometry
         public readonly D3 CentroidLocalM,NormalLocal;
         public readonly double AreaM2,ContactAreaM2,CellCentreNormalDistanceM;
         public double FluidExposedAreaM2=>AreaM2-ContactAreaM2;
-        internal InterfacePatch(int cell,SolidRole role,D3 centroid,D3 normal,double area,double contact,D3 centre)
-        {Cell=cell;Role=role;CentroidLocalM=centroid;NormalLocal=normal;AreaM2=area;ContactAreaM2=contact;CellCentreNormalDistanceM=Math.Abs(D3.Dot(centre-centroid,normal));}
+        internal readonly IReadOnlyList<D3> Polygon;
+        internal InterfacePatch(int cell,SolidRole role,D3 centroid,D3 normal,double area,double contact,D3 centre,IReadOnlyList<D3> polygon)
+        {Polygon=polygon;Cell=cell;Role=role;CentroidLocalM=centroid;NormalLocal=normal;AreaM2=area;ContactAreaM2=contact;CellCentreNormalDistanceM=Math.Abs(D3.Dot(centre-centroid,normal));}
     }
     internal sealed class ClosedSurface
     {
@@ -202,7 +203,7 @@ namespace PhysicsSim.ThreePhase3D.Geometry
                     var polygon=new List<D3>(tri);foreach(var plane in PolyhedronClip.Bounds(lower,upper))polygon=PolyhedronClip.Polygon(polygon,plane);double area=PolyhedronClip.Area(polygon);if(area<=0)continue;
                     int cell=grid.Cells.Index(i,j,k);D3 centroid=PolyhedronClip.Centroid(polygon);double contact=other==null?0:other.ContactArea(polygon,normal,Math.Min(grid.Spacing.X,Math.Min(grid.Spacing.Y,grid.Spacing.Z))*1e-9);
                     double contactTolerance=Math.Max(area*1e-7,Math.Max(grid.FaceArea(0),Math.Max(grid.FaceArea(1),grid.FaceArea(2)))*1e-10);
-                    if(contact< -contactTolerance||contact>area+contactTolerance)throw new InvalidOperationException("Invalid solid contact area.");double boundedContact=Math.Max(0,Math.Min(area,contact));RoundoffFaceAreaAdjustmentM2+=Math.Abs(contact-boundedContact);contact=boundedContact;var patch=new InterfacePatch(cell,role,centroid,normal,area,contact,lower+grid.Spacing*.5);patches.Add(patch);(role==SolidRole.Fixed?fixedHasBoundary:iceHasBoundary)[cell]=true;
+                    if(contact< -contactTolerance||contact>area+contactTolerance)throw new InvalidOperationException("Invalid solid contact area.");double boundedContact=Math.Max(0,Math.Min(area,contact));RoundoffFaceAreaAdjustmentM2+=Math.Abs(contact-boundedContact);contact=boundedContact;var patch=new InterfacePatch(cell,role,centroid,normal,area,contact,lower+grid.Spacing*.5,polygon);patches.Add(patch);(role==SolidRole.Fixed?fixedHasBoundary:iceHasBoundary)[cell]=true;
                     var areaArray=role==SolidRole.Fixed?_FixedAreaM2:_IceAreaM2;var normals=role==SolidRole.Fixed?_FixedNormalArea:_IceNormalArea;var distance=role==SolidRole.Fixed?_FixedDistanceM:_IceDistanceM;
                     areaArray[cell]+=patch.FluidExposedAreaM2;normals[cell]+=normal*patch.FluidExposedAreaM2;distance[cell]=distance[cell]<0?patch.CellCentreNormalDistanceM:Math.Min(distance[cell],patch.CellCentreNormalDistanceM);
                 }

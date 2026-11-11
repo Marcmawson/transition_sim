@@ -20,11 +20,20 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         private readonly Func<int, WettingContact> contactAtCell;
         private readonly HashSet<InterfacePatch> wettablePatches;
+        private readonly Dictionary<int, List<InterfacePatch>> trackedPatches;
+        private readonly WettingProfile trackedWetting;
+
+        public static CutCellVofTransport WithTrackedWetting(VariableCoefficientProjection plan, WettingProfile profile) =>
+            new CutCellVofTransport(plan, null, profile ?? throw new ArgumentNullException(nameof(profile)));
 
         public CutCellVofTransport(VariableCoefficientProjection plan) : this(plan, null) { }
 
         // The caller supplies the active contact cells and wall-relative speeds for the accepted step.
         public CutCellVofTransport(VariableCoefficientProjection plan, Func<int, WettingContact> contactAtCell)
+            : this(plan, contactAtCell, null) { }
+
+        private CutCellVofTransport(VariableCoefficientProjection plan, Func<int, WettingContact> contactAtCell,
+            WettingProfile trackedWetting)
         {
             this.plan = plan ?? throw new ArgumentNullException(nameof(plan));
             this.contactAtCell = contactAtCell;
@@ -34,6 +43,19 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 foreach (var patch in plan.Geometry.Patches)
                     if (patch.Role == SolidRole.Fixed && patch.FluidExposedAreaM2 > 0)
                         wettablePatches.Add(patch);
+            }
+            this.trackedWetting = trackedWetting;
+            if (trackedWetting != null)
+            {
+                trackedPatches = new Dictionary<int, List<InterfacePatch>>();
+                foreach (var patch in plan.Geometry.Patches)
+                {
+                    // The exposed polygon is known exactly only for wholly exposed patches.
+                    if (patch.Role != SolidRole.Fixed || patch.ContactAreaM2 != 0) continue;
+                    if (!trackedPatches.TryGetValue(patch.Cell, out var patches))
+                        trackedPatches.Add(patch.Cell, patches = new List<InterfacePatch>());
+                    patches.Add(patch);
+                }
             }
             geometry = new CutCellVofGeometry(plan.Geometry);
             momentum = new CutCellMomentum(plan);
@@ -181,6 +203,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             var divergence = new double[groups];
             var outgoing = new double[groups];
             var planes = new ClipPlane?[plan.Grid.Cells.Count];
+            var normals = trackedPatches == null ? null : new D3?[planes.Length];
             var reservoir = new CutCellInflow[faces];
             var jobs = clip == null ? null : new List<CutCellClipJob>();
             double roundoff = 0;
@@ -228,12 +251,12 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 if (alpha == 0 || alpha == 1) continue;
                 if (jobs != null)
                 {
-                    jobs.Add(new CutCellClipJob(f, cell, metric.Axis, q > 0, Normal(cell, donor, fields[0]),
+                    jobs.Add(new CutCellClipJob(f, cell, metric.Axis, q > 0, DonorNormal(cell, donor, fields[0], faceVelocity, normals),
                         alpha, volume, widthVolume));
                     continue;
                 }
                 if (!planes[cell].HasValue)
-                    planes[cell] = geometry.Reconstruct(cell, Normal(cell, donor, fields[0]), alpha * volume);
+                    planes[cell] = geometry.Reconstruct(cell, DonorNormal(cell, donor, fields[0], faceVelocity, normals), alpha * volume);
                 Record(f, geometry.Sweep(cell, metric.Axis, q > 0, widthVolume, planes[cell].Value),
                     widthVolume, alpha, Tolerance * volume);
             }
@@ -359,16 +382,62 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return new CutCellScalarOutput(next, liquidFace, gasFace, boundary, roundoff, limited);
         }
 
-        private D3 Normal(int cell, int group, double[] liquid)
+        private D3 DonorNormal(int cell, int group, double[] liquid, double[] velocity, D3?[] cache)
+        {
+            if (cache != null && cache[cell].HasValue) return cache[cell].Value;
+            var normal = EstimateNormal(cell, group, liquid);
+            var contact = contactAtCell?.Invoke(cell);
+            if (contact != null && (contact.Wall.Cell != cell || !wettablePatches.Contains(contact.Wall)))
+                throw new ArgumentException("Contact requires an exposed fixed-wall patch of the donor cell.");
+            if (cache != null)
+                contact = TrackContact(cell, group, liquid[group], normal, velocity);
+            if (contact != null) normal = contact.InterfaceNormal(normal);
+            if (cache != null) cache[cell] = normal;
+            return normal;
+        }
+
+        internal WettingContact TrackContact(int cell, int group, double liquidVolume, D3 normal, double[] velocity)
+        {
+            if (normal.Length == 0 || !trackedPatches.TryGetValue(cell, out var patches)) return null;
+            var plane = geometry.Reconstruct(cell, normal, liquidVolume / plan.Volumes[group] * plan.Geometry.FluidVolumeM3[cell]);
+            var spacing = plan.Grid.Spacing;
+            double tolerance = 1e-11 * Math.Min(spacing.X, Math.Min(spacing.Y, spacing.Z));
+            InterfacePatch selected = null;
+            foreach (var patch in patches)
+            {
+                bool negative = false, positive = false;
+                foreach (var point in patch.Polygon)
+                {
+                    double distance = plane.Distance(point);
+                    negative |= distance < -tolerance;
+                    positive |= distance > tolerance;
+                }
+                if (negative && positive && (selected == null || patch.AreaM2 > selected.AreaM2))
+                    selected = patch;
+            }
+            if (selected == null) return null;
+            D3 tangent = plane.N - selected.NormalLocal * D3.Dot(plane.N, selected.NormalLocal);
+            if (tangent.Length < 1e-12) return null;
+
+            plan.Grid.Cells.Coordinates(cell, out int i, out int j, out int k);
+            var sampled = new D3(Component(0), Component(1), Component(2));
+            return new WettingContact(trackedWetting, selected, D3.Dot(sampled, tangent.Unit()));
+
+            double Component(int axis)
+            {
+                int lower = plan.FaceIndex(axis, i, j, k);
+                int upper = plan.FaceIndex(axis, i + (axis == 0 ? 1 : 0),
+                    j + (axis == 1 ? 1 : 0), k + (axis == 2 ? 1 : 0));
+                double a = plan.Faces[lower].Area, b = plan.Faces[upper].Area;
+                return a + b == 0 ? 0 : (a * velocity[lower] + b * velocity[upper]) / (a + b);
+            }
+        }
+
+        private D3 EstimateNormal(int cell, int group, double[] liquid)
         {
             plan.Grid.Cells.Coordinates(cell, out int i, out int j, out int k);
             double alpha = liquid[group] / plan.Volumes[group];
-            var normal = new D3(Difference(0), Difference(1), Difference(2));
-            var contact = contactAtCell?.Invoke(cell);
-            if (contact == null) return normal;
-            if (contact.Wall.Cell != cell || !wettablePatches.Contains(contact.Wall))
-                throw new ArgumentException("Contact requires an exposed fixed-wall patch of the donor cell.");
-            return contact.InterfaceNormal(normal);
+            return new D3(Difference(0), Difference(1), Difference(2));
 
             double Difference(int axis) => (SampleAt(axis, -1) - SampleAt(axis, 1)) / plan.Grid.Spacing[axis];
 
