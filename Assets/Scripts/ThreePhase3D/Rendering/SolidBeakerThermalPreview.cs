@@ -31,11 +31,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private ComputeShader shader;
         private ComputeBuffer read, write, capacity, burner, faceStart, links;
         private Texture2D map;
-        private ParticleSystem waterDisplay;
-        private ParticleSystem.Particle[] waterParticles;
-        private int[] waterParticleCells;
+        private GameObject waterDisplay;
+        private Mesh waterMesh;
         private Material waterMaterial;
-        private Texture2D waterDot;
+        private int[] waterVertexCells;
+        private Color32[] waterVertexColours;
         private BeakerSolidMesh mesh;
         private float[] snapshot;
         private readonly Color32[] pixels = new Color32[RadialCells * DepthCells];
@@ -143,74 +143,122 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             Debug.Log($"S08 {status}", this);
             ResetTemperatures();
             if (includeWater)
-                SpawnWaterDisplay(geometry.innerRadiusM, geometry.externalBaseHeightM + geometry.baseThicknessM);
+                SpawnWaterDisplay(geometry.innerRadiusM, geometry.externalBaseHeightM + geometry.baseThicknessM,
+                    setup.scenario.display.cylinderSegments);
         }
 
-        private void SpawnWaterDisplay(double radiusM, double floorM)
+        private void SpawnWaterDisplay(double radiusM, double floorM, int segments)
         {
-            var shaderAsset = Shader.Find("Sprites/Default");
+            var shaderAsset = Resources.Load<Shader>("ThreePhase3D/WaterTemperatureSurface");
             if (shaderAsset == null)
-                throw new InvalidOperationException("The water particle shader is unavailable.");
+                throw new InvalidOperationException("The water temperature surface shader is unavailable.");
 
-            waterDot = BeakerWaterParticles.CreateDot();
-            waterMaterial = new Material(shaderAsset) { mainTexture = waterDot, renderQueue = 2999 };
-            var container = new GameObject("Water temperature particles");
-            container.transform.SetParent(transform, false);
-            waterDisplay = container.AddComponent<ParticleSystem>();
-            waterDisplay.Stop(false, ParticleSystemStopBehavior.StopEmittingAndClear);
-            var main = waterDisplay.main;
-            main.playOnAwake = false;
-            main.simulationSpace = ParticleSystemSimulationSpace.Local;
-            var emission = waterDisplay.emission;
-            emission.enabled = false;
-            var renderer = container.GetComponent<ParticleSystemRenderer>();
-            renderer.sharedMaterial = waterMaterial;
-            renderer.minParticleSize = 0;
-
-            const int radialCells = BeakerSolidMesh.InnerRadialCells;
-            const int depthCells = BeakerSolidMesh.WaterHeightCells;
-            float radialStep = (float)radiusM / radialCells;
-            float depthStep = (float)mesh.WaterDepthM / depthCells;
-            float diameter = Mathf.Min(radialStep * .62f, (float)mesh.WaterDepthM * .35f);
-            var particles = new List<ParticleSystem.Particle>();
+            const int rings = BeakerSolidMesh.InnerRadialCells;
+            const int layers = BeakerSolidMesh.WaterHeightCells;
+            float radius = (float)(radiusM * .999);
+            float floor = (float)(floorM + Math.Min(1e-5, mesh.WaterDepthM * .01));
+            float depth = (float)(floorM + mesh.WaterDepthM) - floor;
+            var vertices = new List<Vector3>();
+            var normals = new List<Vector3>();
             var indices = new List<int>();
-            for (int r = 0; r < radialCells; r++)
+            var cells = new List<int>();
+
+            void AddVertex(Vector3 position, Vector3 normal, int ring, int layer)
             {
-                float radius = (r + .5f) * radialStep;
-                int around = Mathf.CeilToInt(2 * Mathf.PI * radius / radialStep);
-                for (int z = 0; z < depthCells; z++)
-                    for (int i = 0; i < around; i++)
-                    {
-                        float angle = (i + .5f * (z % 2)) * 2 * Mathf.PI / around;
-                        particles.Add(new ParticleSystem.Particle
-                        {
-                            position = new Vector3(radius * Mathf.Cos(angle),
-                                (float)floorM + (z + .5f) * depthStep, radius * Mathf.Sin(angle)),
-                            startSize = diameter,
-                            startLifetime = 1,
-                            remainingLifetime = 1
-                        });
-                        indices.Add(mesh.WaterStart + r * depthCells + z);
-                    }
+                vertices.Add(position);
+                normals.Add(normal);
+                cells.Add(mesh.WaterStart + ring * layers + layer);
             }
-            waterParticles = particles.ToArray();
-            waterParticleCells = indices.ToArray();
-            main.maxParticles = waterParticles.Length;
-            waterDisplay.Play(false);
-            waterDisplay.Pause(false);
+
+            Vector3 Direction(int segment)
+            {
+                float angle = 2 * Mathf.PI * segment / segments;
+                return new Vector3(Mathf.Cos(angle), 0, Mathf.Sin(angle));
+            }
+
+            void Triangle(int i, int j, int k, bool reverse)
+            {
+                indices.Add(i);
+                indices.Add(reverse ? k : j);
+                indices.Add(reverse ? j : k);
+            }
+
+            for (int cap = 0; cap < 2; cap++)
+            {
+                bool top = cap == 1;
+                float y = top ? floor + depth : floor;
+                Vector3 normal = top ? Vector3.up : Vector3.down;
+                int layer = top ? layers - 1 : 0;
+                int centre = vertices.Count;
+                AddVertex(Vector3.up * y, normal, 0, layer);
+                for (int r = 0; r < rings; r++)
+                {
+                    float edge = radius * (r == rings - 1 ? 1 : (r + .5f) / rings);
+                    int first = vertices.Count;
+                    for (int s = 0; s < segments; s++)
+                        AddVertex(Direction(s) * edge + Vector3.up * y, normal, r, layer);
+
+                    for (int s = 0; s < segments; s++)
+                    {
+                        int next = (s + 1) % segments;
+                        if (r == 0)
+                            Triangle(centre, first + s, first + next, top);
+                        else
+                        {
+                            int inner = first - segments;
+                            Triangle(inner + s, first + s, first + next, top);
+                            Triangle(inner + s, first + next, inner + next, top);
+                        }
+                    }
+                }
+            }
+
+            for (int z = 0; z < layers; z++)
+            {
+                float height = z == 0 ? 0 : z == layers - 1 ? 1 : (z + .5f) / layers;
+                int first = vertices.Count;
+                for (int s = 0; s < segments; s++)
+                {
+                    Vector3 direction = Direction(s);
+                    AddVertex(direction * radius + Vector3.up * (floor + height * depth),
+                        direction, rings - 1, z);
+                }
+                if (z == 0) continue;
+                int below = first - segments;
+                for (int s = 0; s < segments; s++)
+                {
+                    int next = (s + 1) % segments;
+                    Triangle(below + s, first + s, first + next, false);
+                    Triangle(below + s, first + next, below + next, false);
+                }
+            }
+
+            waterMesh = new Mesh { name = "Water temperature surface" };
+            waterMesh.MarkDynamic();
+            waterMesh.SetVertices(vertices);
+            waterMesh.SetNormals(normals);
+            waterMesh.SetTriangles(indices, 0);
+            waterVertexCells = cells.ToArray();
+            waterVertexColours = new Color32[cells.Count];
+
+            waterDisplay = new GameObject("Water temperature surface");
+            waterDisplay.transform.SetParent(transform, false);
+            waterDisplay.AddComponent<MeshFilter>().sharedMesh = waterMesh;
+            waterMaterial = new Material(shaderAsset);
+            waterDisplay.AddComponent<MeshRenderer>().sharedMaterial = waterMaterial;
             RefreshWaterColours();
         }
 
         private void RefreshWaterColours()
         {
-            if (waterDisplay == null) return;
+            if (waterMesh == null) return;
             float span = Mathf.Max(1, hotWaterColourC - ColdWaterC);
-            for (int i = 0; i < waterParticles.Length; i++)
+            for (int i = 0; i < waterVertexColours.Length; i++)
             {
-                float fraction = Mathf.Clamp01(snapshot[waterParticleCells[i]] / span);
-                waterParticles[i].startColor = Color.Lerp(ColdWaterColour, HotWaterColour, fraction);
+                float fraction = Mathf.Clamp01(snapshot[waterVertexCells[i]] / span);
+                waterVertexColours[i] = Color.Lerp(ColdWaterColour, HotWaterColour, fraction);
             }
-            waterDisplay.SetParticles(waterParticles, waterParticles.Length);
+            waterMesh.colors32 = waterVertexColours;
         }
 
         private void Update()
@@ -321,8 +369,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             burner?.Release();
             faceStart?.Release();
             links?.Release();
-            if (waterDisplay != null) Destroy(waterDisplay.gameObject);
-            if (waterDot != null) Destroy(waterDot);
+            if (waterDisplay != null) Destroy(waterDisplay);
+            if (waterMesh != null) Destroy(waterMesh);
             if (waterMaterial != null) Destroy(waterMaterial);
             if (map != null) Destroy(map);
             if (shader != null) Destroy(shader);
