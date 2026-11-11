@@ -47,7 +47,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private GeometryInputs geometry;
         private bool running, measuring, finishOnNextFrame, readbackPending;
         private double startTime, lastTick, pendingSeconds;
-        private int measuredFrames, measuredSteps;
+        private int measuredFrames;
+        private long solverSteps;
         private int previousFrameRate, previousVSync;
         private string evidence;
         private float frameMs;
@@ -162,14 +163,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (measuring)
             {
                 measuredFrames++;
-                steps = Math.Min(steps, benchmarkSteps - measuredSteps);
+                steps = (int)Math.Min(steps, benchmarkSteps - solverSteps);
             }
             if (steps == 0) return;
             fluid.AdvanceManually((float)stepSeconds, steps);
+            solverSteps += steps;
             pendingSeconds -= steps * stepSeconds;
-            if (!measuring) return;
-            measuredSteps += steps;
-            if (measuredSteps == benchmarkSteps)
+            if (measuring && solverSteps == benchmarkSteps)
             {
                 running = false;
                 finishOnNextFrame = true;
@@ -187,7 +187,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             fluid.ResetParticles();
             evidence = null;
-            measuredFrames = measuredSteps = 0;
+            measuredFrames = 0;
+            solverSteps = 0;
             measuredPlaybackSpeed = playbackSpeed;
             benchmarkSteps = BenchmarkMicroseconds / StepMicroseconds;
             SetRunning(true);
@@ -200,7 +201,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             measuring = false;
             double elapsed = Time.realtimeSinceStartupAsDouble - startTime;
             string timing = FormattableString.Invariant(
-                $"GPU drop: {measuredFrames} frames, {measuredFrames / elapsed:F1} FPS, {fluid.SimulatedSeconds:F3} s simulated in {elapsed:F3} s at {measuredPlaybackSpeed:P0} playback · {StepMicroseconds / 1000.0:0.##} ms per step");
+                $"GPU drop: {measuredFrames} frames, {measuredFrames / elapsed:F1} FPS, {fluid.SimulatedSeconds:F3} s simulated in {elapsed:F3} s at {measuredPlaybackSpeed:P0} playback · {StepMicroseconds / 1000.0:0.##} ms per step · {solverSteps} solver steps");
             evidence = timing;
             if (!SystemInfo.supportsAsyncGPUReadback)
             {
@@ -252,7 +253,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             GUILayout.Label("Simulation Controls", GUI.skin.box);
             if (fluid != null && fluid.positionBuffer != null)
             {
-                GUILayout.Label($"{fluid.positionBuffer.count} particles · {fluid.SimulatedSeconds:F3} s · {(frameMs > 0 ? 1000 / frameMs : 0):F1} FPS");
+                GUILayout.Label($"{fluid.positionBuffer.count} particles · {(frameMs > 0 ? 1000 / frameMs : 0):F1} FPS");
+                GUILayout.Label($"{fluid.SimulatedSeconds:F4} s simulated · {solverSteps:N0} solver steps");
                 GUI.enabled = !readbackPending && !finishOnNextFrame;
                 GUILayout.BeginHorizontal();
                 if (GUILayout.Button(running ? "Pause" : "Run"))
@@ -265,13 +267,18 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     SetRunning(false);
                     measuring = false;
                     fluid.ResetParticles();
+                    solverSteps = 0;
                     evidence = null;
                 }
                 if (GUILayout.Button("Measure drop + slosh")) StartMeasurement();
                 GUILayout.EndHorizontal();
 
                 GUI.enabled = !running && !measuring && !readbackPending && !finishOnNextFrame;
-                if (GUILayout.Button("Step once")) fluid.AdvanceManually((float)StepSeconds, 1);
+                if (GUILayout.Button("Step once"))
+                {
+                    fluid.AdvanceManually((float)StepSeconds, 1);
+                    solverSteps++;
+                }
 
                 GUI.enabled = !measuring && !readbackPending && !finishOnNextFrame;
                 int nextTimestep = Mathf.RoundToInt(Slider($"Solver step  {StepMicroseconds / 1000.0:0.##} ms",
