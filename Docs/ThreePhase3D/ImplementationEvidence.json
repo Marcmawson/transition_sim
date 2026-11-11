@@ -143,12 +143,24 @@
           "path": "Assets/Scripts/ThreePhase3D/Geometry/ApparatusSurface.cs",
           "symbol": "PhysicsSim.ThreePhase3D.Geometry.ApparatusSurface.Beaker",
           "source_sha256": "298094651e010eeaa3dd18bdfd5ed2c4f7026c6970a86ba2a4f385b186409748"
+        },
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Core/Grid3D.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Core.Grid3D.Shape",
+          "source_sha256": null
+        },
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Geometry/CutCellGeometry.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Geometry.CutCellGeometry.Build",
+          "source_sha256": null
         }
       ],
       "source_ids": [
         "D10"
       ],
-      "source_locators": [],
+      "source_locators": [
+        "Docs/ThreePhase3D/S03-Grid-Geometry.md"
+      ],
       "validation_ids": [
         "V06",
         "V35"
@@ -1030,14 +1042,28 @@
     },
     {
       "requirement_id": "R055",
-      "status": "SPECIFIED",
-      "code_symbols": [],
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Core/GridGpuPlan.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Core.GridGpuPlan.VerifyBindings",
+          "source_sha256": null
+        },
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Core/GridGpuPlan.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Core.GridGpuPlan.Required",
+          "source_sha256": null
+        }
+      ],
       "source_ids": [
         "U01"
       ],
-      "source_locators": [],
+      "source_locators": [
+        "Docs/ThreePhase3D/S03-Grid-Geometry.md"
+      ],
       "validation_ids": [
-        "V35"
+        "V35",
+        "V06"
       ],
       "runs": [],
       "review": null
@@ -1078,17 +1104,31 @@
     },
     {
       "requirement_id": "R058",
-      "status": "SPECIFIED",
-      "code_symbols": [],
+      "status": "IMPLEMENTED_UNVERIFIED",
+      "code_symbols": [
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Geometry/CutCellGeometry.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Geometry.CutCellGeometry.RequireFeatureResolution",
+          "source_sha256": null
+        },
+        {
+          "path": "Assets/Scripts/ThreePhase3D/Geometry/TinyCellMergePlan.cs",
+          "symbol": "PhysicsSim.ThreePhase3D.Geometry.TinyCellMergePlan.AggregateInventory",
+          "source_sha256": null
+        }
+      ],
       "source_ids": [
         "M01",
         "M12"
       ],
-      "source_locators": [],
+      "source_locators": [
+        "Docs/ThreePhase3D/S03-Grid-Geometry.md"
+      ],
       "validation_ids": [
         "V06",
         "V18",
-        "V38"
+        "V38",
+        "V35"
       ],
       "runs": [],
       "review": null
