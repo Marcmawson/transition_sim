@@ -5,14 +5,14 @@ using PhysicsSim.ThreePhase3D.PhaseChange;
 
 namespace PhysicsSim.ThreePhase3D.Flow
 {
-    // A grid-aligned lower wall with a 90-degree contact angle is a mirror plane.
+    // Grid-aligned lower wall with a prescribed static contact angle.
     internal sealed class PlanarWallCapillarity
     {
         private readonly GeometricVof3D reflected;
         private readonly int firstFluidY;
-        private readonly double sigma, timestepLimit;
+        private readonly double sigma, timestepLimit, contactCotangent;
 
-        internal PlanarWallCapillarity(VariableCoefficientProjection plan, int firstFluidY, double sigma)
+        internal PlanarWallCapillarity(VariableCoefficientProjection plan, int firstFluidY, double sigma, double contactAngleDegrees)
         {
             var grid = plan.Grid;
             var shape = grid.Cells;
@@ -41,6 +41,10 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     (j < firstFluidY ? group >= 0 : group < 0 || plan.Volumes[group] > 1.000000001 * grid.CellVolume))
                     throw new NotSupportedException("Capillary reflection requires full cells above the wall and solid cells below.");
             }
+            if (!SiUnits.IsFinite(contactAngleDegrees) || contactAngleDegrees <= 0 || contactAngleDegrees >= 180)
+                throw new ArgumentOutOfRangeException(nameof(contactAngleDegrees));
+            double radians = contactAngleDegrees * Math.PI / 180;
+            contactCotangent = contactAngleDegrees == 90 ? 0 : Math.Cos(radians) / Math.Sin(radians);
             this.firstFluidY = firstFluidY;
             this.sigma = sigma;
             var h = grid.Spacing;
@@ -69,7 +73,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 alpha[reflected.CellIndex(i, y, k)] = fraction;
                 alpha[reflected.CellIndex(i, 2 * half - 1 - y, k)] = fraction;
             }
-            var curvature = SurfaceGeometry.Evaluate(reflected, alpha);
+            var curvature = contactCotangent == 0 ? SurfaceGeometry.Evaluate(reflected, alpha) :
+                SurfaceGeometry.Evaluate(reflected, alpha, half, contactCotangent);
             for (int f = 0; f < tentative.Length; f++)
             {
                 var face = plan.Faces[f];
@@ -94,25 +99,30 @@ namespace PhysicsSim.ThreePhase3D.Flow
             double Nearby(int low, int high)
             {
                 int nx = shape.X, ny = 2 * half;
-                double sum = 0;
-                int count = 0;
-                for (int side = 0; side < 2; side++)
+                int maxReach = contactCotangent == 0 ? 1 : 3;
+                for (int reach = 1; reach <= maxReach; reach++)
                 {
-                    int cell = side == 0 ? low : high;
-                    int x = cell % nx, y = cell / nx % ny, z = cell / nx / ny;
-                    for (int dz = -1; dz <= 1; dz++)
-                    for (int dy = -1; dy <= 1; dy++)
-                    for (int dx = -1; dx <= 1; dx++)
+                    double sum = 0;
+                    int count = 0;
+                    for (int side = 0; side < 2; side++)
                     {
-                        if (!reflected.Grid.Cells.Interior(x + dx, y + dy, z + dz)) continue;
-                        double value = curvature[reflected.CellIndex(x + dx, y + dy, z + dz)].InverseMetres;
-                        if (!SiUnits.IsFinite(value)) continue;
-                        sum += value;
-                        count++;
+                        int cell = side == 0 ? low : high;
+                        int x = cell % nx, y = cell / nx % ny, z = cell / nx / ny;
+                        for (int dz = -reach; dz <= reach; dz++)
+                        for (int dy = -reach; dy <= reach; dy++)
+                        for (int dx = -reach; dx <= reach; dx++)
+                        {
+                            if ((contactCotangent != 0 && y + dy < half) ||
+                                !reflected.Grid.Cells.Interior(x + dx, y + dy, z + dz)) continue;
+                            double value = curvature[reflected.CellIndex(x + dx, y + dy, z + dz)].InverseMetres;
+                            if (!SiUnits.IsFinite(value)) continue;
+                            sum += value;
+                            count++;
+                        }
                     }
+                    if (count != 0) return sum / count;
                 }
-                if (count == 0) throw new InvalidOperationException("No supported curvature near a capillary face.");
-                return sum / count;
+                throw new InvalidOperationException($"No supported curvature near reflected cells {low} and {high}.");
             }
         }
     }

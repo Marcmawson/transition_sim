@@ -28,7 +28,11 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
         private const int Radius = 3;
         private const double FractionTolerance = 1e-12;
 
-        public static SurfaceCurvature[] Evaluate(GeometricVof3D transport, double[] liquidFraction)
+        public static SurfaceCurvature[] Evaluate(GeometricVof3D transport, double[] liquidFraction) =>
+            Evaluate(transport, liquidFraction, -1, 0);
+
+        internal static SurfaceCurvature[] Evaluate(GeometricVof3D transport, double[] liquidFraction,
+            int wallRow, double contactCotangent)
         {
             if (transport == null) throw new ArgumentNullException(nameof(transport));
             if (liquidFraction == null || liquidFraction.Length != transport.CellCount)
@@ -57,14 +61,24 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
 
             bool TryHeights(int axis, int u, int v, int direction)
             {
+                bool angledWall = wallRow >= 0 && contactCotangent != 0;
+                int start = -Radius, end = Radius;
+                if (angledWall && axis == 1)
+                {
+                    // Keep a common integration baseline across the columns.
+                    // A wall-normal graph is valid only when its truncated
+                    // endpoint is still a pure phase throughout the stencil.
+                    if (direction > 0) start = Math.Max(start, wallRow - origin[1]);
+                    else end = Math.Min(end, origin[1] - wallRow);
+                }
                 if (sizes[axis] < 2 * Radius + 1 || sizes[u] < 3 || sizes[v] < 3) return false;
                 for (int b = -1; b <= 1; b++)
                 for (int a = -1; a <= 1; a++)
                 {
-                    double previous = Sample(axis, u, -Radius * direction, a, b);
+                    double previous = Sample(axis, u, start * direction, a, b);
                     if (previous < 1 - FractionTolerance) return false;
                     double sum = previous;
-                    for (int s = -Radius + 1; s <= Radius; s++)
+                    for (int s = start + 1; s <= end; s++)
                     {
                         double fraction = Sample(axis, u, s * direction, a, b);
                         if (fraction > previous + FractionTolerance) return false;
@@ -74,11 +88,28 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
                     if (previous > FractionTolerance) return false;
                     heights[(b + 1) * 3 + a + 1] = sum * grid.Spacing[axis];
                 }
+                if (angledWall && axis != 1 && origin[1] == wallRow)
+                {
+                    // For the outward-oriented height graph, n_y = -H_y / sqrt(1 + |grad H|²).
+                    // Set the ghost height so the wall-centred derivative gives the prescribed angle.
+                    int wallStride = u == 1 ? 1 : 3;
+                    int transverseStride = 4 - wallStride;
+                    double transverseSpacing = grid.Spacing[u == 1 ? v : u];
+                    for (int t = -1; t <= 1; t++)
+                    {
+                        int index = 4 + t * transverseStride;
+                        int left = Math.Max(-1, t - 1), right = Math.Min(1, t + 1);
+                        double transverseSlope = (heights[4 + right * transverseStride] -
+                            heights[4 + left * transverseStride]) / ((right - left) * transverseSpacing);
+                        heights[index - wallStride] = heights[index] + grid.Spacing.Y * contactCotangent *
+                            Math.Sqrt(1 + transverseSlope * transverseSlope);
+                    }
+                }
                 return true;
             }
 
             for (int k = 0; k < shape.Z; k++)
-            for (int j = 0; j < shape.Y; j++)
+            for (int j = Math.Max(0, wallRow); j < shape.Y; j++)
             for (int i = 0; i < shape.X; i++)
             {
                 int cell = transport.CellIndex(i, j, k);

@@ -25,10 +25,10 @@ namespace PhysicsSim.ThreePhase3D.Flow
         private readonly PlanarWallCapillarity capillarity;
 
         public static CutCellVofTransport WithPlanarWallCapillarity(VariableCoefficientProjection plan,
-            int firstFluidY, double surfaceTensionNPerM) =>
+            int firstFluidY, double surfaceTensionNPerM, double contactAngleDegrees = 90) =>
             new CutCellVofTransport(plan, null, null,
                 new PlanarWallCapillarity(plan ?? throw new ArgumentNullException(nameof(plan)),
-                    firstFluidY, surfaceTensionNPerM));
+                    firstFluidY, surfaceTensionNPerM, contactAngleDegrees));
 
         public static CutCellVofTransport WithTrackedWetting(VariableCoefficientProjection plan, WettingProfile profile) =>
             new CutCellVofTransport(plan, null, profile ?? throw new ArgumentNullException(nameof(profile)));

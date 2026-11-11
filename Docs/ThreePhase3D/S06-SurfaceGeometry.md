@@ -95,3 +95,11 @@ This isolates the response of tracked contact traction to a flow perturbation. T
 The configuration requires full fluid cells above the wall, a closed domain, and a three-cell gas buffer at the other boundaries. The CPU fixture advances an initially stationary 7 mm hemisphere for two 0.1 ms steps and checks pressure against the Young–Laplace jump, parasitic face speed, and liquid-volume drift.
 
 This symmetry case supplies the first wall-compatible capillary pressure check. General contact angles, curved walls, bulk viscous relaxation, and the measured-glass V13 benchmark remain open.
+
+### Prescribed planar-wall angles
+
+The planar-wall capillary reference accepts a static contact angle through the liquid. At the wall row, a height graph with its axial direction parallel to the wall uses an extrapolated ghost height. The wall-centred slope is `-cot(theta) * sqrt(1 + H_transverse^2)`, so the graph's outward normal has wall-normal component `cos(theta)`. For angles other than 90°, wall-normal columns stop at the wall and require a pure endpoint across the stencil and unsupported estimates use the existing nearby-curvature fallback. At 90° the existing mirror path applies.
+
+The CPU fixture compares initially stationary 75°, 90°, and 105° spherical caps with the same Young–Laplace jump. This is a prescribed-angle curvature and pressure check. Dynamic PLIC wetting and bulk viscous relaxation remain separate capabilities from this planar reference, and the measured-glass V13 comparison remains open.
+
+For the angled cases the nearby-curvature search expands up to three cells if the first ring has no usable height function. The exploratory angled-cap check caps spurious speed at 0.5% of `sqrt(sigma / (rhoLiquid * radius))`. The 105° case exceeds the tighter 90° regression bound of 0.25 mm/s on its second step. Longer-time spurious-current control remains open.
