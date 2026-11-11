@@ -87,10 +87,13 @@ namespace Seb.Fluid.Simulation
 
 		[HideInInspector] public bool manualControl;
 		[HideInInspector] public bool transportTemperature;
+		[HideInInspector] public bool thermalBuoyancy;
+		[NonSerialized] public float[] buoyancyDensityByDegree;
 		public ComputeBuffer TemperatureRise { get; private set; }
 		ComputeBuffer sortedTemperature;
 		float[] initialTemperature;
 		int activeReorderKernel = reorderKernel, activeCopyBackKernel = reorderCopybackKernel;
+		int activeExternalForcesKernel = externalForcesKernel;
 		[HideInInspector] public Vector4 beakerCollision; // Centre X/Z, inner radius, floor height.
 		[HideInInspector] public float beakerRimY;
 		public float SimulatedSeconds => simTimer;
@@ -167,13 +170,23 @@ namespace Seb.Fluid.Simulation
 				compute.SetBuffer(activeReorderKernel, "SortedTemperatureRise", sortedTemperature);
 				compute.SetBuffer(activeCopyBackKernel, "TemperatureRise", TemperatureRise);
 				compute.SetBuffer(activeCopyBackKernel, "SortedTemperatureRise", sortedTemperature);
+				if (buoyancyDensityByDegree != null && buoyancyDensityByDegree.Length >= 2)
+				{
+					activeExternalForcesKernel = compute.FindKernel("ExternalForcesWithHeat");
+					var densityTable = CreateStructuredBuffer<float>(buoyancyDensityByDegree.Length);
+					bufferNameLookup.Add(densityTable, "BuoyancyDensity");
+					densityTable.SetData(buoyancyDensityByDegree);
+					compute.SetInt("BuoyancyDensityCount", buoyancyDensityByDegree.Length);
+					compute.SetBuffer(activeExternalForcesKernel, "BuoyancyDensity", densityTable);
+					compute.SetBuffer(activeExternalForcesKernel, "TemperatureRise", TemperatureRise);
+				}
 			}
 
 			// Set buffer data
 			SetInitialBufferData(spawnData);
 
 			// External forces kernel
-			SetBuffers(compute, externalForcesKernel, bufferNameLookup, new ComputeBuffer[]
+			SetBuffers(compute, activeExternalForcesKernel, bufferNameLookup, new ComputeBuffer[]
 			{
 				positionBuffer,
 				predictedPositionsBuffer,
@@ -362,7 +375,7 @@ namespace Seb.Fluid.Simulation
 
 		void RunSimulationStep()
 		{
-			Dispatch(compute, positionBuffer.count, kernelIndex: externalForcesKernel);
+			Dispatch(compute, positionBuffer.count, kernelIndex: activeExternalForcesKernel);
 
 			Dispatch(compute, positionBuffer.count, kernelIndex: spatialHashKernel);
 			spatialHash.Run();
@@ -408,6 +421,8 @@ namespace Seb.Fluid.Simulation
 			compute.SetFloat("whiteParticleDeltaTime", frameDeltaTime);
 			compute.SetFloat("simTime", simTimer);
 			compute.SetFloat("gravity", gravity);
+			if (activeExternalForcesKernel != externalForcesKernel)
+				compute.SetFloat("ThermalBuoyancy", thermalBuoyancy ? 1f : 0f);
 			compute.SetFloat("collisionDamping", collisionDamping);
 			compute.SetFloat("smoothingRadius", smoothingRadius);
 			compute.SetFloat("targetDensity", targetDensity);

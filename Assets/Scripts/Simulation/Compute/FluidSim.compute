@@ -10,6 +10,7 @@
 #pragma kernel UpdateWhiteParticles
 #pragma kernel WhiteParticlePrepareNextFrame;
 
+#pragma kernel ExternalForcesWithHeat THERMAL_PARTICLES
 #pragma kernel ReorderWithHeat THERMAL_PARTICLES
 #pragma kernel ReorderCopyBackWithHeat THERMAL_PARTICLES
 
@@ -24,6 +25,10 @@ static const int ThreadGroupSize = 256;
 RWStructuredBuffer<float3> Positions;
 RWStructuredBuffer<float3> PredictedPositions;
 RWStructuredBuffer<float3> Velocities;
+RWStructuredBuffer<float> TemperatureRise;
+StructuredBuffer<float> BuoyancyDensity;
+int BuoyancyDensityCount;
+float ThermalBuoyancy;
 RWStructuredBuffer<float2> Densities; // Density, Near Density
 
 // Spatial hashing
@@ -164,18 +169,37 @@ void ResolveBeaker(float3 previous, inout float3 position, inout float3 velocity
     }
 }
 
-[numthreads(ThreadGroupSize, 1, 1)]
-void ExternalForces(uint3 id : SV_DispatchThreadID)
+void ApplyExternalForces(uint3 id)
 {
     if (id.x >= numParticles)
         return;
 
-    // External forces (gravity)
-    Velocities[id.x] += float3(0, gravity, 0) * deltaTime;
+    float acceleration = gravity;
+#ifdef THERMAL_PARTICLES
+    float3 p = Positions[id.x];
+    float2 radial = p.xz - beakerCollision.xy;
+    if (ThermalBuoyancy > .5 && p.y >= beakerCollision.w - 1e-5 && p.y < beakerRimY &&
+        dot(radial, radial) <= beakerCollision.z * beakerCollision.z + 1e-8)
+    {
+        // The pressure solver uses the reference liquid density. Only the
+        // departure from it contributes an additional buoyancy acceleration.
+        float row = clamp(TemperatureRise[id.x], 0, (float)(BuoyancyDensityCount - 1));
+        int low = min((int)row, BuoyancyDensityCount - 2);
+        float density = lerp(BuoyancyDensity[low], BuoyancyDensity[low + 1], row - low);
+        float referenceDensity = BuoyancyDensity[0];
+        acceleration += abs(gravity) * (referenceDensity - density) / referenceDensity;
+    }
+#endif
+    Velocities[id.x] += float3(0, acceleration, 0) * deltaTime;
 
     // Predict
     PredictedPositions[id.x] = Positions[id.x] + Velocities[id.x] * predictionTime;
 }
+
+[numthreads(ThreadGroupSize, 1, 1)]
+void ExternalForces(uint3 id : SV_DispatchThreadID) { ApplyExternalForces(id); }
+[numthreads(ThreadGroupSize, 1, 1)]
+void ExternalForcesWithHeat(uint3 id : SV_DispatchThreadID) { ApplyExternalForces(id); }
 
 [numthreads(ThreadGroupSize, 1, 1)]
 void UpdateSpatialHash(uint3 id : SV_DispatchThreadID)
@@ -195,7 +219,6 @@ void UpdateSpatialHash(uint3 id : SV_DispatchThreadID)
 RWStructuredBuffer<float3> SortTarget_Positions;
 RWStructuredBuffer<float3> SortTarget_PredictedPositions;
 RWStructuredBuffer<float3> SortTarget_Velocities;
-RWStructuredBuffer<float> TemperatureRise;
 RWStructuredBuffer<float> SortedTemperatureRise;
 
 void ReorderData(uint3 id)

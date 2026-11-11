@@ -12,6 +12,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private Quaternion homeRotation;
         private float homeSize, yaw, pitch;
         private bool looking;
+        public bool IsUndersideView { get; private set; }
+        private Vector3 freePosition;
+        private Quaternion freeRotation;
+        private float freeSize;
         private CursorLockMode priorLock;
         private bool priorVisibility;
 
@@ -27,7 +31,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void Update()
         {
-            if (!Application.isFocused) return;
+            if (!Application.isFocused || IsUndersideView) return;
             if (Input.GetKeyDown(KeyCode.I))
             {
                 InvertMouseY = !InvertMouseY;
@@ -68,6 +72,28 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             float speed = view.orthographicSize * 1.5f;
             if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)) speed *= 3f;
             transform.position += Vector3.ClampMagnitude(movement, 1f) * (speed * Mathf.Min(Time.unscaledDeltaTime, .1f));
+        }
+
+        public void ToggleUndersideView(float baseHeight, float outerRadius)
+        {
+            if (IsUndersideView)
+            {
+                transform.SetPositionAndRotation(freePosition, freeRotation);
+                view.orthographicSize = freeSize;
+                IsUndersideView = false;
+                SetLookAngles();
+                return;
+            }
+
+            ReleaseMouse();
+            freePosition = transform.position;
+            freeRotation = transform.rotation;
+            freeSize = view.orthographicSize;
+            Vector3 target = Vector3.up * baseHeight;
+            Vector3 offset = new Vector3(1.1f, -1.6f, -.9f) * outerRadius;
+            transform.SetPositionAndRotation(target + offset, Quaternion.LookRotation(-offset, Vector3.up));
+            view.orthographicSize = 1.25f * outerRadius;
+            IsUndersideView = true;
         }
 
         private static int Axis(KeyCode positive, KeyCode negative) =>

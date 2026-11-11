@@ -1,5 +1,6 @@
 using System;
 using PhysicsSim.ThreePhase3D.Core;
+using PhysicsSim.ThreePhase3D.Materials;
 using Seb.Fluid.Rendering;
 using Seb.Fluid.Simulation;
 using UnityEngine;
@@ -38,6 +39,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         [Header("Thermal Coupling")]
         [SerializeField] private bool heatMovingWater = false;
+        [SerializeField] private bool thermalBuoyancy = true;
         [SerializeField, Range(0f, 100f)] private float absorbedBurnerWatts = 10f;
         [SerializeField, Range(20.1f, 100f)] private float hotColourC = 30f;
 
@@ -52,6 +54,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         [SerializeField, Range(0f, 1f)] private float wallBounce = .2f;
 
         private FluidSim fluid;
+        private BeakerFreeLookCamera beakerCamera;
         private ParticleDisplay3D particleDisplay;
         private Texture2D temperatureLegend, speedLegend;
         private Gradient temperatureColours, speedColours;
@@ -102,6 +105,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 return;
             }
 
+            beakerCamera = FindObjectOfType<BeakerFreeLookCamera>();
             var setup = GetComponent<Beaker3DSetup>();
             geometry = setup.scenario.physical.geometry;
             releaseVolumeMl = largerBeaker ? LargeVolumeMl : SmallVolumeMl;
@@ -137,6 +141,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.spawner = spawner;
             fluid.manualControl = true;
             fluid.transportTemperature = heatMovingWater;
+            if (heatMovingWater) fluid.buoyancyDensityByDegree = BuildBuoyancyDensityTable();
             // Start from the demo's liquid parameters scaled to metre-sized particles.
             fluid.smoothingRadius = .002f;
             fluid.targetDensity = 630e6f;
@@ -167,6 +172,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 ParticleDisplay3D.TextureFromGradient(ref temperatureLegend, 64, temperatureColours);
             }
             solverObject.SetActive(true);
+        }
+
+        private static float[] BuildBuoyancyDensityTable()
+        {
+            var water = new Water95();
+            var density = new float[76];
+            for (int i = 0; i < density.Length; i++)
+                density[i] = (float)water.Evaluate(293.15 + i, 101325, WaterBranch.Liquid).DensityKgM3;
+            return density;
         }
 
         private static Gradient CreateColourMap(Color endpoint)
@@ -224,6 +238,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void AdvanceDrop(double stepSeconds, int steps)
         {
+            fluid.thermalBuoyancy = thermalBuoyancy;
             fluid.AdvanceManually((float)stepSeconds, steps);
             movingHeat?.Advance(stepSeconds * steps, absorbedBurnerWatts);
         }
@@ -255,7 +270,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             double elapsed = Time.realtimeSinceStartupAsDouble - startTime;
             string timing = FormattableString.Invariant(
                 $"GPU drop: {measuredFrames} frames, {measuredFrames / elapsed:F1} FPS, {fluid.SimulatedSeconds:F3} s simulated in {elapsed:F3} s at {measuredPlaybackSpeed:P0} playback · {StepMicroseconds / 1000.0:0.##} ms per step · {solverSteps} solver steps · {releaseVolumeMl:F0} mL release");
-            if (movingHeat != null) timing += " · " + movingHeat.Measure();
+            if (movingHeat != null) timing += $" · buoyancy {(thermalBuoyancy ? "on" : "off")} · " + movingHeat.Measure();
             evidence = timing;
             if (!SystemInfo.supportsAsyncGPUReadback)
             {
@@ -305,6 +320,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             GUILayout.BeginArea(bounds, GUI.skin.box);
             panelScroll = GUILayout.BeginScrollView(panelScroll);
             GUILayout.Label($"Simulation Controls · {releaseVolumeMl:F0} mL release", GUI.skin.box);
+            if (beakerCamera != null && geometry != null &&
+                GUILayout.Button(beakerCamera.IsUndersideView ? "Free camera" : "Underside view"))
+                beakerCamera.ToggleUndersideView((float)geometry.externalBaseHeightM, (float)geometry.OuterRadiusM);
+
             if (fluid != null && fluid.positionBuffer != null)
             {
                 GUILayout.Label($"{fluid.positionBuffer.count} particles · {(frameMs > 0 ? 1000 / frameMs : 0):F1} FPS");
@@ -372,6 +391,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (movingHeat != null)
                 {
                     absorbedBurnerWatts = Slider($"Burner {absorbedBurnerWatts:F0} W", absorbedBurnerWatts, 0, 100);
+                    thermalBuoyancy = GUILayout.Toggle(thermalBuoyancy, "Thermal buoyancy");
                     if (showTemperature)
                     {
                         hotColourC = Slider($"Red endpoint  {hotColourC:F1} °C", hotColourC, 20.1f, 100f);
