@@ -1,5 +1,4 @@
 using System;
-using System.Collections.Generic;
 using System.Threading.Tasks;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
@@ -10,7 +9,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     [RequireComponent(typeof(Beaker3DSetup))]
     public sealed class BeakerReleasePreview : MonoBehaviour
     {
-        private readonly List<GameObject> waterCells = new List<GameObject>();
+        private BeakerWaterSurface waterSurface;
+        private Mesh waterMesh;
+        private GameObject waterObject;
         private BeakerVofTimeIntegration release;
         private BeakerVofGpuSession gpuSession;
         private GameObject ice;
@@ -107,7 +108,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 {
                     gpuSession = new BeakerVofGpuSession(simulation);
                     release = simulation;
-                    if (waterMaterial == null) waterMaterial = CreateMaterial(new Color(.06f, .73f, .96f));
+                    CreateWaterSurface();
                     ShowWaterState();
                 };
             });
@@ -147,33 +148,29 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void ShowWaterState()
         {
-            DrawWater();
+            waterSurface.Rebuild(release, waterMesh);
             waterStatus = $"9 mL water · GPU  |  {release.TimeS:F3} s  |  Step {release.Steps}";
             volumeStatus = $"Liquid volume drift {release.LiquidDriftM3:E2} m³";
             nextStep = Time.unscaledTime + .15f;
         }
 
-        private void DrawWater()
+        private void CreateWaterSurface()
         {
-            var grid = release.Geometry.Grid;
-            int visible = 0;
-            for (int k = 0; k < grid.Cells.Z; k++)
-            for (int j = 0; j < grid.Cells.Y; j++)
-            for (int i = 0; i < grid.Cells.X; i++)
-            {
-                int cell = grid.Cells.Index(i, j, k);
-                double fraction = release.LiquidFractionAt(i, j, k) *
-                    release.Geometry.FluidVolumeM3[cell] / grid.CellVolume;
-                if (fraction < .01) continue;
-                if (visible == waterCells.Count) waterCells.Add(CreateBlock("Water cell", waterMaterial));
-                var block = waterCells[visible++];
-                var centre = grid.Centre(i, j, k);
-                block.transform.localPosition = new Vector3((float)centre.X, (float)centre.Y, (float)centre.Z);
-                block.transform.localScale = new Vector3((float)grid.Spacing.X, (float)grid.Spacing.Y,
-                    (float)grid.Spacing.Z) * Mathf.Pow((float)fraction, 1f / 3f);
-                block.SetActive(true);
-            }
-            for (int i = visible; i < waterCells.Count; i++) waterCells[i].SetActive(false);
+            var shader = Resources.Load<Shader>("ThreePhase3D/BeakerWaterSurface");
+            if (shader == null) throw new InvalidOperationException("The beaker water surface shader is unavailable.");
+            var geometry = GetComponent<Beaker3DSetup>().scenario.physical.geometry;
+            waterMaterial = new Material(shader);
+            waterMaterial.SetVector("_Beaker", new Vector4((float)geometry.innerRadiusM,
+                (float)geometry.OuterRadiusM, (float)(geometry.externalBaseHeightM + geometry.baseThicknessM),
+                (float)geometry.RimHeightM));
+            waterMaterial.SetFloat("_BaseY", (float)geometry.externalBaseHeightM);
+            waterMesh = new Mesh { name = "Beaker liquid surface", indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+            waterMesh.MarkDynamic();
+            waterSurface = new BeakerWaterSurface(release);
+            waterObject = new GameObject("Water surface");
+            waterObject.transform.SetParent(transform, false);
+            waterObject.AddComponent<MeshFilter>().sharedMesh = waterMesh;
+            waterObject.AddComponent<MeshRenderer>().sharedMaterial = waterMaterial;
         }
 
         private GameObject CreateBlock(string label, Material material)
@@ -247,7 +244,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             gpuSession?.Dispose();
             gpuSession = null;
             error = null;
-            foreach (var block in waterCells) block.SetActive(false);
+            if (waterObject != null)
+            {
+                waterObject.SetActive(false);
+                Destroy(waterObject);
+            }
+            if (waterMesh != null) Destroy(waterMesh);
+            if (waterMaterial != null) Destroy(waterMaterial);
+            waterObject = null;
+            waterMesh = null;
+            waterMaterial = null;
+            waterSurface = null;
             if (ice != null)
             {
                 ice.SetActive(false);
@@ -260,9 +267,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             pendingAction = null;
             Clear();
-            foreach (var block in waterCells) if (block != null) Destroy(block);
-            waterCells.Clear();
-            if (waterMaterial != null) Destroy(waterMaterial);
             if (iceMaterial != null) Destroy(iceMaterial);
             if (cavityGuides != null) Destroy(cavityGuides);
             if (guideMaterial != null) Destroy(guideMaterial);
