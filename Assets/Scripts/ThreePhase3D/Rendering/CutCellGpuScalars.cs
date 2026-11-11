@@ -80,7 +80,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (momentum == null || pressureShader == null || clipping == null)
                 throw new ArgumentException("The coupled preview requires GPU momentum, pressure and clipping.");
             return transport.AdvanceCoupled(state, flow, liquidDensity, gasDensity, null, maxIterations,
-                (next, velocity, dt, cap) => FlowGpuSolver.Project(next, pressureShader, velocity, dt, cap),
+                (next, velocity, dt, cap) => FlowGpuSolver.Project(next, pressureShader, velocity, dt, cap,
+                    transport.MeasurePressureCorrection(dt)),
                 Dispatch, clipping.Clip, momentum.Advance, worldAccelerationMPerS2);
         }
 
@@ -90,7 +91,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             return transport.AdvanceCoupledWithWetting(state, flow, BeakerVofTimeIntegration.LiquidDensity,
                 BeakerVofTimeIntegration.GasDensity, BeakerVofTimeIntegration.LiquidViscosityPaS,
                 BeakerVofTimeIntegration.GasViscosityPaS, null, BeakerVofTimeIntegration.IterationLimit,
-                (next, velocity, dt, cap) => FlowGpuSolver.Project(next, pressureShader, velocity, dt, cap),
+                (next, velocity, dt, cap) => FlowGpuSolver.Project(next, pressureShader, velocity, dt, cap,
+                    transport.MeasurePressureCorrection(dt)),
                 Dispatch, clipping.Clip, momentum.Advance, traction.Apply);
         }
 

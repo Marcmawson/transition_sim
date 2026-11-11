@@ -10,7 +10,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // extensive; open-boundary inputs use the same signed face ledger.
     public sealed class CutCellVofTransport
     {
-        private const double PressureCorrectionLimit = 1e-6;
+        internal const double PressureCorrectionLimit = 1e-6;
         private const double Tolerance = 1e-10;
         private readonly VariableCoefficientProjection plan;
         private readonly CutCellVofGeometry geometry;
@@ -143,7 +143,12 @@ namespace PhysicsSim.ThreePhase3D.Flow
             double liquidDensity, double gasDensity, D3 worldAccelerationMPerS2,
             Func<int, CutCellInflow> inflow = null, int maxIterations = 4096)
             => AdvanceCoupled(state, transportingFlow, liquidDensity, gasDensity, inflow, maxIterations,
-                ProjectCpu, worldAccelerationMPerS2: worldAccelerationMPerS2);
+                (next, velocity, dt, cap) =>
+                {
+                    var correction = MeasurePressureCorrection(dt);
+                    return FlowCpuReference.Project(next, velocity, dt, cap,
+                        accepted => correction(accepted) <= PressureCorrectionLimit);
+                }, worldAccelerationMPerS2: worldAccelerationMPerS2);
 
         public CutCellCoupledStep AdvanceCoupledWithWetting(CutCellInventories state, FlowStep transportingFlow,
             double liquidDensity, double gasDensity, double liquidViscosityPaS, double gasViscosityPaS,
@@ -258,17 +263,23 @@ namespace PhysicsSim.ThreePhase3D.Flow
             var velocity = new double[plan.FaceCount];
             double maximum = ReconcilePressureFlux(pressure.VelocityMPerS, dt, velocity, out double absolute);
             if (maximum > PressureCorrectionLimit)
-                throw new InvalidOperationException("Cut-cell pressure flux correction exceeds 1e-6 Courant units.");
+                throw new InvalidOperationException($"Cut-cell pressure flux correction {maximum:E3} exceeds 1e-6 Courant units.");
             return Advance(state, velocity, dt, inflow, absolute, apply, clip);
         }
 
         private FlowStep ProjectCpu(VariableCoefficientProjection nextPlan, float[] tentative, double dt, int maxIterations)
         {
             if (capillarity == null) return FlowCpuReference.Project(nextPlan, tentative, dt, maxIterations);
+            var correction = MeasurePressureCorrection(dt);
+            return FlowCpuReference.Project(nextPlan, tentative, dt, maxIterations,
+                velocity => correction(velocity) <= PressureCorrectionLimit);
+        }
+
+        internal Func<float[], double> MeasurePressureCorrection(double dt)
+        {
             var scratch = new double[plan.FaceCount];
             var divergence = new double[plan.GroupCount];
-            return FlowCpuReference.Project(nextPlan, tentative, dt, maxIterations,
-                velocity => ReconcilePressureFlux(velocity, dt, scratch, out _, divergence) <= PressureCorrectionLimit);
+            return velocity => ReconcilePressureFlux(velocity, dt, scratch, out _, divergence);
         }
 
         private double ReconcilePressureFlux(float[] accepted, double dt, double[] velocity,

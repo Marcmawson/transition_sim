@@ -32,11 +32,12 @@ namespace PhysicsSim.ThreePhase3D.Flow
             : this(predictor?.Plan ?? throw new ArgumentNullException(nameof(predictor)), predictor, shader) { }
 
         public static FlowStep Project(VariableCoefficientProjection plan, ComputeShader shader,
-            float[] tentative, double dt, int maxIterations)
+            float[] tentative, double dt, int maxIterations,
+            Func<float[], double> measureTransportCorrection = null)
         {
             if (plan == null) throw new ArgumentNullException(nameof(plan));
             using (var solver = new FlowGpuSolver(plan, null, shader))
-                return solver.Project(tentative, dt, maxIterations);
+                return solver.Project(tentative, dt, maxIterations, measureTransportCorrection);
         }
 
         private FlowGpuSolver(VariableCoefficientProjection plan, MomentumPredictor3D predictor, ComputeShader shader)
@@ -124,7 +125,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return SolvePressure(dt, maxIterations);
         }
 
-        private FlowStep Project(float[] tentative, double dt, int maxIterations)
+        private FlowStep Project(float[] tentative, double dt, int maxIterations,
+            Func<float[], double> measureTransportCorrection = null)
         {
             if (disposed) throw new ObjectDisposedException(nameof(FlowGpuSolver));
             if (maxIterations <= 0 || tentative.Length != plan.FaceCount || !SiUnits.IsFinite(dt) || dt <= 0)
@@ -136,10 +138,11 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 throw new ArgumentException("Nonfinite tentative velocity.");
             Array.Copy(tentative, predictedReadback, tentative.Length);
             predicted.SetData(tentative, 0, 0, tentative.Length);
-            return SolvePressure(dt, maxIterations);
+            return SolvePressure(dt, maxIterations, measureTransportCorrection);
         }
 
-        private FlowStep SolvePressure(double dt, int maxIterations)
+        private FlowStep SolvePressure(double dt, int maxIterations,
+            Func<float[], double> measureTransportCorrection = null)
         {
             pressureA.SetData(pressureZero, 0, 0, pressureZero.Length);
             var clock = new Stopwatch();
@@ -184,14 +187,22 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 CorrectionWallMs += clock.Elapsed.TotalMilliseconds;
                 CheckReadback(correctedReadback);
                 var diagnostics = plan.Measure(predictedReadback, correctedReadback, pressure, dt, iteration);
-                if (diagnostics.Converged)
+                double transportCorrection = diagnostics.Converged && measureTransportCorrection != null
+                    ? measureTransportCorrection(correctedReadback) : 0;
+                if (diagnostics.Converged && transportCorrection <= CutCellVofTransport.PressureCorrectionLimit)
                 {
                     var result = new float[plan.FaceCount];
                     Array.Copy(correctedReadback, result, result.Length);
                     plan.SetClosedGauges(pressure);
                     return new FlowStep(result, pressure, diagnostics);
                 }
-                if (iteration == maxIterations) throw new FlowConvergenceException(diagnostics);
+                if (iteration == maxIterations)
+                {
+                    if (diagnostics.Converged)
+                        throw new InvalidOperationException(
+                            $"GPU pressure projection reached {iteration} iterations with cut-cell flux correction {transportCorrection:E3} Courant units (limit 1e-6).");
+                    throw new FlowConvergenceException(diagnostics);
+                }
 
                 clock.Restart();
                 int block = Math.Min(31, maxIterations - iteration);
