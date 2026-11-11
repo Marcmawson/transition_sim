@@ -73,7 +73,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private string evidence;
         private float frameMs;
         private float playbackSpeed;
-        private float measuredPlaybackSpeed;
+        private float measuredPlaybackSpeed, measuredBurnerWatts;
+        private bool measuredBuoyancy;
         private int timestepIndex;
         private int benchmarkSteps;
         private Vector2 panelScroll;
@@ -239,9 +240,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void AdvanceDrop(double stepSeconds, int steps)
         {
-            fluid.thermalBuoyancy = thermalBuoyancy;
+            fluid.thermalBuoyancy = measuring ? measuredBuoyancy : thermalBuoyancy;
             fluid.AdvanceManually((float)stepSeconds, steps);
-            movingHeat?.Advance(stepSeconds * steps, absorbedBurnerWatts);
+            movingHeat?.Advance(stepSeconds * steps, measuring ? measuredBurnerWatts : absorbedBurnerWatts);
         }
 
         private void SetRunning(bool value)
@@ -259,6 +260,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             measuredFrames = 0;
             solverSteps = 0;
             measuredPlaybackSpeed = playbackSpeed;
+            measuredBurnerWatts = absorbedBurnerWatts;
+            measuredBuoyancy = thermalBuoyancy;
             benchmarkSteps = durationMicroseconds / StepMicroseconds;
             SetRunning(true);
             startTime = lastTick;
@@ -271,7 +274,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             double elapsed = Time.realtimeSinceStartupAsDouble - startTime;
             string timing = FormattableString.Invariant(
                 $"GPU drop: {measuredFrames} frames, {measuredFrames / elapsed:F1} FPS, {fluid.SimulatedSeconds:F3} s simulated in {elapsed:F3} s at {measuredPlaybackSpeed:P0} playback · {StepMicroseconds / 1000.0:0.##} ms per step · {solverSteps} solver steps · {releaseVolumeMl:F0} mL release");
-            if (movingHeat != null) timing += $" · {absorbedBurnerWatts:F0} W · buoyancy {(thermalBuoyancy ? "on" : "off")} · " + movingHeat.Measure();
+            if (movingHeat != null) timing += $" · {measuredBurnerWatts:F0} W · buoyancy {(measuredBuoyancy ? "on" : "off")} · " + movingHeat.Measure();
             evidence = timing;
             if (!SystemInfo.supportsAsyncGPUReadback)
             {

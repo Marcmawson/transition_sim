@@ -26,7 +26,7 @@ float RingWidth, ContactRadius, ContactFloor, ContactDepth;
 float ParticleArea, ParticleCapacity, ConductancePerArea, Dt, BurnerWatts;
 groupshared float partial[64];
 groupshared float4 partialFlow[64];
-groupshared float partialCoolCount[64];
+groupshared float3 partialCounts[64];
 
 [numthreads(64,1,1)]
 void ClearContacts(uint3 id : SV_DispatchThreadID)
@@ -103,7 +103,7 @@ void ConductGlass(uint3 id : SV_DispatchThreadID)
 void MeasureVerticalFlow(uint3 group : SV_GroupID, uint lane : SV_GroupIndex, uint3 id : SV_DispatchThreadID)
 {
     float4 flow = 0;
-    float coolCount = 0;
+    float3 counts = 0;
     if (id.x < ParticleCount)
     {
         float3 p = Positions[id.x];
@@ -113,26 +113,31 @@ void MeasureVerticalFlow(uint3 group : SV_GroupID, uint lane : SV_GroupIndex, ui
             dot(p.xz, p.xz) <= ContactRadius * ContactRadius + 1e-8 &&
             !isnan(speedY) && !isinf(speedY) && !isnan(rise) && !isinf(rise))
         {
-            if (rise >= 1) flow = float4(1, max(0, p.y - ContactFloor), speedY, 0);
-            else { flow.w = speedY; coolCount = 1; }
+            if (rise >= 1)
+            {
+                float height = max(0, p.y - ContactFloor);
+                flow = float4(1, height, speedY, 0);
+                if (height > .0005) counts.yz = float2(1, speedY);
+            }
+            else { flow.w = speedY; counts.x = 1; }
         }
     }
 
     partialFlow[lane] = flow;
-    partialCoolCount[lane] = coolCount;
+    partialCounts[lane] = counts;
     GroupMemoryBarrierWithGroupSync();
     for (uint stride = 32; stride > 0; stride >>= 1)
     {
         if (lane < stride)
         {
             partialFlow[lane] += partialFlow[lane + stride];
-            partialCoolCount[lane] += partialCoolCount[lane + stride];
+            partialCounts[lane] += partialCounts[lane + stride];
         }
         GroupMemoryBarrierWithGroupSync();
     }
     if (lane == 0)
     {
         FlowTotals[2 * group.x] = partialFlow[0];
-        FlowTotals[2 * group.x + 1] = float4(partialCoolCount[0], 0, 0, 0);
+        FlowTotals[2 * group.x + 1] = float4(partialCounts[0], 0);
     }
 }

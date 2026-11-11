@@ -80,7 +80,7 @@ namespace Seb.Fluid.Simulation
 		bool isPaused;
 		bool pauseNextFrame;
 		float smoothRadiusOld;
-		float simTimer;
+		double simTimer;
 		bool inSlowMode;
 		Spawner3D.SpawnData spawnData;
 		Dictionary<ComputeBuffer, string> bufferNameLookup;
@@ -96,7 +96,7 @@ namespace Seb.Fluid.Simulation
 		int activeExternalForcesKernel = externalForcesKernel;
 		[HideInInspector] public Vector4 beakerCollision; // Centre X/Z, inner radius, floor height.
 		[HideInInspector] public float beakerRimY;
-		public float SimulatedSeconds => simTimer;
+		public float SimulatedSeconds => (float)simTimer;
 
 		public void AdvanceManually(float stepSeconds, int steps)
 		{
@@ -419,7 +419,7 @@ namespace Seb.Fluid.Simulation
 			compute.SetVector("beakerCollision", beakerCollision);
 			compute.SetFloat("beakerRimY", beakerRimY);
 			compute.SetFloat("whiteParticleDeltaTime", frameDeltaTime);
-			compute.SetFloat("simTime", simTimer);
+			compute.SetFloat("simTime", (float)simTimer);
 			compute.SetFloat("gravity", gravity);
 			if (activeExternalForcesKernel != externalForcesKernel)
 				compute.SetFloat("ThermalBuoyancy", thermalBuoyancy ? 1f : 0f);
@@ -436,7 +436,7 @@ namespace Seb.Fluid.Simulation
 			compute.SetMatrix("worldToLocal", transform.worldToLocalMatrix);
 
 			// Foam settings
-			float fadeInT = (spawnRateFadeInTime <= 0) ? 1 : Mathf.Clamp01((simTimer - spawnRateFadeStartTime) / spawnRateFadeInTime);
+			float fadeInT = (spawnRateFadeInTime <= 0) ? 1 : Mathf.Clamp01((float)((simTimer - spawnRateFadeStartTime) / spawnRateFadeInTime));
 			compute.SetVector("trappedAirParams", new Vector3(trappedAirSpawnRate * fadeInT * fadeInT, trappedAirVelocityMinMax.x, trappedAirVelocityMinMax.y));
 			compute.SetVector("kineticEnergyParams", foamKineticEnergyMinMax);
 			compute.SetFloat("bubbleBuoyancy", bubbleBuoyancy);

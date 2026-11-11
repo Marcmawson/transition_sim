@@ -22,7 +22,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private struct FlowSample
         {
-            public double WarmCount, WarmHeight, WarmSpeed, CoolCount, CoolSpeed;
+            public double WarmCount, WarmHeight, WarmSpeed, CoolCount, CoolSpeed, LiftedCount, LiftedSpeed;
 
             public void Add(Vector4 totals, Vector4 counts)
             {
@@ -31,6 +31,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 WarmSpeed += totals.z;
                 CoolSpeed += totals.w;
                 CoolCount += counts.x;
+                LiftedCount += counts.y;
+                LiftedSpeed += counts.z;
             }
 
             public string Describe()
@@ -41,7 +43,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 string cool = CoolCount > 0
                     ? FormattableString.Invariant($"cool vertical {1000 * CoolSpeed / CoolCount:+0.000;-0.000;0.000} mm/s")
                     : "no cooler particles";
-                return warm + " · " + cool;
+                string lifted = LiftedCount > 0
+                    ? FormattableString.Invariant($"warm above 0.5 mm {LiftedCount:F0} · vertical {1000 * LiftedSpeed / LiftedCount:+0.000;-0.000;0.000} mm/s")
+                    : "warm above 0.5 mm: 0";
+                return warm + " · " + cool + " · " + lifted;
             }
         }
 
