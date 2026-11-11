@@ -81,6 +81,19 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             return result;
         }
 
+        internal Func<float[], double> MeasurePressureCorrection(double dt) => transport.MeasurePressureCorrection(dt);
+
+        internal CutCellTransportResult AdvanceProjectedWithTemperature(CutCellInventories state, FlowStep flow,
+            LiquidEnthalpyGpuRecovery recovery)
+        {
+            if (owned.Count == 0) throw new ObjectDisposedException(nameof(CutCellGpuScalars));
+            if (recovery == null) throw new ArgumentNullException(nameof(recovery));
+            CutCellGeometryBatch batch = clipping == null ? (CutCellGeometryBatch)null : clipping.Clip;
+            var result = transport.AdvanceProjected(state, flow, null, Dispatch, batch, null, out _);
+            recovery.Recover(updated);
+            return result;
+        }
+
         public CutCellCoupledStep AdvanceCoupled(CutCellInventories state, FlowStep flow,
             double liquidDensity, double gasDensity, CutCellGpuMomentum momentum, ComputeShader pressureShader, int maxIterations,
             D3 worldAccelerationMPerS2 = default, double? adaptiveMaxStepS = null)

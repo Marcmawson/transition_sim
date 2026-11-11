@@ -96,6 +96,61 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 float sinking = Check(274f, 277.125f, -1);
                 float rising = Check(277.125f, 283f, 1);
                 Debug.Log($"S09 buoyancy check passed: uniform {uniform:G5} m/s, warmed below 4 °C {sinking:G5} m/s, warmed above 4 °C {rising:G5} m/s.");
+                CheckCirculation();
+
+                void CheckCirculation()
+                {
+                    const int steps = 40;
+                    const float ambientK = 277.125f, warmK = 283f;
+                    var energy = plan.Volumes.Select(v => enthalpy.EnergyJ(v, ambientK)).ToArray();
+                    for (int k = 0; k < grid.Cells.Z; k++)
+                        for (int j = 0; j < grid.Cells.Y; j++)
+                        {
+                            int group = plan.PressureGroup(1, j, k);
+                            energy[group] = enthalpy.EnergyJ(plan.Volumes[group], warmK);
+                        }
+
+                    double initialEnergy = energy.Sum(), initialVolume = plan.Volumes.Sum();
+                    var inventory = new CutCellInventories(plan.Volumes, zero, energy, zero, zero);
+                    var correction = transport.MeasurePressureCorrection(dt);
+                    var flow = FlowGpuSolver.Project(plan, pressure, new float[plan.FaceCount], dt, 4096, correction);
+                    int risingFace = plan.FaceIndex(1, 1, 2, 0);
+                    int returnFace = plan.FaceIndex(1, 2, 2, 0);
+                    double worstEnergy = 0, worstVolume = 0;
+                    float minimumRise = float.PositiveInfinity, maximumReturn = float.NegativeInfinity;
+                    shader.SetFloat("ReferenceDensity", table.EvaluateFloat(ambientK, 101325)[0]);
+
+                    using (var momentum = new CutCellGpuMomentum(plan,
+                        Resources.Load<ComputeShader>("ThreePhase3D/CutCellVofMomentum")))
+                        for (int i = 0; i < steps; i++)
+                        {
+                            var moved = transport.AdvanceProjectedWithTemperature(inventory, flow, recovery);
+                            var advected = momentum.Advance(inventory, moved,
+                                Array.ConvertAll(flow.VelocityMPerS, value => (double)value), transportDensity, 1.2);
+                            inventory = moved.Fields;
+                            recovery.Status.GetData(status);
+                            if (status.Any(value => value != 0))
+                                throw new InvalidOperationException($"S09 invalid recovered liquid at step {i + 1}.");
+
+                            initialVelocity.SetData(Array.ConvertAll(advected.VelocityMPerS, value => (float)value));
+                            shader.Dispatch(kernel, (plan.FaceCount + 63) / 64, 1, 1);
+                            tentative.GetData(velocity);
+                            flow = FlowGpuSolver.Project(plan, pressure, velocity, dt, 4096, correction, flow.GroupPressurePa);
+                            float up = flow.VelocityMPerS[risingFace], down = flow.VelocityMPerS[returnFace];
+                            if (!flow.Diagnostics.Converged || !SiUnits.IsFinite(up) || !SiUnits.IsFinite(down))
+                                throw new InvalidOperationException($"S09 invalid projected flow at step {i + 1}.");
+                            minimumRise = Math.Min(minimumRise, up);
+                            maximumReturn = Math.Max(maximumReturn, down);
+                            worstEnergy = Math.Max(worstEnergy, Math.Abs(inventory.LiquidEnergyJ.Sum() - initialEnergy));
+                            worstVolume = Math.Max(worstVolume, Math.Abs(inventory.LiquidM3.Sum() - initialVolume));
+                        }
+
+                    double redistribution = inventory.LiquidEnergyJ.Zip(energy, (after, before) => Math.Abs(after - before)).Sum();
+                    if (minimumRise <= 1e-7 || maximumReturn >= -1e-7 ||
+                        worstEnergy > 1e-7 || worstVolume > 1e-12 || redistribution < 1e-5)
+                        throw new InvalidOperationException($"S09 circulation failed: up {minimumRise:G5}, return {maximumReturn:G5}, energy {worstEnergy:G5}, volume {worstVolume:G5}, redistribution {redistribution:G5}.");
+                    Debug.Log($"S09 circulation check passed: {steps} steps, {steps * dt:F2} s, rising {flow.VelocityMPerS[risingFace]:G5} m/s, return {flow.VelocityMPerS[returnFace]:G5} m/s, enthalpy drift {worstEnergy:G5} J, volume drift {worstVolume:G5} m³.");
+                }
             }
         }
     }

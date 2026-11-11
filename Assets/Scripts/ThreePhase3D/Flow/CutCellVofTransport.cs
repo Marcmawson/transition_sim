@@ -253,7 +253,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
         public CutCellTransportResult AdvanceProjected(CutCellInventories state, FlowStep pressure,
             Func<int, CutCellInflow> inflow = null) => AdvanceProjected(state, pressure, inflow, null, null, null, out _);
 
-        private CutCellTransportResult AdvanceProjected(CutCellInventories state, FlowStep pressure,
+        internal CutCellTransportResult AdvanceProjected(CutCellInventories state, FlowStep pressure,
             Func<int, CutCellInflow> inflow, Func<CutCellScalarWork, CutCellScalarOutput> apply, CutCellGeometryBatch clip,
             double? adaptiveMaxStepS, out double dt)
         {
