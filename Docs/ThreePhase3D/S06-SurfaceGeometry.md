@@ -139,3 +139,17 @@ The CPU suite initializes a 7 mm sessile hemisphere at rest, stretches one horiz
 The control uses the same initial shape and tracked contact traction with surface tension disabled. Its velocity stays at rest, so bulk and no-slip drag would also contribute zero. This checks the initial capillary restoring response. Oscillation frequency, damping over longer times, resolution dependence, and comparison with measured glass remain open.
 
 The original 0.2 ms trial exceeded the transport pressure-flux correction bound and the 0.05 ms trial passed over 0.4 ms. The planar CPU pressure solver now checks the same reconciliation bound used by the next transport step before accepting a projected field. If the algebraic residual passes while the transport check fails, pressure iteration continues up to the existing iteration limit. The cutoff remains 1e-6 Courant units. The predicate uses the same flux-reconciliation routine as transport and leaves the candidate velocity unchanged. The regular CPU and GPU pressure entry points retain their existing convergence criteria.
+
+### Sessile oscillation probe
+
+Run the optional longer CPU probe with:
+
+```sh
+dotnet run -c Release --project Tools/ThreePhase3D/SurfaceGeometryChecks.csproj -- --capillary-oscillation
+```
+
+This probe starts a 5 mm sessile half-ellipsoid from rest, with reciprocal horizontal stretches of 1.05 and 1/1.05. It records the signed horizontal shape moment after each 0.6 ms step. A positive local peak after the first sign reversal gives the initial-to-return-peak period and the logarithmic amplitude change per second. The probe stops after two inviscid reference periods if it finds no return peak. It retains pressure, transport, staggered mass, contact, and liquid-volume checks.
+
+The printed reference is the inviscid free-contact-line hemisphere's quadrupole period from the [Rayleigh–Lamb spectrum](https://www.cambridge.org/core/journals/journal-of-fluid-mechanics/article/effects-of-gravity-on-natural-oscillations-of-sessile-drops/9373ADEB7650B13ACA0BF3A057A9D071). The synthetic fixture includes viscosity, wall drag, slip and hysteresis. A frequency and damping comparison for V12 requires a matched reference and spatial and temporal refinement.
+
+The first local probe reached its first shape sign reversal at 22.2 ms and exceeded the initial 0.02 m/s synthetic calibration range. With the probe's synthetic range extended to 0.1 m/s, the run reached 41.4 ms, where the last accepted shape moment was −0.25594 versus an initial +0.09394. The following step hit the three-cell gas-buffer guard before a positive return peak. The existing solver limits remain in force. These results leave frequency and damping unverified.

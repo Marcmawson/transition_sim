@@ -12,6 +12,19 @@ internal static class SurfaceGeometryMain
     private static int Main(string[] args)
     {
         if (args.Contains("--wetting")) return BeakerVofMain.Main(args);
+        if (args.Contains("--capillary-oscillation"))
+        {
+            try
+            {
+                CheckCapillaryShapeRelaxation(oscillation: true);
+                return 0;
+            }
+            catch (Exception failure)
+            {
+                Console.Error.WriteLine(failure);
+                return 1;
+            }
+        }
         var grid = new Grid3D(15, 15, 15, new D3(.012, .008, .01));
         var transport = new GeometricVof3D(grid, 997, 1.2);
         var alpha = new double[transport.CellCount];
@@ -461,24 +474,28 @@ internal static class SurfaceGeometryMain
         }
     }
 
-    private static void CheckCapillaryShapeRelaxation()
+    private static void CheckCapillaryShapeRelaxation(bool oscillation = false)
     {
-        const int n = 26, steps = 12;
-        const double h = .001, radius = .007, sigma = .072, dt = .0002;
+        const double h = .001, sigma = .072;
         const double rhoL = 997, rhoG = 1.2, muL = .001, muG = .000018;
-        var grid = new Grid3D(n, 14, n, new D3(h, h, h));
+        int n = oscillation ? 18 : 26;
+        double radius = oscillation ? .005 : .007;
+        double dt = oscillation ? .0006 : .0002;
+        double referencePeriod = 2 * Math.PI * Math.Sqrt(rhoL * radius * radius * radius / (8 * sigma));
+        int steps = oscillation ? (int)Math.Ceiling(2 * referencePeriod / dt) : 12;
+        var grid = new Grid3D(n, oscillation ? 10 : 14, n, new D3(h, h, h));
         var slab = SurfacePrimitives.Box(new D3(-h, -h, -h), new D3((n + 1) * h, h, (n + 1) * h));
         var geometry = CutCellGeometry.Build(grid, slab);
         var plan = new VariableCoefficientProjection(geometry, BoundaryConditions3D.Closed, _ => rhoG, _ => 0);
         var centre = new D3(n * h / 2, h, n * h / 2);
-        var liquid = SampleSessileCap(plan, h, centre, radius, stretch: 1.12);
+        var liquid = SampleSessileCap(plan, h, centre, radius, stretch: oscillation ? 1.05 : 1.12);
         var gas = plan.Volumes.Zip(liquid, (volume, water) => volume - water).ToArray();
         var initial = new CutCellInventories(liquid, gas, new double[gas.Length],
             new double[gas.Length], new double[gas.Length]);
         var rest = FlowCpuReference.Project(plan, new float[plan.FaceCount], dt, 16384);
         var profile = new WettingProfile("Synthetic planar wall", "Capillary shape relaxation", 90, .0001, h,
-            new[] { new WettingMeasurement(0, 90.5), new WettingMeasurement(.02, 91) },
-            new[] { new WettingMeasurement(0, 89.5), new WettingMeasurement(.02, 89) });
+            new[] { new WettingMeasurement(0, 90.5), new WettingMeasurement(oscillation ? .1 : .02, 91) },
+            new[] { new WettingMeasurement(0, 89.5), new WettingMeasurement(oscillation ? .1 : .02, 89) });
         var capillary = CutCellVofTransport.WithPlanarWallWetting(plan, 1, sigma, profile, bulkViscosity: true);
         var control = CutCellVofTransport.WithTrackedWetting(plan, profile);
         double initialShape = Shape(liquid), initialVolume = liquid.Sum();
@@ -487,21 +504,47 @@ internal static class SurfaceGeometryMain
         var referenceFields = initial;
         var referenceFlow = rest;
         double maxDrift = 0;
+        double beforePreviousShape = double.NaN, previousShape = initialShape;
+        bool crossedZero = false;
+        if (oscillation)
+            Console.WriteLine(FormattableString.Invariant($"t=0 shape={initialShape:G10} reference_period={referencePeriod:G8} s"));
         for (int step = 0; step < steps; step++)
         {
             var trial = capillary.AdvanceCoupledWithWetting(fields, flow, rhoL, rhoG, muL, muG, maxIterations: 16384);
-            var reference = control.AdvanceCoupledWithWetting(referenceFields, referenceFlow, rhoL, rhoG,
-                muL, muG, maxIterations: 16384);
             fields = trial.Transport.Fields;
             flow = trial.Pressure;
-            referenceFields = reference.Transport.Fields;
-            referenceFlow = reference.Pressure;
+            if (!oscillation)
+            {
+                var reference = control.AdvanceCoupledWithWetting(referenceFields, referenceFlow, rhoL, rhoG,
+                    muL, muG, maxIterations: 16384);
+                referenceFields = reference.Transport.Fields;
+                referenceFlow = reference.Pressure;
+            }
             maxDrift = Math.Max(maxDrift, Math.Abs(fields.LiquidM3.Sum() - initialVolume));
             if (!flow.Diagnostics.Converged || !referenceFlow.Diagnostics.Converged ||
                 trial.CapillaryWettingContacts == 0 || trial.Momentum.MaxDualMassErrorKg > 1e-12)
                 throw new InvalidOperationException("Capillary shape relaxation failed its coupled-step checks.");
+            if (!oscillation) continue;
+            if (maxDrift > 1e-15)
+                throw new InvalidOperationException("Oscillation run exceeded its liquid-volume tolerance.");
+            double currentShape = Shape(fields.LiquidM3);
+            crossedZero |= currentShape < 0;
+            Console.WriteLine(FormattableString.Invariant(
+                $"t={(step + 1) * dt:G8} shape={currentShape:G10} volume_drift={maxDrift:E5}"));
+            if (crossedZero && previousShape > 0 && previousShape > beforePreviousShape && previousShape >= currentShape)
+            {
+                double peakTime = step * dt;
+                double decayRate = Math.Log(initialShape / previousShape) / peakTime;
+                Console.WriteLine(FormattableString.Invariant(
+                    $"period={peakTime:G8} s frequency={1 / peakTime:G8} Hz amplitude_decay={decayRate:G8} 1/s reference_period={referencePeriod:G8} s"));
+                return;
+            }
+            beforePreviousShape = previousShape;
+            previousShape = currentShape;
         }
 
+        if (oscillation)
+            throw new InvalidOperationException("No positive return peak was resolved within two reference periods.");
         double finalShape = Shape(fields.LiquidM3), referenceShape = Shape(referenceFields.LiquidM3);
         Console.WriteLine($"Capillary shape relaxation: t={steps * dt:G5} s, initial={initialShape:G10}, final={finalShape:G10}, control={referenceShape:G10}, volume drift={maxDrift:E5} m^3");
         if (!(initialShape > .1 && finalShape > 0 && initialShape - finalShape > 1e-5) ||
