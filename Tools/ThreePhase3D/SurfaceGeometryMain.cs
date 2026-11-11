@@ -58,6 +58,9 @@ internal static class SurfaceGeometryMain
         CheckSessileCapillaryPressure(105);
         CheckSessileCapillaryPressure(90, true);
         CheckSessileCapillaryPressure(90, true, true);
+        double coarseDecayError = CheckPlanarShearDecay(8, 8);
+        if (!(CheckPlanarShearDecay(16, 128) < .5 * coarseDecayError))
+            throw new InvalidOperationException("Planar shear decay did not improve under refinement.");
         return 0;
     }
 
@@ -454,6 +457,54 @@ internal static class SurfaceGeometryMain
                 !(speed <= speedLimit) || !(Math.Abs(drift) <= 1e-15))
                 throw new InvalidOperationException("Wall-compatible capillary pressure check failed.");
         }
+    }
+
+    private static double CheckPlanarShearDecay(int layers, int steps)
+    {
+        int width = Math.Max(80, 4 * steps + 8);
+        const double height = .008, rho = 997, viscosity = .001, speed = .01, duration = .04;
+        double h = height / layers, dt = duration / steps;
+        double waveNumber = Math.PI / (2 * height);
+        var grid = new Grid3D(width, layers + 1, 1, new D3(.001, h, .001));
+        var slab = SurfacePrimitives.Box(new D3(-.001, -h, -.001), new D3((width + 1) * grid.Spacing.X, h, .002));
+        var geometry = CutCellGeometry.Build(grid, slab);
+        var plan = new VariableCoefficientProjection(geometry, BoundaryConditions3D.Closed, _ => rho, _ => 0);
+        var state = new CutCellInventories((double[])plan.Volumes.Clone(), new double[plan.GroupCount],
+            new double[plan.GroupCount], new double[plan.GroupCount], new double[plan.GroupCount]);
+        var velocity = new double[plan.FaceCount];
+        for (int j = 1; j <= layers; j++)
+        for (int i = 1; i < width; i++)
+            velocity[plan.FaceIndex(0, i, j, 0)] = speed * Math.Sin(waveNumber * (j - .5) * h);
+
+        var transport = new CutCellVofTransport(plan);
+        var stationary = transport.Advance(state, new double[plan.FaceCount], dt);
+        var momentum = new CutCellMomentum(plan);
+        var current = momentum.Advance(state, stationary, velocity, rho, rho);
+        var noContact = new System.Collections.Generic.List<InterfacePatch>();
+        for (int step = 0; step < steps; step++)
+        {
+            current = momentum.ApplyContactTraction(current, state, noContact, null,
+                rho, rho, viscosity, viscosity, dt, planarNoSlip: true);
+            current = momentum.ApplyPlanarBulkViscosity(current, state, rho, rho, viscosity, viscosity, dt);
+        }
+
+        // The sampled column is beyond the explicit stencil reach of the side walls.
+        double expectedDecay = Math.Exp(-viscosity / rho * waveNumber * waveNumber * duration);
+        double sumSquaredError = 0, sumSquaredExpected = 0;
+        for (int j = 1; j <= layers; j++)
+        {
+            int face = plan.FaceIndex(0, width / 2, j, 0);
+            double expected = velocity[face] * expectedDecay;
+            double error = current.VelocityMPerS[face] - expected;
+            sumSquaredError += error * error;
+            sumSquaredExpected += expected * expected;
+        }
+        double relativeError = Math.Sqrt(sumSquaredError / sumSquaredExpected);
+        if (!(relativeError < .001) || !(current.VelocityMPerS[plan.FaceIndex(0, width / 2, layers, 0)] <
+            velocity[plan.FaceIndex(0, width / 2, layers, 0)]))
+            throw new InvalidOperationException("Planar shear decay differs from the analytical transient.");
+        Console.WriteLine($"Planar shear decay: layers={layers}, steps={steps}, relative L2 error={relativeError:E5}");
+        return relativeError;
     }
 
     private static void CheckPlanarNoSlip(VariableCoefficientProjection plan, double rhoL, double rhoG, double dt)

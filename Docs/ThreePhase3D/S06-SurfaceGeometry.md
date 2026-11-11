@@ -123,3 +123,11 @@ The CPU sessile-cap check compares the first step against the same capillary and
 With `bulkViscosity: true`, the lower planar wall applies stationary no-slip tangential traction outside the detected contact band. Detected patches use the calibrated Navier slip length. Both use the same aperture-weighted velocity samples and transpose scatter, with a shared explicit wall-drag bound. The wall impulse ledger includes both contributions. The side and top domain boundaries are outside this checkpoint.
 
 The planar plug fixture checks the integrated no-slip impulse against `-dt * mu * area * speed / (h/2)` with no liquid–gas contact. The sessile-cap fixture checks that the combined viscous momentum change equals the change in the wall ledger, and that interior stress still dissipates energy.
+
+### Analytical planar shear relaxation
+
+The standalone CPU suite compares the lower-wall traction and interior stress updates against the exact shear mode `u(y,t) = U sin(k y) exp(-nu k^2 t)`, with `k = pi / (2 H)`, no slip at the bottom and zero tangential stress at the top. The single-phase fixture holds density and viscosity constant and evolves the viscous substeps over 40 ms. It samples the central column beyond the stencil reach of the lateral boundaries. The refined run halves the wall-normal spacing from 1 mm to 0.5 mm and reduces the timestep by a factor of sixteen. Both runs must pass the analytical profile tolerance, and the fine-grid relative L2 error must be less than half the coarse-grid error.
+
+This isolates viscous relaxation. Quantitative capillary-driven sessile-drop relaxation and comparison with measured glass data remain open.
+
+A run with half the spacing and a quarter of the timestep gave relative L2 errors of 2.64e-5 and 3.06e-5. The tighter timestep in the accepted fine run addresses the separate wall and bulk updates. The paired refinement therefore checks combined spatial and temporal error.
