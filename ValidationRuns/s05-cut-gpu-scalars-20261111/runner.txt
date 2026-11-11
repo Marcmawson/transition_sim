@@ -1,0 +1,6 @@
+Base GitHub commit: 9562ce4f9d4af98031b90499a6e616b0c86e7ff9.
+CPU: 84/84 S05 checks. Runtime/editor assembly split compiled with Unity API stubs.
+DXC compiled BuildCutFaceFlux and ApplyCutScalarFlux to DXIL and SPIR-V with warnings as errors.
+Standalone Vulkan dispatched both cut-cell scalar kernels through Mesa lavapipe and Chromium SwiftShader.
+Each software device passed 108/108 checks, including 24 GPU-to-CPU comparisons for the cut-cell cases.
+The GPU path includes the face limiter and scalar updates. PLIC clipping, budget assembly, roundoff reconciliation and cut-cell momentum remained on the CPU. Unity Direct3D 11 execution of the new kernels is pending.

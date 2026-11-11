@@ -1,0 +1,90 @@
+#pragma kernel BuildCutFaceFlux
+#pragma kernel ApplyCutScalarFlux
+#include "VofCompensated.hlsl"
+
+StructuredBuffer<int2> Endpoints;
+StructuredBuffer<int> Rows;
+StructuredBuffer<int> Incidence;
+StructuredBuffer<float2> Groups;
+StructuredBuffer<float2> Candidates;
+RWStructuredBuffer<float2> Transfers;
+RWStructuredBuffer<float2> Updated;
+int GroupCount, FaceCount;
+
+float2 Group(int plane, int c) { return Groups[plane * GroupCount + c]; }
+float2 Candidate(int plane, int f) { return Candidates[plane * FaceCount + f]; }
+
+float2 TransportScalar(float2 flux, float2 volume, float2 inventory)
+{
+    return Equal(flux, V(0)) ? V(0) : Mul(inventory, Div(flux, volume));
+}
+
+[numthreads(64, 1, 1)]
+void BuildCutFaceFlux(uint3 id : SV_DispatchThreadID)
+{
+    int f = (int)id.x;
+    if (f >= FaceCount) return;
+    float2 q = Candidate(0, f);
+    float2 l = V(0), g = V(0), el = V(0), eg = V(0), vapour = V(0), limited = V(0), roundoff = V(0);
+    bool invalid = false;
+    if (!Equal(q, V(0)))
+    {
+        bool reverse = Less(q, V(0));
+        int donor = reverse ? Endpoints[f].y : Endpoints[f].x;
+        if (donor >= 0)
+        {
+            float2 delta = Candidate(1, f), volume = Group(5, donor);
+            float2 fraction = Equal(Group(0, donor), volume) ? V(1) : Bounded(Div(Group(0, donor), volume), V(1));
+            bool negative = Less(delta, V(0));
+            float2 capacity = Mul(negative ? Sub(V(1), fraction) : fraction, Sub(volume, Group(6, donor)));
+            float2 demand = Group(negative ? 8 : 7, donor);
+            float2 accepted = Less(capacity, demand) ? Mul(delta, Div(capacity, demand)) : delta;
+            limited = AbsPair(Sub(delta, accepted));
+            float2 width = AbsPair(q);
+            float2 proposed = Add(Mul(fraction, width), accepted);
+            float2 tolerance = Mul(V(1e-10), volume);
+            invalid = Less(proposed, -tolerance) || Less(Add(width, tolerance), proposed);
+            float2 bounded = Bounded(proposed, width);
+            roundoff = AbsPair(Sub(bounded, proposed));
+            l = reverse ? -bounded : bounded;
+            g = Sub(q, l);
+            el = TransportScalar(l, Group(0, donor), Group(2, donor));
+            eg = TransportScalar(g, Group(1, donor), Group(3, donor));
+            vapour = TransportScalar(g, Group(1, donor), Group(4, donor));
+        }
+        else
+        {
+            l = Mul(q, Candidate(2, f));
+            g = Sub(q, l);
+            el = Mul(l, Candidate(3, f));
+            eg = Mul(g, Candidate(4, f));
+            vapour = Mul(g, Candidate(5, f));
+        }
+    }
+    Transfers[0 * FaceCount + f] = l;
+    Transfers[1 * FaceCount + f] = g;
+    Transfers[2 * FaceCount + f] = el;
+    Transfers[3 * FaceCount + f] = eg;
+    Transfers[4 * FaceCount + f] = vapour;
+    Transfers[5 * FaceCount + f] = roundoff;
+    Transfers[6 * FaceCount + f] = limited;
+    Transfers[7 * FaceCount + f] = V(invalid ? 1 : 0);
+}
+
+[numthreads(64, 1, 1)]
+void ApplyCutScalarFlux(uint3 id : SV_DispatchThreadID)
+{
+    int c = (int)id.x;
+    if (c >= GroupCount) return;
+    for (int plane = 0; plane < 5; plane++)
+    {
+        float2 value = Group(plane, c);
+        for (int entry = Rows[c]; entry < Rows[c + 1]; entry++)
+        {
+            int signedFace = Incidence[entry];
+            float2 transfer = Transfers[plane * FaceCount + abs(signedFace) - 1];
+            value = Add(value, signedFace > 0 ? -transfer : transfer);
+        }
+        Updated[plane * GroupCount + c] = value;
+    }
+}

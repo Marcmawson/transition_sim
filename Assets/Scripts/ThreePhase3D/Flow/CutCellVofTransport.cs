@@ -141,14 +141,14 @@ namespace PhysicsSim.ThreePhase3D.Flow
             }
             if (maximum > 1e-6)
                 throw new InvalidOperationException("Cut-cell pressure flux correction exceeds 1e-6 Courant units.");
-            return Advance(state, velocity, dt, inflow, absolute);
+            return Advance(state, velocity, dt, inflow, absolute, null);
         }
 
         public CutCellTransportResult Advance(CutCellInventories state, double[] faceVelocity, double dt,
-            Func<int, CutCellInflow> inflow = null) => Advance(state, faceVelocity, dt, inflow, 0);
+            Func<int, CutCellInflow> inflow = null) => Advance(state, faceVelocity, dt, inflow, 0, null);
 
-        private CutCellTransportResult Advance(CutCellInventories state, double[] faceVelocity, double dt,
-            Func<int, CutCellInflow> inflow, double pressureCorrection)
+        internal CutCellTransportResult Advance(CutCellInventories state, double[] faceVelocity, double dt,
+            Func<int, CutCellInflow> inflow, double pressureCorrection, Func<CutCellScalarWork, CutCellScalarOutput> apply)
         {
             if (state == null || faceVelocity == null || faceVelocity.Length != plan.FaceCount ||
                 !SiUnits.IsFinite(dt) || dt <= 0) throw new ArgumentException("Invalid cut-cell transport inputs.");
@@ -219,12 +219,46 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 decrease[donor] += Math.Max(0, -delta);
             }
 
+            var work = new CutCellScalarWork(plan, fields, swept, correction, outgoing, increase, decrease, reservoir);
+            var output = apply == null ? ApplyReference(work) : apply(work);
+            var next = output.Fields;
+            roundoff += output.RoundoffM3;
+            for (int c = 0; c < groups; c++)
+            {
+                double volume = plan.Volumes[c];
+                if (next[0][c] < -Tolerance * volume || next[1][c] < -Tolerance * volume ||
+                    Math.Abs(next[0][c] + next[1][c] - volume) > 4 * Tolerance * volume)
+                    throw new InvalidOperationException("Cut-cell phase volume closure failed.");
+                double liquid = next[1][c] <= 0 ? volume : Math.Max(0, Math.Min(volume, next[0][c]));
+                double gas = volume - liquid;
+                roundoff += Math.Abs(liquid - next[0][c]) + Math.Abs(gas - next[1][c]);
+                next[0][c] = liquid;
+                next[1][c] = gas;
+                // Keep scalar conservation explicit. Reject an inconsistent
+                // empty phase rather than silently removing its inventory.
+            }
+            Validate(next);
+            return new CutCellTransportResult(plan, new CutCellInventories(next), output.Liquid, output.Gas,
+                output.Boundary, reservoir, roundoff, output.LimitedM3, pressureCorrection);
+        }
+
+        private static CutCellScalarOutput ApplyReference(CutCellScalarWork work)
+        {
+            var plan = work.Plan;
+            var fields = work.Fields;
+            var swept = work.Swept;
+            var correction = work.Correction;
+            var outgoing = work.Outgoing;
+            var increase = work.Increase;
+            var decrease = work.Decrease;
+            var reservoir = work.Reservoir;
+            int faces = plan.FaceCount;
             var next = new double[5][];
             for (int field = 0; field < 5; field++) next[field] = (double[])fields[field].Clone();
             var boundary = new double[5];
             var liquidFace = new double[faces];
             var gasFace = new double[faces];
-            double limited = 0;
+            double limited = 0, roundoff = 0;
             for (int f = 0; f < faces; f++)
             {
                 double q = swept[f];
@@ -273,22 +307,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 }
             }
 
-            for (int c = 0; c < groups; c++)
-            {
-                double volume = plan.Volumes[c];
-                if (next[0][c] < -Tolerance * volume || next[1][c] < -Tolerance * volume ||
-                    Math.Abs(next[0][c] + next[1][c] - volume) > 4 * Tolerance * volume)
-                    throw new InvalidOperationException("Cut-cell phase volume closure failed.");
-                double liquid = next[1][c] <= 0 ? volume : Math.Max(0, Math.Min(volume, next[0][c]));
-                double gas = volume - liquid;
-                roundoff += Math.Abs(liquid - next[0][c]) + Math.Abs(gas - next[1][c]);
-                next[0][c] = liquid;
-                next[1][c] = gas;
-                // Keep scalar conservation explicit. Reject an inconsistent
-                // empty phase rather than silently removing its inventory.
-            }
-            Validate(next);
-            return new CutCellTransportResult(plan, new CutCellInventories(next), liquidFace, gasFace, boundary, reservoir, roundoff, limited, pressureCorrection);
+            return new CutCellScalarOutput(next, liquidFace, gasFace, boundary, roundoff, limited);
         }
 
         private D3 Normal(int cell, int group, double[] liquid)
@@ -332,6 +351,33 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     (fields[1][c] == 0 && (fields[3][c] != 0 || fields[4][c] != 0)))
                     throw new ArgumentException("Invalid cut-cell phase inventory.");
             }
+        }
+    }
+
+    internal sealed class CutCellScalarWork
+    {
+        internal readonly VariableCoefficientProjection Plan;
+        internal readonly double[][] Fields;
+        internal readonly double[] Swept, Correction, Outgoing, Increase, Decrease;
+        internal readonly CutCellInflow[] Reservoir;
+        internal CutCellScalarWork(VariableCoefficientProjection plan, double[][] fields, double[] swept,
+            double[] correction, double[] outgoing, double[] increase, double[] decrease, CutCellInflow[] reservoir)
+        {
+            Plan = plan; Fields = fields; Swept = swept; Correction = correction;
+            Outgoing = outgoing; Increase = increase; Decrease = decrease; Reservoir = reservoir;
+        }
+    }
+
+    internal sealed class CutCellScalarOutput
+    {
+        internal readonly double[][] Fields;
+        internal readonly double[] Liquid, Gas, Boundary;
+        internal readonly double RoundoffM3, LimitedM3;
+        internal CutCellScalarOutput(double[][] fields, double[] liquid, double[] gas,
+            double[] boundary, double roundoff, double limited)
+        {
+            Fields = fields; Liquid = liquid; Gas = gas; Boundary = boundary;
+            RoundoffM3 = roundoff; LimitedM3 = limited;
         }
     }
 

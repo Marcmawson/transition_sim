@@ -1,0 +1,110 @@
+PASS PLIC | axis-aligned cut | 0.3 | 0.3 ± 1E-14
+PASS PLIC | diagonal tetrahedral cut | 0.036 | 0.036 ± 1E-14
+PASS PLIC | negative orientation complement | 0.964 | 0.964 ± 1E-14
+PASS PLIC | two-axis near-degenerate cut | 0.08 | 0.08 ± 1E-14
+PASS PLIC | swept full-cell reconstructs fraction | 0.37 | 0.37 ± 1E-13
+PASS pressure-free momentum | liquid transfers across first face [m3] | 0.25 | 0.25 ± 1E-14
+PASS pressure-free momentum | gas transfers across second face [m3] | 0.25 | 0.25 ± 1E-14
+PASS pressure-free momentum | first face updated momentum [kg m/s] | 1185.2875 | 1185.2875 ± 1E-10
+PASS pressure-free momentum | mass and momentum share dual transfer [kg] | 9.094947018E-13 | 0 ± 1E-10
+PASS pressure-free momentum | CFL rejection | 1 | 1 ± 0
+PASS pressure-free momentum | accepted state preserved | 2 | 2 ± 0
+PASS translation-12 | relative L1 shape error | 0.09150858832 | 0 ± 0.4
+PASS translation-12 | uniform staggered velocity preservation [m/s] | 6.233902283E-14 | 0 ± 2E-11
+PASS translation-12 | minimum liquid fraction bound | 0 | 0 ± 0
+PASS translation-12 | maximum liquid fraction bound | 0 | 0 ± 0
+PASS translation-12 | liquid volume drift [m3] | -9.714451465E-17 | 0 ± 1E-12
+PASS translation-12 | mixture mass drift [kg] | -9.827200782E-14 | 0 ± 1E-09
+PASS translation-12 | vapour mass drift [kg] | 9.159339953E-16 | 0 ± 1E-12
+PASS translation-12 | liquid energy drift [J] | 2.131628207E-14 | 0 ± 1E-09
+PASS translation-12 | gas energy drift [J] | 1.776356839E-15 | 0 ± 1E-09
+PASS translation-12 | max dual mass error [kg] | 8.881784197E-15 | 0 ± 1E-11
+PASS translation-12 | cumulative absolute volume reconciliation [m3] | 3.03091342E-15 | 0 ± 1E-12
+PASS translation-12 | cumulative limited geometric transfer [m3] | 0.0008752381841 | 0 ± 0.03
+PASS translation-12 | global momentum drift axis 0 [kg m/s] | -9.414691249E-14 | 0 ± 1E-09
+PASS translation-12 | global momentum drift axis 1 [kg m/s] | 1.083577672E-13 | 0 ± 1E-09
+PASS translation-12 | global momentum drift axis 2 [kg m/s] | -1.136868377E-13 | 0 ± 1E-09
+PASS translation-24 | relative L1 shape error | 0.06457165693 | 0 ± 0.24
+PASS translation-24 | uniform staggered velocity preservation [m/s] | 1.120770143E-13 | 0 ± 2E-11
+PASS translation-24 | minimum liquid fraction bound | 0 | 0 ± 0
+PASS translation-24 | maximum liquid fraction bound | 0 | 0 ± 0
+PASS translation-24 | liquid volume drift [m3] | -2.775557562E-17 | 0 ± 1E-12
+PASS translation-24 | mixture mass drift [kg] | -2.456800195E-14 | 0 ± 1E-09
+PASS translation-24 | vapour mass drift [kg] | 3.858025011E-15 | 0 ± 1E-12
+PASS translation-24 | liquid energy drift [J] | 2.202682481E-13 | 0 ± 1E-09
+PASS translation-24 | gas energy drift [J] | -1.032507413E-14 | 0 ± 1E-09
+PASS translation-24 | max dual mass error [kg] | 1.33226763E-15 | 0 ± 1E-11
+PASS translation-24 | cumulative absolute volume reconciliation [m3] | 3.030676027E-15 | 0 ± 1E-12
+PASS translation-24 | cumulative limited geometric transfer [m3] | 0.0008689557852 | 0 ± 0.03
+PASS translation-24 | global momentum drift axis 0 [kg m/s] | -6.572520306E-14 | 0 ± 1E-09
+PASS translation-24 | global momentum drift axis 1 [kg m/s] | -5.613287613E-13 | 0 ± 1E-09
+PASS translation-24 | global momentum drift axis 2 [kg m/s] | 1.785238624E-13 | 0 ± 1E-09
+PASS translation | fine/coarse shape error ratio | 0.7056349367 | 0 ± 0.85
+PASS deform-reverse | reversal error smaller than forward deformation | 1 | 1 ± 0
+PASS deform-reverse | relative L1 reversal error | 0.04159714226 | 0 ± 0.4
+PASS deform-reverse | minimum liquid fraction bound | 0 | 0 ± 0
+PASS deform-reverse | maximum liquid fraction bound | 0 | 0 ± 0
+PASS deform-reverse | liquid volume drift [m3] | -9.020562075E-17 | 0 ± 1E-12
+PASS deform-reverse | mixture mass drift [kg] | -8.982675714E-14 | 0 ± 1E-09
+PASS deform-reverse | vapour mass drift [kg] | -2.581268532E-15 | 0 ± 1E-12
+PASS deform-reverse | liquid energy drift [J] | -1.207922651E-13 | 0 ± 1E-09
+PASS deform-reverse | gas energy drift [J] | 3.774758284E-15 | 0 ± 1E-09
+PASS deform-reverse | max dual mass error [kg] | 2.220446049E-15 | 0 ± 1E-11
+PASS deform-reverse | cumulative absolute volume reconciliation [m3] | 2.208603227E-15 | 0 ± 1E-12
+PASS deform-reverse | cumulative limited geometric transfer [m3] | 7.458407612E-05 | 0 ± 0.03
+PASS deform-reverse | global momentum drift axis 0 [kg m/s] | -3.819167205E-14 | 0 ± 1E-09
+PASS deform-reverse | global momentum drift axis 1 [kg m/s] | -5.084821453E-14 | 0 ± 1E-09
+PASS deform-reverse | global momentum drift axis 2 [kg m/s] | -1.643130076E-14 | 0 ± 1E-09
+PASS coupled-periodic-pressure | transport generates a nontrivial pressure correction | 1 | 1 ± 0
+PASS coupled-periodic-pressure | pressure relative residual | 2.641911675E-07 | 0 ± 1E-06
+PASS coupled-periodic-pressure | flux reconciliation [Courant] | 2.797705685E-08 | 0 ± 1E-06
+PASS coupled-periodic-pressure | second transport conserves liquid volume [m3] | -8.223874256E-18 | 0 ± 1E-12
+PASS cut-cell open boundary | clipped liquid inventory [m3] | 0.3 | 0.3 ± 1E-10
+PASS cut-cell open boundary | clipped liquid sweep [m3] | 0.03 | 0.03 ± 1E-10
+PASS cut-cell open boundary | GPU vs CPU inventory 0 | 1.221245327E-15 | 0 ± 3.9E-11
+PASS cut-cell open boundary | GPU vs CPU inventory 1 | 1.221245327E-15 | 0 ± 5.4E-11
+PASS cut-cell open boundary | GPU vs CPU inventory 2 | 3.552713679E-15 | 0 ± 2.34E-10
+PASS cut-cell open boundary | GPU vs CPU inventory 3 | 1.554312234E-15 | 0 ± 1.68E-10
+PASS cut-cell open boundary | GPU vs CPU inventory 4 | 5.551115123E-17 | 0 ± 6E-12
+PASS cut-cell open boundary | GPU vs CPU liquid face flux | 5.551115123E-17 | 0 ± 6E-12
+PASS cut-cell open boundary | GPU vs CPU gas face flux | 5.551115123E-17 | 0 ± 6E-12
+PASS cut-cell open boundary | GPU vs CPU open boundary ledger | 3.053113318E-15 | 0 ± 3.6E-11
+PASS cut-cell open boundary | ambient gas inlet [m3] | 0.06 | 0.06 ± 1E-12
+PASS cut-cell open boundary | field ledger 0 | 4.440892099E-16 | 0 ± 1E-10
+PASS cut-cell open boundary | field ledger 1 | -6.661338148E-16 | 0 ± 1E-10
+PASS cut-cell open boundary | field ledger 2 | 4.440892099E-15 | 0 ± 1E-10
+PASS cut-cell open boundary | field ledger 3 | 1.776356839E-15 | 0 ± 1E-10
+PASS cut-cell open boundary | field ledger 4 | 1.110223025E-16 | 0 ± 1E-10
+PASS cut-cell open boundary | roundoff accounting [m3] | 5.762057498E-14 | 0 ± 1E-10
+PASS cut-cell open boundary | staggered phase mass closes [kg] | 7.958078641E-13 | 0 ± 1E-10
+PASS cut-cell open boundary | uniform velocity with open-boundary mass transfer [m/s] | 3.330669074E-16 | 0 ± 2E-10
+PASS cut-cell open boundary | staggered momentum follows boundary ledger [kg m/s] | 1.687538997E-14 | 0 ± 1E-09
+PASS cut-cell open boundary | S04 projection feeds cut-cell scalar transport [m3] | 0 | 0 ± 1E-10
+PASS cut-cell open boundary | pressure flux reconciliation [m3] | 0 | 0 ± 1E-06
+PASS cut-cell open boundary | advected cut-cell density feeds the next pressure solve | 1 | 1 ± 0
+PASS cut-cell open boundary | closed wall rejects normal transport | 1 | 1 ± 0
+PASS cut-cell closed circulation | GPU vs CPU inventory 0 | 5.551115123E-16 | 0 ± 4.245E-11
+PASS cut-cell closed circulation | GPU vs CPU inventory 1 | 5.551115123E-16 | 0 ± 5.053328157E-11
+PASS cut-cell closed circulation | GPU vs CPU inventory 2 | 3.996802889E-15 | 0 ± 2.547E-10
+PASS cut-cell closed circulation | GPU vs CPU inventory 3 | 4.440892099E-15 | 0 ± 1.515998447E-10
+PASS cut-cell closed circulation | GPU vs CPU inventory 4 | 6.938893904E-17 | 0 ± 5.053328157E-12
+PASS cut-cell closed circulation | GPU vs CPU liquid face flux | 5.551115123E-17 | 0 ± 6E-12
+PASS cut-cell closed circulation | GPU vs CPU gas face flux | 1.110223025E-16 | 0 ± 6E-12
+PASS cut-cell closed circulation | GPU vs CPU open boundary ledger | 0 | 0 ± 1E-25
+PASS cut-cell closed circulation | liquid volume closes [m3] | -6.661338148E-16 | 0 ± 1E-10
+PASS cut-cell closed circulation | closed boundary ledger [m3] | 0 | 0 ± 0
+PASS cut-cell closed circulation | staggered mass closes [kg] | 9.094947018E-13 | 0 ± 1E-10
+PASS cut-cell closed circulation | staggered velocity evolves under transported momentum | 1 | 1 ± 0
+PASS beaker cut-cell transport | resolved circulation crosses a curved cut cell | 1 | 1 ± 0
+PASS beaker cut-cell transport | GPU vs CPU inventory 0 | 7.411538288E-22 | 0 ± 5E-17
+PASS beaker cut-cell transport | GPU vs CPU inventory 1 | 7.411538288E-22 | 0 ± 8E-17
+PASS beaker cut-cell transport | GPU vs CPU inventory 2 | 3.388131789E-21 | 0 ± 3E-16
+PASS beaker cut-cell transport | GPU vs CPU inventory 3 | 3.388131789E-21 | 0 ± 2.4E-16
+PASS beaker cut-cell transport | GPU vs CPU inventory 4 | 1.058791184E-22 | 0 ± 8E-18
+PASS beaker cut-cell transport | GPU vs CPU liquid face flux | 9.822769774E-25 | 0 ± 3E-20
+PASS beaker cut-cell transport | GPU vs CPU gas face flux | 4.342698216E-24 | 0 ± 1E-19
+PASS beaker cut-cell transport | GPU vs CPU open boundary ledger | 0 | 0 ± 1E-25
+PASS beaker cut-cell transport | phase volume closes through curved cut cells [m3] | 4.33680869E-19 | 0 ± 1E-13
+PASS beaker cut-cell transport | staggered mass closes [kg] | 6.505213035E-19 | 0 ± 1E-12
+candidate roundoff 1.478289801E-12 m3
+108/108 passed

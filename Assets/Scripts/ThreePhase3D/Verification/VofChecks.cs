@@ -10,12 +10,16 @@ namespace PhysicsSim.ThreePhase3D.Verification
     public sealed class VofChecks
     {
         public delegate VofAdvance Advance(GeometricVof3D vof, VofFields state, double[][] velocity, double dt);
+        public delegate CutCellTransportResult CutAdvance(VariableCoefficientProjection plan, CutCellInventories state,
+            double[] velocity, double dt, Func<int, CutCellInflow> inflow);
         private readonly Advance advance;
+        private readonly CutAdvance cutAdvance;
         private readonly PeriodicVofProjection.PressureSolve pressureSolve;
         public VofChecks(Advance advance = null) : this(advance, null) { }
 
-        public VofChecks(Advance advance, PeriodicVofProjection.PressureSolve pressureSolve)
+        public VofChecks(Advance advance, PeriodicVofProjection.PressureSolve pressureSolve, CutAdvance cutAdvance = null)
         {
+            this.cutAdvance = cutAdvance;
             this.pressureSolve = pressureSolve ?? FlowCpuReference.Project;
             this.advance = advance ?? ((vof, state, velocity, dt) => vof.Advance(state, velocity, dt));
         }
@@ -95,7 +99,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 int face = plan.FaceIndex(0,i,0,0);
                 u[face] = .06 / plan.Faces[face].Area;
             }
-            var result = transport.Advance(state,u,1,_ => new CutCellInflow(0,0,4,.2,new D3(u[plan.FaceIndex(0,0,0,0)],0,0)));
+            var result = TransportCut(id, plan, transport, state,u,1,_ => new CutCellInflow(0,0,4,.2,new D3(u[plan.FaceIndex(0,0,0,0)],0,0)));
             int inlet = plan.FaceIndex(0,0,0,0);
             Check(id, "ambient gas inlet [m3]", result.GasFaceM3[inlet], .06, 1e-12);
             for (int field = 0; field < 5; field++)
@@ -138,7 +142,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 gas.Select(v => 3*v).ToArray(), gas.Select(v => .1*v).ToArray());
             var u = new double[plan.FaceCount];
             Set(0,1,0,0, .06); Set(2,1,0,1, .06); Set(0,1,0,1,-.06); Set(2,0,0,1,-.06);
-            var transport = solver.Advance(state,u,1);
+            var transport = TransportCut(id, plan, solver, state,u,1);
             var momentum = solver.AdvanceMomentum(state,transport,u,LiquidDensity,GasDensity);
             Check(id, "liquid volume closes [m3]", transport.Fields.LiquidM3.Sum() - liquid.Sum(), 0, 1e-10);
             Check(id, "closed boundary ledger [m3]", transport.BoundaryInflow.Select(Math.Abs).Max(), 0, 0);
@@ -175,7 +179,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
             for (int s = 0; s < 4; s++)
                 u[loop[s]] = (s < 2 ? 1 : -1) * 1e-9 / plan.Faces[loop[s]].Area;
             var transport = new CutCellVofTransport(plan);
-            var result = transport.Advance(state,u,1);
+            var result = TransportCut(id, plan, transport, state,u,1);
             var momentum = transport.AdvanceMomentum(state,result,u,LiquidDensity,GasDensity);
             Check(id, "phase volume closes through curved cut cells [m3]", result.Fields.LiquidM3.Sum() - liquid.Sum(), 0, 1e-13);
             Check(id, "staggered mass closes [kg]", momentum.MaxDualMassErrorKg, 0, 1e-12);
@@ -196,6 +200,26 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     if (faces.All(f => plan.Faces[f].Active != 0)) return faces;
                 }
                 return null;
+            }
+        }
+
+        private CutCellTransportResult TransportCut(string id, VariableCoefficientProjection plan, CutCellVofTransport reference,
+            CutCellInventories state, double[] velocity, double dt, Func<int, CutCellInflow> inflow = null)
+        {
+            var expected = reference.Advance(state, velocity, dt, inflow);
+            if (cutAdvance == null) return expected;
+            var actual = cutAdvance(plan, state, velocity, dt, inflow);
+            for (int plane = 0; plane < 5; plane++)
+                Compare("inventory " + plane, actual.Fields.Planes[plane], expected.Fields.Planes[plane]);
+            Compare("liquid face flux", actual.LiquidFaceM3, expected.LiquidFaceM3);
+            Compare("gas face flux", actual.GasFaceM3, expected.GasFaceM3);
+            Compare("open boundary ledger", actual.BoundaryInflow, expected.BoundaryInflow);
+            return actual;
+
+            void Compare(string quantity, double[] a, double[] b)
+            {
+                double scale = Math.Max(1e-15, b.Select(Math.Abs).Max());
+                Check(id, "GPU vs CPU " + quantity, a.Zip(b, (x,y) => Math.Abs(x-y)).Max(), 0, 1e-10 * scale);
             }
         }
 
