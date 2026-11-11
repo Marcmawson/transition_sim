@@ -29,6 +29,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private int previousFrameRate, previousVSync;
         private string evidence;
         private float frameMs;
+        private float playbackSpeed = .25f;
+        private float measuredPlaybackSpeed;
 
         private void OnEnable()
         {
@@ -127,7 +129,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
             if (!running || fluid == null || fluid.positionBuffer == null) return;
             double now = Time.realtimeSinceStartupAsDouble;
-            pendingSeconds = Math.Min(pendingSeconds + now - lastTick, MaxStepsPerFrame * StepSeconds);
+            pendingSeconds = Math.Min(pendingSeconds + (now - lastTick) * (measuring ? measuredPlaybackSpeed : playbackSpeed), MaxStepsPerFrame * StepSeconds);
             lastTick = now;
             int steps = (int)(pendingSeconds / StepSeconds);
             if (measuring)
@@ -159,6 +161,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.ResetParticles();
             evidence = null;
             measuredFrames = measuredSteps = 0;
+            measuredPlaybackSpeed = playbackSpeed;
             SetRunning(true);
             startTime = lastTick;
             measuring = true;
@@ -169,7 +172,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             measuring = false;
             double elapsed = Time.realtimeSinceStartupAsDouble - startTime;
             string timing = FormattableString.Invariant(
-                $"GPU drop: {measuredFrames} frames, {measuredFrames / elapsed:F1} FPS, {fluid.SimulatedSeconds:F3} s simulated in {elapsed:F3} s");
+                $"GPU drop: {measuredFrames} frames, {measuredFrames / elapsed:F1} FPS, {fluid.SimulatedSeconds:F3} s simulated in {elapsed:F3} s at {measuredPlaybackSpeed:P0} playback");
             evidence = timing;
             if (!SystemInfo.supportsAsyncGPUReadback)
             {
@@ -235,6 +238,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 }
                 if (GUILayout.Button("Measure drop + slosh")) StartMeasurement();
                 GUILayout.EndHorizontal();
+                GUI.enabled = !measuring && !readbackPending && !finishOnNextFrame;
+                GUILayout.Label($"Playback speed {playbackSpeed:P0}");
+                playbackSpeed = GUILayout.HorizontalSlider(playbackSpeed, .05f, 1f);
                 GUI.enabled = true;
             }
             if (evidence != null) GUILayout.Label(evidence);
