@@ -51,7 +51,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
         }
 
         internal PeriodicVofStep Advance(VofFields state, double dt, int maxIterations,
-            Func<VofFields, double[][], double, VofAdvance> advect, PressureSolve project, double surfaceTensionNPerM = 0, double[] sigmaByCell = null)
+            Func<VofFields, double[][], double, VofAdvance> advect, PressureSolve project, double surfaceTensionNPerM = 0, double[] sigmaByCell = null,
+            Func<double[], SurfaceCurvature[]> evaluateCurvature = null)
         {
             dt = (float)dt;
             if (state == null || !SiUnits.IsFinite(dt) || dt <= 0 || maxIterations < 1)
@@ -77,7 +78,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 return liquidDensity * fraction + gasDensity * (1 - fraction);
             }, _ => 0, true);
             var tentative = new float[plan.FaceCount];
-            var curvature = surfaceTensionNPerM > 0 ? FilterCurvature(SurfaceGeometry.Evaluate(transport, moved.LiquidFraction, -1, 0, extendColumns: true), moved.LiquidFraction) : null;
+            var curvature = surfaceTensionNPerM > 0 ? (evaluateCurvature ?? EvaluateCapillaryCurvature)(moved.LiquidFraction) : null;
             var tangentialForce = sigmaByCell == null ? null :
                 MarangoniStress.ForceDensity(transport, moved.LiquidFraction, sigmaByCell);
             int extrapolatedFaces = 0;
@@ -121,6 +122,9 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return new PeriodicVofStep(new VofFields(moved.LiquidFraction, velocity, moved.LiquidEnergyJ,
                 moved.GasEnergyJ, moved.VapourKg), pressure.Diagnostics, correction, pressure.GroupPressurePa, extrapolatedFaces);
         }
+
+        internal SurfaceCurvature[] EvaluateCapillaryCurvature(double[] fraction) =>
+            FilterCurvature(SurfaceGeometry.Evaluate(transport, fraction, -1, 0, extendColumns: true), fraction);
 
         private SurfaceCurvature[] FilterCurvature(SurfaceCurvature[] raw, double[] fraction)
         {

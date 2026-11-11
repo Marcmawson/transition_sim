@@ -192,3 +192,15 @@ The periodic filter now considers supported curvature up to two cells away. It w
 In the unchanged V11 matrix, translating speed error fell from 5.88 to 3.00 mm/s, maximum pressure error fell from 4.856% to 4.748%, and shape error moved from 1.393% to 1.397%. Static speed errors fell in all three short runs. The translating speed still exceeds the approximately 0.51 mm/s exploratory limit.
 
 The second orientation-weighted pass reuses the same normal field and weights and consumes the first pass's estimates. In the unchanged matrix it reduced the translating speed error from 3.00 to 1.60 mm/s and pressure error from 4.748% to 4.711%. Shape error rose from 1.397% to 1.403%. All three static speed errors fell. Repeated filtering broadens the effective neighbourhood, which may attenuate physically sharp curvature changes. The translating speed and static current decay remain open.
+
+### V11 curvature isolation
+
+Run the CPU diagnostics with `dotnet run -c Release --project Tools/ThreePhase3D/SurfaceGeometryChecks.csproj -- --v11-diagnostics`. Both runs use the same translating V11 setup and retain the same pressure, speed, volume and shape limits. The first uses the analytic sphere curvature `2/R` everywhere. The second uses the normal solver estimator and filter on a sphere freshly sampled at the exact translated position each step. Both retain the transported phase field for face jumps, densities and momentum. These are diagnostic substitutions for curvature only. The normal solver path continues to evaluate curvature from the transported phase field.
+
+| Curvature input | Maximum pressure error | Maximum moving-frame speed error | Final shape L1 error |
+| --- | ---: | ---: | ---: |
+| Transported field | 4.711% | 1.596 mm/s | 1.403% |
+| Analytic sphere curvature | 0.001% | 0.0321 mm/s | 1.408% |
+| Estimator on resampled sphere | 0.700% | 0.0432 mm/s | 1.407% |
+
+Both substitutions pass the unchanged limits. The pressure correction balances constant curvature on the transported field, and the existing estimator stays within tolerance when given a clean translated sphere. The failed production result appears when the estimator consumes the numerically transported interface. The diagnostic replacements do not advance the production validation gate.

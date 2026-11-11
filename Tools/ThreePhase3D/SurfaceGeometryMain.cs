@@ -11,6 +11,7 @@ internal static class SurfaceGeometryMain
 {
     private static int Main(string[] args)
     {
+        if (args.Contains("--v11-diagnostics")) return RunV11(diagnostics: true);
         if (args.Contains("--v11")) return RunV11();
         if (args.Contains("--wetting")) return BeakerVofMain.Main(args);
         if (args.Contains("--capillary-oscillation"))
@@ -114,18 +115,29 @@ internal static class SurfaceGeometryMain
         }
     }
 
-    private static int RunV11()
+    private enum CurvatureDiagnostic { Transported, ExactSphere, ResampledSphere }
+
+    private static int RunV11(bool diagnostics = false)
     {
         bool passed = true;
-        Check("coarse", 20, .0014, .007, 0, 6);
-        Check("fine", 24, .001, .007, 0, 6);
-        Check("smaller", 22, .001, .006, 0, 6);
-        Check("translating", 24, .001, .007, .5, 20);
+        if (diagnostics)
+        {
+            Check("translating exact-curvature", 24, .001, .007, .5, 20, CurvatureDiagnostic.ExactSphere);
+            Check("translating resampled-curvature", 24, .001, .007, .5, 20, CurvatureDiagnostic.ResampledSphere);
+        }
+        else
+        {
+            Check("coarse", 20, .0014, .007, 0, 6);
+            Check("fine", 24, .001, .007, 0, 6);
+            Check("smaller", 22, .001, .006, 0, 6);
+            Check("translating", 24, .001, .007, .5, 20);
+        }
         return passed ? 0 : 1;
 
-        void Check(string name, int n, double h, double radius, double translation, int steps)
+        void Check(string name, int n, double h, double radius, double translation, int steps,
+            CurvatureDiagnostic diagnostic = CurvatureDiagnostic.Transported)
         {
-            try { CheckV11Drop(name, n, h, radius, translation, steps); }
+            try { CheckV11Drop(name, n, h, radius, translation, steps, diagnostic); }
             catch (Exception failure)
             {
                 passed = false;
@@ -134,7 +146,8 @@ internal static class SurfaceGeometryMain
         }
     }
 
-    private static void CheckV11Drop(string name, int n, double h, double radius, double translation, int steps)
+    private static void CheckV11Drop(string name, int n, double h, double radius, double translation, int steps,
+        CurvatureDiagnostic diagnostic)
     {
         const double rhoL = 997, rhoG = 1.2, sigma = .072, dt = .0001;
         var grid = new Grid3D(n, n, n, new D3(h, h, h));
@@ -144,13 +157,27 @@ internal static class SurfaceGeometryMain
         var state = VofChecks.Fields(grid, alpha, VofChecks.Uniform(alpha.Length, translation, 0, 0));
         var flow = new PeriodicVofProjection(grid, rhoL, rhoG);
         var control = state;
+        var exactCurvature = diagnostic == CurvatureDiagnostic.ExactSphere
+            ? Enumerable.Repeat(new SurfaceCurvature(CurvatureSupport.HeightFunction, 2 / radius), alpha.Length).ToArray()
+            : null;
         double expectedJump = 2 * sigma / radius;
         double maxJumpError = 0, maxSpeed = 0, firstSpeed = 0, finalSpeed = 0, maxDrift = 0;
         double initialVolume = alpha.Sum() * grid.CellVolume;
         for (int iteration = 1; iteration <= steps; iteration++)
         {
             PeriodicVofStep step;
-            try { step = flow.AdvanceCapillary(state, dt, sigma, 16384); }
+            try
+            {
+                if (diagnostic == CurvatureDiagnostic.Transported)
+                    step = flow.AdvanceCapillary(state, dt, sigma, 16384);
+                else
+                {
+                    double displacementAtStep = translation * (float)dt * iteration;
+                    step = flow.Advance(state, dt, 16384, vof.Advance, FlowCpuReference.Project, sigma,
+                        evaluateCurvature: _ => exactCurvature ?? flow.EvaluateCapillaryCurvature(
+                            SampleSphere(vof, centre + new D3(displacementAtStep, 0, 0), radius, 12)));
+                }
+            }
             catch (Exception failure)
             {
                 throw new InvalidOperationException($"Step {iteration} failed after t={(iteration - 1) * dt:G6} s. {failure.Message}", failure);
