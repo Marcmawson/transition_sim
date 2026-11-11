@@ -103,3 +103,11 @@ The planar-wall capillary reference accepts a static contact angle through the l
 The CPU fixture compares initially stationary 75°, 90°, and 105° spherical caps with the same Young–Laplace jump. This is a prescribed-angle curvature and pressure check. Dynamic PLIC wetting and bulk viscous relaxation remain separate capabilities from this planar reference, and the measured-glass V13 comparison remains open.
 
 For the angled cases the nearby-curvature search expands up to three cells if the first ring has no usable height function. The exploratory angled-cap check caps spurious speed at 0.5% of `sqrt(sigma / (rhoLiquid * radius))`. The 105° case exceeds the tighter 90° regression bound of 0.25 mm/s on its second step. Longer-time spurious-current control remains open.
+
+### Dynamic wetting in planar capillary pressure
+
+`CutCellVofTransport.WithPlanarWallWetting` combines tracked contact-angle reconstruction, contact traction, and planar-wall capillary forcing. Use `AdvanceCoupledWithWetting` with the two phase viscosities. After transport and contact traction, the pressure predictor redetects the contact region and evaluates the calibrated angle from the local wall-relative speed and apparent angle. Each wall height-function column uses its own tracked angle where available and the equilibrium angle elsewhere. The accepted step reports the number of wall cells with a tracked capillary angle.
+
+The synthetic CPU fixture seeds a small circulation at the foot of a 90° sessile cap with a synthetic 89.5°–90.5° hysteresis band, then advances twice using the accepted velocity. It checks capillary and traction contact activation, pressure and volume, and compares the first step with the same wetting and traction calculation with surface tension disabled. This couples dynamic wetting and capillary forcing on the planar reference geometry. Bulk viscous relaxation, curved-wall capillary curvature, and measured-glass V13 validation remain open.
+
+An exploratory 87°–93° hysteresis band exceeded the short-run spurious-speed limit on its first step at 1 mm resolution. The narrower-band fixture verifies the coupling. Wider hysteresis and longer runs still need a resolution study and improved spurious-current control.

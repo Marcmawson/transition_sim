@@ -56,6 +56,7 @@ internal static class SurfaceGeometryMain
         CheckSessileCapillaryPressure(90);
         CheckSessileCapillaryPressure(75);
         CheckSessileCapillaryPressure(105);
+        CheckSessileCapillaryPressure(90, true);
         return 0;
     }
 
@@ -367,7 +368,7 @@ internal static class SurfaceGeometryMain
         }
     }
 
-    private static void CheckSessileCapillaryPressure(double angle)
+    private static void CheckSessileCapillaryPressure(double angle, bool dynamicWetting = false)
     {
         const int n = 24, firstFluidY = 1;
         const double h = .001, wallY = h, radius = .007, sigma = .072, dt = .0001;
@@ -376,24 +377,51 @@ internal static class SurfaceGeometryMain
         var slab = SurfacePrimitives.Box(new D3(-h, -h, -h), new D3((n + 1) * h, wallY, (n + 1) * h));
         var geometry = CutCellGeometry.Build(grid, slab);
         var plan = new VariableCoefficientProjection(geometry, BoundaryConditions3D.Closed, _ => rhoG, _ => 0);
-        var solver = CutCellVofTransport.WithPlanarWallCapillarity(plan, firstFluidY, sigma, angle);
+        var profile = new WettingProfile("Synthetic planar wall", "Dynamic capillary fixture", 90, .0001, h,
+            new[] { new WettingMeasurement(0, 90.5), new WettingMeasurement(.02, 91) },
+            new[] { new WettingMeasurement(0, 89.5), new WettingMeasurement(.02, 89) });
+        var solver = dynamicWetting ? CutCellVofTransport.WithPlanarWallWetting(plan, firstFluidY, sigma, profile) :
+            CutCellVofTransport.WithPlanarWallCapillarity(plan, firstFluidY, sigma, angle);
         var liquid = SampleSessileCap(plan, wallY, new D3(.012, wallY - radius * Math.Cos(angle * Math.PI / 180), .012), radius);
         var gas = plan.Volumes.Zip(liquid, (volume, water) => volume - water).ToArray();
         var state = new CutCellInventories(liquid, gas, new double[gas.Length], new double[gas.Length], new double[gas.Length]);
-        var flow = FlowCpuReference.Project(plan, new float[plan.FaceCount], dt, 16384);
+        var seed = new float[plan.FaceCount];
+        if (dynamicWetting)
+        {
+            int[] loop = { plan.FaceIndex(0, 19, 1, 11), plan.FaceIndex(1, 19, 2, 11),
+                plan.FaceIndex(0, 19, 2, 11), plan.FaceIndex(1, 18, 2, 11) };
+            for (int i = 0; i < loop.Length; i++)
+                seed[loop[i]] = (float)((i < 2 ? 1 : -1) * 1e-10 / plan.Faces[loop[i]].Area);
+        }
+        var flow = FlowCpuReference.Project(plan, seed, dt, 16384);
         int core = plan.GroupByCell[grid.Cells.Index(n / 2, firstFluidY, n / 2)];
         int ambient = plan.GroupByCell[grid.Cells.Index(0, firstFluidY, 0)];
         double expected = 2 * sigma / radius;
-        double speedLimit = angle == 90 ? .00025 : .005 * Math.Sqrt(sigma / (rhoL * radius));
+        double speedLimit = angle == 90 && !dynamicWetting ? .00025 : .005 * Math.Sqrt(sigma / (rhoL * radius));
         for (int step = 1; step <= 2; step++)
         {
-            var trial = solver.AdvanceCoupled(state, flow, rhoL, rhoG, maxIterations: 16384);
+            var trial = dynamicWetting
+                ? solver.AdvanceCoupledWithWetting(state, flow, rhoL, rhoG, .001, .000018, maxIterations: 16384)
+                : solver.AdvanceCoupled(state, flow, rhoL, rhoG, maxIterations: 16384);
+            if (dynamicWetting && (trial.CapillaryWettingContacts == 0 || trial.Momentum.ContactTractionPatches == 0))
+                throw new InvalidOperationException("The dynamic capillary fixture must apply wetting and contact traction.");
+            if (dynamicWetting && step == 1)
+            {
+                var wettingOnly = CutCellVofTransport.WithTrackedWetting(plan, profile)
+                    .AdvanceCoupledWithWetting(state, flow, rhoL, rhoG, .001, .000018, maxIterations: 16384);
+                double jumpWithoutCapillarity = wettingOnly.Pressure.GroupPressurePa[core] -
+                    wettingOnly.Pressure.GroupPressurePa[ambient];
+                if (!(Math.Abs(jumpWithoutCapillarity) < 1) ||
+                    !wettingOnly.Momentum.VelocityMPerS.SequenceEqual(trial.Momentum.VelocityMPerS))
+                    throw new InvalidOperationException("The comparison must isolate the capillary pressure increment.");
+                Console.WriteLine($"Wetting-only comparison pressure jump={jumpWithoutCapillarity:G8} Pa");
+            }
             flow = trial.Pressure;
             state = trial.Transport.Fields;
             double jump = flow.GroupPressurePa[core] - flow.GroupPressurePa[ambient];
             double speed = flow.VelocityMPerS.Max(value => Math.Abs(value));
             double drift = state.LiquidM3.Sum() - liquid.Sum();
-            Console.WriteLine($"{angle:G}-degree sessile cap step {step}: jump={jump:G8} Pa (expected {expected:G8}), max face speed={speed:G8} m/s, drift={drift:E4} m^3");
+            Console.WriteLine($"{angle:G}-degree sessile cap step {step}: jump={jump:G8} Pa (expected {expected:G8}), max face speed={speed:G8} m/s, drift={drift:E4} m^3, dynamic contacts={trial.CapillaryWettingContacts}");
             if (!flow.Diagnostics.Converged || !(Math.Abs(jump / expected - 1) <= .05) ||
                 !(speed <= speedLimit) || !(Math.Abs(drift) <= 1e-15))
                 throw new InvalidOperationException("Wall-compatible capillary pressure check failed.");

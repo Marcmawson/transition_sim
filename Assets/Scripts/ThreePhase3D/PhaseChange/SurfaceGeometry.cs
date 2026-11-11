@@ -32,7 +32,7 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
             Evaluate(transport, liquidFraction, -1, 0);
 
         internal static SurfaceCurvature[] Evaluate(GeometricVof3D transport, double[] liquidFraction,
-            int wallRow, double contactCotangent)
+            int wallRow, double contactCotangent, Func<int, int, double> wallCotangent = null)
         {
             if (transport == null) throw new ArgumentNullException(nameof(transport));
             if (liquidFraction == null || liquidFraction.Length != transport.CellCount)
@@ -61,7 +61,7 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
 
             bool TryHeights(int axis, int u, int v, int direction)
             {
-                bool angledWall = wallRow >= 0 && contactCotangent != 0;
+                bool angledWall = wallRow >= 0 && (contactCotangent != 0 || wallCotangent != null);
                 int start = -Radius, end = Radius;
                 if (angledWall && axis == 1)
                 {
@@ -101,7 +101,11 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
                         int left = Math.Max(-1, t - 1), right = Math.Min(1, t + 1);
                         double transverseSlope = (heights[4 + right * transverseStride] -
                             heights[4 + left * transverseStride]) / ((right - left) * transverseSpacing);
-                        heights[index - wallStride] = heights[index] + grid.Spacing.Y * contactCotangent *
+                        int transverse = u == 1 ? v : u;
+                        int x = (origin[0] + (transverse == 0 ? t : 0) + shape.X) % shape.X;
+                        int z = (origin[2] + (transverse == 2 ? t : 0) + shape.Z) % shape.Z;
+                        double cotangent = wallCotangent == null ? contactCotangent : wallCotangent(x, z);
+                        heights[index - wallStride] = heights[index] + grid.Spacing.Y * cotangent *
                             Math.Sqrt(1 + transverseSlope * transverseSlope);
                     }
                 }

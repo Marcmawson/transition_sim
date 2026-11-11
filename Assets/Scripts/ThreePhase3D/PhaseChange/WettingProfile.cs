@@ -114,12 +114,18 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
             SignedSpeedMPerS = signedSpeedMPerS;
         }
 
+        internal double ContactAngleDegrees(D3 estimatedNormal)
+        {
+            double cosine = Math.Max(-1, Math.Min(1, D3.Dot(estimatedNormal.Unit(), Wall.NormalLocal.Unit())));
+            return Profile.AngleDegrees(SignedSpeedMPerS, Math.Acos(cosine) * 180 / Math.PI);
+        }
+
         internal D3 InterfaceNormal(D3 estimatedNormal)
         {
             var wall = Wall.NormalLocal.Unit();
             var outward = estimatedNormal.Unit();
             double cosine = Math.Max(-1, Math.Min(1, D3.Dot(outward, wall)));
-            double angle = Profile.AngleDegrees(SignedSpeedMPerS, Math.Acos(cosine) * 180 / Math.PI) * Math.PI / 180;
+            double angle = ContactAngleDegrees(outward) * Math.PI / 180;
             var tangent = outward - wall * cosine;
             if (tangent.Length < 1e-12)
                 throw new InvalidOperationException("The wall-parallel contact-line direction is unresolved.");

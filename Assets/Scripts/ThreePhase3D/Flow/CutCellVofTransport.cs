@@ -30,6 +30,15 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 new PlanarWallCapillarity(plan ?? throw new ArgumentNullException(nameof(plan)),
                     firstFluidY, surfaceTensionNPerM, contactAngleDegrees));
 
+        public static CutCellVofTransport WithPlanarWallWetting(VariableCoefficientProjection plan,
+            int firstFluidY, double surfaceTensionNPerM, WettingProfile profile)
+        {
+            if (plan == null) throw new ArgumentNullException(nameof(plan));
+            if (profile == null) throw new ArgumentNullException(nameof(profile));
+            return new CutCellVofTransport(plan, null, profile,
+                new PlanarWallCapillarity(plan, firstFluidY, surfaceTensionNPerM, profile.EquilibriumAngleDegrees));
+        }
+
         public static CutCellVofTransport WithTrackedWetting(VariableCoefficientProjection plan, WettingProfile profile) =>
             new CutCellVofTransport(plan, null, profile ?? throw new ArgumentNullException(nameof(profile)));
 
@@ -180,10 +189,27 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     gasDensity * transported.Fields.GasM3[group]) / plan.Volumes[group];
             }, _ => 0);
             var tentative = Array.ConvertAll(advected.VelocityMPerS, value => (float)value);
+            Dictionary<int, double> angles = null;
+            if (capillarity != null && trackedPatches != null)
+            {
+                angles = new Dictionary<int, double>();
+                var liquid = transported.Fields.LiquidM3;
+                foreach (int cell in trackedPatches.Keys)
+                {
+                    plan.Grid.Cells.Coordinates(cell, out _, out int j, out _);
+                    int group = plan.GroupByCell[cell];
+                    if (j != capillarity.FirstFluidY || group < 0 || liquid[group] <= 0 ||
+                        transported.Fields.GasM3[group] <= 0) continue;
+                    var normal = EstimateNormal(cell, group, liquid);
+                    var contact = TrackContact(cell, group, liquid[group], normal, advected.VelocityMPerS);
+                    if (contact == null) continue;
+                    angles.Add(cell, contact.ContactAngleDegrees(normal));
+                }
+            }
             capillarity?.Apply(nextPlan, transported.Fields, lowCell, highCell, liquidDensity, gasDensity,
-                transportingFlow.Diagnostics.Dt, tentative);
+                transportingFlow.Diagnostics.Dt, tentative, angles);
             var pressure = project(nextPlan, tentative, transportingFlow.Diagnostics.Dt, maxIterations);
-            return new CutCellCoupledStep(transported, advected, pressure);
+            return new CutCellCoupledStep(transported, advected, pressure, angles?.Count ?? 0);
         }
 
         public CutCellMomentumResult AdvanceMomentum(CutCellInventories before, CutCellTransportResult transported,
@@ -573,9 +599,12 @@ namespace PhysicsSim.ThreePhase3D.Flow
         public readonly CutCellTransportResult Transport;
         public readonly CutCellMomentumResult Momentum;
         public readonly FlowStep Pressure;
-        internal CutCellCoupledStep(CutCellTransportResult transport, CutCellMomentumResult momentum, FlowStep pressure)
+        public readonly int CapillaryWettingContacts;
+        internal CutCellCoupledStep(CutCellTransportResult transport, CutCellMomentumResult momentum, FlowStep pressure,
+            int capillaryWettingContacts = 0)
         {
             Transport = transport; Momentum = momentum; Pressure = pressure;
+            CapillaryWettingContacts = capillaryWettingContacts;
         }
     }
 

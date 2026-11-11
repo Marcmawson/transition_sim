@@ -9,7 +9,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
     internal sealed class PlanarWallCapillarity
     {
         private readonly GeometricVof3D reflected;
-        private readonly int firstFluidY;
+        internal int FirstFluidY { get; }
         private readonly double sigma, timestepLimit, contactCotangent;
 
         internal PlanarWallCapillarity(VariableCoefficientProjection plan, int firstFluidY, double sigma, double contactAngleDegrees)
@@ -45,7 +45,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 throw new ArgumentOutOfRangeException(nameof(contactAngleDegrees));
             double radians = contactAngleDegrees * Math.PI / 180;
             contactCotangent = contactAngleDegrees == 90 ? 0 : Math.Cos(radians) / Math.Sin(radians);
-            this.firstFluidY = firstFluidY;
+            FirstFluidY = firstFluidY;
             this.sigma = sigma;
             var h = grid.Spacing;
             double minimum = Math.Min(h.X, Math.Min(h.Y, h.Z));
@@ -54,27 +54,39 @@ namespace PhysicsSim.ThreePhase3D.Flow
         }
 
         internal void Apply(VariableCoefficientProjection plan, CutCellInventories fields,
-            int[] lowCell, int[] highCell, double rhoL, double rhoG, double dt, float[] tentative)
+            int[] lowCell, int[] highCell, double rhoL, double rhoG, double dt, float[] tentative,
+            System.Collections.Generic.IReadOnlyDictionary<int, double> contactAngles = null)
         {
             if (dt > Math.Sqrt((rhoL + rhoG) * timestepLimit))
                 throw new ArgumentOutOfRangeException(nameof(dt), "Step exceeds the explicit capillary timestep limit.");
             var shape = plan.Grid.Cells;
-            int half = shape.Y - firstFluidY;
+            int half = shape.Y - FirstFluidY;
             var alpha = new double[reflected.CellCount];
             for (int k = 0; k < shape.Z; k++)
-            for (int j = firstFluidY; j < shape.Y; j++)
+            for (int j = FirstFluidY; j < shape.Y; j++)
             for (int i = 0; i < shape.X; i++)
             {
                 int group = plan.GroupByCell[shape.Index(i, j, k)];
                 double fraction = fields.LiquidM3[group] / plan.Volumes[group];
                 if (fraction > 1e-12 && (i < 3 || k < 3 || i >= shape.X - 3 || k >= shape.Z - 3 || j >= shape.Y - 3))
                     throw new NotSupportedException("Keep three gas cells between the interface and the outer reflection boundaries.");
-                int y = half + j - firstFluidY;
+                int y = half + j - FirstFluidY;
                 alpha[reflected.CellIndex(i, y, k)] = fraction;
                 alpha[reflected.CellIndex(i, 2 * half - 1 - y, k)] = fraction;
             }
-            var curvature = contactCotangent == 0 ? SurfaceGeometry.Evaluate(reflected, alpha) :
-                SurfaceGeometry.Evaluate(reflected, alpha, half, contactCotangent);
+            bool angledWall = contactCotangent != 0 || contactAngles?.Count > 0;
+            Func<int, int, double> wallCotangent = contactAngles?.Count > 0 ? CotangentAt : null;
+            var curvature = angledWall
+                ? SurfaceGeometry.Evaluate(reflected, alpha, half, contactCotangent, wallCotangent)
+                : SurfaceGeometry.Evaluate(reflected, alpha);
+
+            double CotangentAt(int i, int k)
+            {
+                if (!contactAngles.TryGetValue(shape.Index(i, FirstFluidY, k), out double angle))
+                    return contactCotangent;
+                double radians = angle * Math.PI / 180;
+                return angle == 90 ? 0 : Math.Cos(radians) / Math.Sin(radians);
+            }
             for (int f = 0; f < tentative.Length; f++)
             {
                 var face = plan.Faces[f];
@@ -93,13 +105,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
             int MirrorIndex(int cell)
             {
                 shape.Coordinates(cell, out int i, out int j, out int k);
-                return reflected.CellIndex(i, half + j - firstFluidY, k);
+                return reflected.CellIndex(i, half + j - FirstFluidY, k);
             }
 
             double Nearby(int low, int high)
             {
                 int nx = shape.X, ny = 2 * half;
-                int maxReach = contactCotangent == 0 ? 1 : 3;
+                int maxReach = angledWall ? 3 : 1;
                 for (int reach = 1; reach <= maxReach; reach++)
                 {
                     double sum = 0;
@@ -112,7 +124,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                         for (int dy = -reach; dy <= reach; dy++)
                         for (int dx = -reach; dx <= reach; dx++)
                         {
-                            if ((contactCotangent != 0 && y + dy < half) ||
+                            if ((angledWall && y + dy < half) ||
                                 !reflected.Grid.Cells.Interior(x + dx, y + dy, z + dz)) continue;
                             double value = curvature[reflected.CellIndex(x + dx, y + dy, z + dz)].InverseMetres;
                             if (!SiUnits.IsFinite(value)) continue;
