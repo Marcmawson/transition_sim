@@ -52,6 +52,7 @@ internal static class SurfaceGeometryMain
         double coarseContactError = CheckSessileDrop(16);
         if (!(CheckSessileDrop(24) < coarseContactError))
             throw new InvalidOperationException("Contact patch localisation did not improve under refinement.");
+        CheckSessileSlipResponse();
         return 0;
     }
 
@@ -244,28 +245,7 @@ internal static class SurfaceGeometryMain
         foreach (double xCentre in new[] { .0115, .0125 })
         {
             var centre = new D3(xCentre, wallY - radius * .5, .012);
-            var liquid = new double[plan.GroupCount];
-            var shape = grid.Cells;
-            for (int k = 0; k < shape.Z; k++)
-            for (int j = 0; j < shape.Y; j++)
-            for (int i = 0; i < shape.X; i++)
-            {
-                int cell = shape.Index(i, j, k), group = plan.GroupByCell[cell];
-                if (group < 0) continue;
-                var lower = grid.Lower(i, j, k);
-                double yLow = Math.Max(wallY, lower.Y), height = lower.Y + h - yLow;
-                int inside = 0;
-                const int samples = 10;
-                for (int z = 0; z < samples; z++)
-                for (int y = 0; y < samples; y++)
-                for (int x = 0; x < samples; x++)
-                {
-                    var p = new D3(lower.X + h * (x + .5) / samples, yLow + height * (y + .5) / samples,
-                        lower.Z + h * (z + .5) / samples) - centre;
-                    if (D3.Dot(p, p) < radius * radius) inside++;
-                }
-                liquid[group] += geometry.FluidVolumeM3[cell] * inside / (samples * samples * samples);
-            }
+            var liquid = SampleSessileCap(plan, wallY, centre, radius);
 
             int advancing = 0, receding = 0, wrongSign = 0, contacts = 0;
             double radialError = 0, angleError = 0;
@@ -295,6 +275,93 @@ internal static class SurfaceGeometryMain
             maximumRadialError = Math.Max(maximumRadialError, radialError);
         }
         return maximumRadialError;
+    }
+
+    private static double[] SampleSessileCap(VariableCoefficientProjection plan, double wallY, D3 centre, double radius)
+    {
+        var grid = plan.Grid;
+        double h = grid.Spacing.X;
+        var liquid = new double[plan.GroupCount];
+        var shape = grid.Cells;
+        for (int k = 0; k < shape.Z; k++)
+        for (int j = 0; j < shape.Y; j++)
+        for (int i = 0; i < shape.X; i++)
+        {
+            int cell = shape.Index(i, j, k), group = plan.GroupByCell[cell];
+            if (group < 0) continue;
+            var lower = grid.Lower(i, j, k);
+            double yLow = Math.Max(wallY, lower.Y), height = lower.Y + h - yLow;
+            int inside = 0;
+            const int samples = 10;
+            for (int z = 0; z < samples; z++)
+            for (int y = 0; y < samples; y++)
+            for (int x = 0; x < samples; x++)
+            {
+                var p = new D3(lower.X + h * (x + .5) / samples, yLow + height * (y + .5) / samples,
+                    lower.Z + h * (z + .5) / samples) - centre;
+                if (D3.Dot(p, p) < radius * radius) inside++;
+            }
+            liquid[group] += plan.Geometry.FluidVolumeM3[cell] * inside / (samples * samples * samples);
+        }
+        return liquid;
+    }
+
+    private static void CheckSessileSlipResponse()
+    {
+        const int n = 16;
+        const double h = .0015, wallY = .0013, radius = .006, dt = .001;
+        const double rhoL = 997, rhoG = 1.2, muL = .001, muG = .000018;
+        var grid = new Grid3D(n, n / 2, n, new D3(h, h, h));
+        var wall = SurfacePrimitives.Box(new D3(-h, -h, -h), new D3((n + 1) * h, wallY, (n + 1) * h));
+        var geometry = CutCellGeometry.Build(grid, wall);
+        var plan = new VariableCoefficientProjection(geometry, BoundaryConditions3D.Closed, _ => rhoL, _ => 0);
+        var liquid = SampleSessileCap(plan, wallY, new D3(.0115, wallY - radius * .5, .012), radius);
+        var gas = plan.Volumes.Zip(liquid, (volume, water) => volume - water).ToArray();
+        var initial = new CutCellInventories(liquid, gas, new double[gas.Length], new double[gas.Length], new double[gas.Length]);
+
+        // Four face fluxes close around a loop crossing the cap's footprint.
+        var seed = new float[plan.FaceCount];
+        int[] loop = { plan.FaceIndex(0, 11, 0, 7), plan.FaceIndex(1, 11, 1, 7),
+            plan.FaceIndex(0, 11, 1, 7), plan.FaceIndex(1, 10, 1, 7) };
+        for (int i = 0; i < loop.Length; i++)
+        {
+            if (plan.Faces[loop[i]].Active == 0)
+                throw new InvalidOperationException("The sessile fixture circulation crosses a blocked face.");
+            seed[loop[i]] = (float)((i < 2 ? 1 : -1) * 1e-9 / plan.Faces[loop[i]].Area);
+        }
+        var initialFlow = FlowCpuReference.Project(plan, seed, dt, 16384);
+        double shortImpulse = Run(.00005);
+        double longImpulse = Run(.0005);
+        if (!(shortImpulse > longImpulse && longImpulse > 0))
+            throw new InvalidOperationException("A larger slip length must reduce the first-step wall impulse in the fixture.");
+
+        double Run(double slip)
+        {
+            var profile = new WettingProfile("Synthetic planar wall", "Sessile cap slip sensitivity", 60, slip, h,
+                new[] { new WettingMeasurement(0, 65), new WettingMeasurement(.02, 75) },
+                new[] { new WettingMeasurement(0, 55), new WettingMeasurement(.02, 45) });
+            var solver = CutCellVofTransport.WithTrackedWetting(plan, profile);
+            var fields = initial;
+            var flow = initialFlow;
+            double firstImpulse = 0, moved = 0;
+            int patches = 0;
+            for (int step = 0; step < 3; step++)
+            {
+                var trial = solver.AdvanceCoupledWithWetting(fields, flow, rhoL, rhoG, muL, muG, maxIterations: 16384);
+                fields = trial.Transport.Fields;
+                flow = trial.Pressure;
+                patches += trial.Momentum.ContactTractionPatches;
+                if (step == 0) firstImpulse = trial.Momentum.WallImpulseKgMPerS.Sum(Math.Abs);
+                if (Math.Abs(fields.LiquidM3.Sum() - liquid.Sum()) > 1e-15 ||
+                    trial.Momentum.MaxDualMassErrorKg > 1e-12 || !flow.Diagnostics.Converged)
+                    throw new InvalidOperationException("Sessile cap volume, mass or pressure check failed.");
+                moved = fields.LiquidM3.Zip(liquid, (current, prior) => Math.Abs(current - prior)).Sum();
+            }
+            if (patches == 0 || !(moved > 1e-13))
+                throw new InvalidOperationException("The sessile cap must move and apply contact traction.");
+            Console.WriteLine($"Evolving sessile cap: slip={slip:G5} m, first wall impulse={firstImpulse:G8} kg m/s, contact patches={patches}, liquid redistribution={moved:G8} m^3");
+            return firstImpulse;
+        }
     }
 
     private static void CheckAlternateAxis()

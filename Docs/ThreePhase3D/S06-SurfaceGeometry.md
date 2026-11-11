@@ -81,3 +81,9 @@ The CPU surface suite samples a prescribed 60° spherical cap above a flat wall 
 The two snapshots prescribe the motion. A free sessile-drop evolution benchmark, slip-length sensitivity, and comparison against separately measured glass observations are still required for V13. The actual glass preparation, temperature, angle and speed measurements with uncertainty, slip length, and matching distance are pending under [MAT028](Materials.csv).
 
 The reported Unity run `s06-beaker-20261111T142027-2c19e7c3542a4fb59225a94ec8576e10` passed at [commit 5372635](https://github.com/Marcmawson/transition_sim/commit/5372635857edcfae9f9fd2babbad2d214542a892) with eight accepted steps, eight clipping dispatches, eight traction dispatches, and 184 contact patch occurrences.
+
+### Evolving sessile cap and slip sensitivity
+
+The CPU suite also seeds a closed four-face circulation across the footprint of a sampled spherical cap. After the initial projection, each timestep takes its liquid inventory and velocity from the preceding accepted solve. Both runs start from the same state and compare 50 µm and 500 µm slip lengths over three 1 ms steps. The fixture checks liquid redistribution, contact activation, volume and staggered-mass closure, pressure convergence, and reduced first-step wall impulse with the longer slip length.
+
+This isolates the response of tracked contact traction to a flow perturbation. The cut-cell momentum step in this fixture includes advection, contact traction, and pressure projection. Wall-compatible capillary forcing and bulk viscosity are required to test free capillary relaxation and compare against a measured sessile-drop trajectory.
