@@ -205,6 +205,53 @@ namespace PhysicsSim.ThreePhase3D.Verification
             Check(id, "core plug speed before wall diffusion reaches it [m/s]", step.VelocityMPerS[core], initial[core], 2e-8);
             Check(id, "curved wall does not reverse the plug flow", Array.Exists(step.VelocityMPerS, speed => speed < -1e-9f) ? 1 : 0, 0, 0);
             Check(id, "curved wall reduces axial plug velocity norm", Energy(step.VelocityMPerS) < Energy(initial) ? 1 : 0, 1, 0);
+
+            const string slipId = "embedded-curved-navier-slip";
+            var profile = new WettingProfile("Synthetic cylindrical wall", "Curved slip fixture", 60, .002, .01,
+                new[] { new WettingMeasurement(0, 70), new WettingMeasurement(.01, 75) },
+                new[] { new WettingMeasurement(0, 50), new WettingMeasurement(.01, 45) });
+            var navier = new MomentumPredictor3D(plan, _ => profile);
+            var slipStep = RunStep(slipId, navier, initial, new D3(), .01);
+            Check(slipId, "slip reduces axial plug damping", Energy(slipStep.VelocityMPerS) > Energy(step.VelocityMPerS) &&
+                Energy(slipStep.VelocityMPerS) < Energy(initial) ? 1 : 0, 1, 0);
+
+            // The swirl exercises both cross-component coefficients on oblique patches.
+            var swirl = new float[plan.FaceCount];
+            for (int face = 0; face < swirl.Length; face++)
+            {
+                int axis = plan.Faces[face].Axis;
+                if (axis == 1 || plan.Faces[face].Active == 0) continue;
+                grid.Shape((GridLocation)(axis + 1)).Coordinates(face - plan.FaceOffsets[axis],
+                    out int i, out _, out int k);
+                swirl[face] = (float)(axis == 0 ? .08 - (k + .5) * grid.Spacing.Z : (i + .5) * grid.Spacing.X - .08);
+            }
+            var coupled = navier.Predict(swirl, new D3(), .01);
+            bool exercisedCrossTerm = false;
+            for (int face = 0; face < swirl.Length; face++)
+            {
+                int axis = plan.Faces[face].Axis;
+                if (axis != 0 || plan.Faces[face].Active == 0) continue;
+                int row = face * EmbeddedViscousStencil.Stride;
+                double crossRate = navier.Diffusion.Rates[row + 8];
+                if (Math.Abs(crossRate) < 1e-4) continue;
+                double transverse = 0;
+                for (int sample = 0; sample < 4; sample++)
+                {
+                    int other = navier.Stencil[face * MomentumPredictor3D.Stride + 14 + sample];
+                    if (other >= 0) transverse += .25 * swirl[other];
+                }
+                if (Math.Abs(transverse) < .005) continue;
+                // Remove the coupling on this probe only to measure its contribution.
+                navier.Diffusion.Rates[row + 8] = 0;
+                float diagonalOnly = navier.Predict(swirl, new D3(), .01)[face];
+                navier.Diffusion.Rates[row + 8] = (float)crossRate;
+                Check(slipId, "oblique cross-component velocity increment [m/s]",
+                    (double)coupled[face] - diagonalOnly, -.01 * crossRate * transverse, 5e-9);
+                exercisedCrossTerm = true;
+                break;
+            }
+            Check(slipId, "oblique cross term was exercised", exercisedCrossTerm ? 1 : 0, 1, 0);
+            RunStep(slipId + "-swirl", navier, swirl, new D3(), .01);
         }
 
         private void Channel()

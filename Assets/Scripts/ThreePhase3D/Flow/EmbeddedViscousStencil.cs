@@ -22,7 +22,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // Limitations: two-point centroid approximation on nonorthogonal cut stencils.
     internal sealed class EmbeddedViscousStencil
     {
-        internal const int Stride = 7;
+        internal const int Stride = 9;
         private const double GeometricTolerance = 1e-10;
         private readonly VariableCoefficientProjection plan;
         private readonly int[] neighbours;
@@ -41,6 +41,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 var dual = embedded ? plan.Geometry.BuildVelocityDual(axis) : null;
                 var centroid = new D3[shape.Count];
                 var wallConductance = new double[shape.Count];
+                var crossConductance = wallWetting == null ? null : new double[checked(2 * shape.Count)];
                 if (dual != null)
                 {
                     for (int local = 0; local < shape.Count; local++)
@@ -61,16 +62,15 @@ namespace PhysicsSim.ThreePhase3D.Flow
                             wallConductance[patch.Cell] += patch.FluidExposedAreaM2 / distance;
                             continue;
                         }
-                        // This scalar MAC row has no cross-component wall terms.
-                        // An oblique wall needs those terms for a tangential traction.
+                        // N/d + (I-N)/(d+slip), where N = n n^T.
                         var normal = patch.NormalLocal;
-                        double alignment = Math.Max(Math.Abs(normal.X), Math.Max(Math.Abs(normal.Y), Math.Abs(normal.Z)));
-                        if (alignment < 1 - GeometricTolerance ||
-                            Math.Abs(normal.X) + Math.Abs(normal.Y) + Math.Abs(normal.Z) - alignment > GeometricTolerance)
-                            throw new NotSupportedException("Navier slip requires a grid-aligned embedded wall in the scalar viscous stencil.");
-                        double inverseDistance = Math.Abs(normal[axis]) <= GeometricTolerance
-                            ? wetting.WallGradientPerVelocity(distance) : 1 / distance;
-                        wallConductance[patch.Cell] += patch.FluidExposedAreaM2 * inverseDistance;
+                        double tangent = wetting.WallGradientPerVelocity(distance);
+                        double contrast = 1 / distance - tangent;
+                        double area = patch.FluidExposedAreaM2;
+                        wallConductance[patch.Cell] += area * (tangent + contrast * normal[axis] * normal[axis]);
+                        for (int offset = 1; offset <= 2; offset++)
+                            crossConductance[2 * patch.Cell + offset - 1] +=
+                                area * contrast * normal[axis] * normal[(axis + offset) % 3];
                     }
                 }
 
@@ -86,6 +86,16 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     int row = face * Stride;
                     Rates[row + 6] = Rate(metric.Viscosity * wallConductance[local] / volume);
                     double diagonal = Rates[row + 6];
+                    if (crossConductance != null)
+                    {
+                        for (int offset = 0; offset < 2; offset++)
+                        {
+                            double coefficient = metric.Viscosity * crossConductance[2 * local + offset] / volume;
+                            float magnitude = Rate(Math.Abs(coefficient));
+                            Rates[row + 7 + offset] = coefficient < 0 ? -magnitude : magnitude;
+                            diagonal += magnitude;
+                        }
+                    }
                     for (int direction = 0; direction < 3; direction++)
                     for (int side = 0; side < 2; side++)
                     {

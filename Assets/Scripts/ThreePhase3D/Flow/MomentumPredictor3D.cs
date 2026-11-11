@@ -148,6 +148,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     double transport = 0;
                     for (int sample = 0; sample < 4; sample++)
                         transport += Sample(velocity, Stencil[start + 6 + 4 * axis + sample], centre) * .25;
+                    if (axis != data.Axis)
+                        change -= Diffusion.Rates[row + 7 + (axis + 3 - data.Axis) % 3 - 1] * transport;
                     double derivative = transport >= 0 ? centre - lower : upper - centre;
                     change += Diffusion.Rates[row + 2 * axis] * (lower - centre)
                         + Diffusion.Rates[row + 2 * axis + 1] * (upper - centre)

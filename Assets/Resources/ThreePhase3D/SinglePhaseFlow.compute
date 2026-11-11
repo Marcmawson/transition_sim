@@ -55,7 +55,7 @@ void PredictMomentum(uint3 id : SV_DispatchThreadID)
     }
 
     float centre = VelocityIn[index];
-    int row = (int)index * 7;
+    int row = (int)index * 9;
     float change = Acceleration[face.axis] - ViscousRates[row + 6] * centre;
     int start = (int)index * 18;
     for (int axis = 0; axis < 3; axis++)
@@ -65,6 +65,8 @@ void PredictMomentum(uint3 id : SV_DispatchThreadID)
         float transport = 0;
         for (int sample = 0; sample < 4; sample++)
             transport += SampleVelocity(Stencil[start + 6 + 4 * axis + sample], centre) * 0.25;
+        if (axis != face.axis)
+            change -= ViscousRates[row + 7 + (axis + 3 - face.axis) % 3 - 1] * transport;
         float derivative = transport >= 0 ? centre - lower : upper - centre;
         float inverse = InverseSpacing[axis];
         change += ViscousRates[row + 2 * axis] * (lower - centre)
