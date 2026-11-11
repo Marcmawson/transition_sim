@@ -23,6 +23,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
         private readonly Dictionary<int, List<InterfacePatch>> trackedPatches;
         private readonly WettingProfile trackedWetting;
         private readonly PlanarWallCapillarity capillarity;
+        private readonly bool planarBulkViscosity;
 
         public static CutCellVofTransport WithPlanarWallCapillarity(VariableCoefficientProjection plan,
             int firstFluidY, double surfaceTensionNPerM, double contactAngleDegrees = 90) =>
@@ -31,12 +32,12 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     firstFluidY, surfaceTensionNPerM, contactAngleDegrees));
 
         public static CutCellVofTransport WithPlanarWallWetting(VariableCoefficientProjection plan,
-            int firstFluidY, double surfaceTensionNPerM, WettingProfile profile)
+            int firstFluidY, double surfaceTensionNPerM, WettingProfile profile, bool bulkViscosity = false)
         {
             if (plan == null) throw new ArgumentNullException(nameof(plan));
             if (profile == null) throw new ArgumentNullException(nameof(profile));
             return new CutCellVofTransport(plan, null, profile,
-                new PlanarWallCapillarity(plan, firstFluidY, surfaceTensionNPerM, profile.EquilibriumAngleDegrees));
+                new PlanarWallCapillarity(plan, firstFluidY, surfaceTensionNPerM, profile.EquilibriumAngleDegrees), bulkViscosity);
         }
 
         public static CutCellVofTransport WithTrackedWetting(VariableCoefficientProjection plan, WettingProfile profile) =>
@@ -49,7 +50,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             : this(plan, contactAtCell, null) { }
 
         private CutCellVofTransport(VariableCoefficientProjection plan, Func<int, WettingContact> contactAtCell,
-            WettingProfile trackedWetting, PlanarWallCapillarity capillarity = null)
+            WettingProfile trackedWetting, PlanarWallCapillarity capillarity = null, bool planarBulkViscosity = false)
         {
             this.plan = plan ?? throw new ArgumentNullException(nameof(plan));
             this.contactAtCell = contactAtCell;
@@ -62,6 +63,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             }
             this.trackedWetting = trackedWetting;
             this.capillarity = capillarity;
+            this.planarBulkViscosity = planarBulkViscosity;
             if (trackedWetting != null)
             {
                 trackedPatches = new Dictionary<int, List<InterfacePatch>>();
@@ -167,8 +169,10 @@ namespace PhysicsSim.ThreePhase3D.Flow
                         TrackContact(cell, group, after.Fields.LiquidM3[group],
                             EstimateNormal(cell, group, after.Fields.LiquidM3), advected.VelocityMPerS, contacts.Add);
                     }
-                    return momentum.ApplyContactTraction(advected, after.Fields, contacts, trackedWetting,
+                    var withTraction = momentum.ApplyContactTraction(advected, after.Fields, contacts, trackedWetting,
                         rhoL, rhoG, liquidViscosityPaS, gasViscosityPaS, transportingFlow.Diagnostics.Dt, traction);
+                    return planarBulkViscosity ? momentum.ApplyPlanarBulkViscosity(withTraction, after.Fields,
+                        rhoL, rhoG, liquidViscosityPaS, gasViscosityPaS, transportingFlow.Diagnostics.Dt) : withTraction;
                 });
         }
 

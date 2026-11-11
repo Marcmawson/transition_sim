@@ -28,6 +28,79 @@ namespace PhysicsSim.ThreePhase3D.Flow
             }
         }
 
+        // Componentwise finite-volume diffusion on the full Cartesian fluid
+        // rows of the planar reference. Each link exchanges one paired impulse.
+        internal CutCellMomentumResult ApplyPlanarBulkViscosity(CutCellMomentumResult input,
+            CutCellInventories state, double rhoL, double rhoG, double muL, double muG, double dt)
+        {
+            var grid = plan.Grid;
+            var mass = new double[plan.FaceCount];
+            var viscosity = new double[plan.FaceCount];
+            var impulse = new double[plan.FaceCount];
+            var weights = new double[plan.FaceCount];
+            for (int f = 0; f < mass.Length; f++)
+            {
+                var face = plan.Faces[f];
+                if (face.Active == 0) continue;
+                mass[f] = FaceMass(state, face, rhoL, rhoG);
+                double alpha = .5 * (state.LiquidM3[face.Low] / plan.Volumes[face.Low] +
+                    state.LiquidM3[face.High] / plan.Volumes[face.High]);
+                viscosity[f] = alpha * muL + (1 - alpha) * muG;
+            }
+
+            for (int axis = 0; axis < 3; axis++)
+            {
+                var shape = grid.Shape((GridLocation)(axis + 1));
+                for (int local = 0; local < shape.Count; local++)
+                {
+                    int f = plan.FaceOffsets[axis] + local;
+                    if (mass[f] == 0) continue;
+                    shape.Coordinates(local, out int i, out int j, out int k);
+                    for (int direction = 0; direction < 3; direction++)
+                    {
+                        int x = i + (direction == 0 ? 1 : 0);
+                        int y = j + (direction == 1 ? 1 : 0);
+                        int z = k + (direction == 2 ? 1 : 0);
+                        if (!shape.Interior(x, y, z)) continue;
+                        int other = plan.FaceIndex(axis, x, y, z);
+                        if (mass[other] == 0) continue;
+                        double a = viscosity[f], b = viscosity[other];
+                        double conductance = (2 / (1 / a + 1 / b)) * grid.FaceArea(direction) /
+                            grid.Spacing[direction];
+                        double weight = dt * conductance;
+                        double exchanged = weight * (input.VelocityMPerS[other] - input.VelocityMPerS[f]);
+                        impulse[f] += exchanged;
+                        impulse[other] -= exchanged;
+                        weights[f] += weight;
+                        weights[other] += weight;
+                    }
+                }
+            }
+
+            var velocity = (double[])input.VelocityMPerS.Clone();
+            var momentum = (double[])input.MomentumKgMPerS.Clone();
+            double energyLoss = 0;
+            for (int f = 0; f < mass.Length; f++)
+            {
+                if (weights[f] == 0) continue;
+                // This bound makes the explicit update a convex average.
+                if (!(weights[f] <= mass[f]) || !SiUnits.IsFinite(impulse[f]))
+                    throw new InvalidOperationException("Timestep exceeds the explicit bulk viscosity bound.");
+                momentum[f] += impulse[f];
+                velocity[f] = momentum[f] / mass[f];
+                energyLoss -= .5 * impulse[f] * (input.VelocityMPerS[f] + velocity[f]);
+            }
+            return new CutCellMomentumResult(velocity, momentum, input.BoundaryMomentumKgMPerS,
+                input.WallImpulseKgMPerS, input.MaxDualMassErrorKg, input.ContactTractionPatches, energyLoss);
+        }
+
+        private double FaceMass(CutCellInventories state, VariableCoefficientProjection.Face face, double rhoL, double rhoG) =>
+            PartMass(state, face, face.Low, rhoL, rhoG) + PartMass(state, face, face.High, rhoL, rhoG);
+
+        private double PartMass(CutCellInventories state, VariableCoefficientProjection.Face face,
+            int group, double rhoL, double rhoG) => group < 0 ? 0 :
+            (rhoL * state.LiquidM3[group] + rhoG * state.GasM3[group]) * (face.Area / areaSum[face.Axis, group]);
+
         internal CutCellMomentumResult ApplyContactTraction(CutCellMomentumResult input,
             CutCellInventories state, List<InterfacePatch> contacts, WettingProfile profile,
             double rhoL, double rhoG, double muL, double muG, double dt,
@@ -86,7 +159,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     throw new InvalidOperationException("Invalid impulse on a contact traction face.");
                 if (explicitWeights[f] == 0) continue;
                 var face = plan.Faces[f];
-                double mass = Part(face, face.Low) + Part(face, face.High);
+                double mass = FaceMass(state, face, rhoL, rhoG);
                 // Sampling and scatter are adjoints. The weighted Jensen bound
                 // limits the largest mass-normalised drag eigenvalue to one.
                 if (explicitWeights[f] > mass)
@@ -99,9 +172,6 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 input.MaxDualMassErrorKg, contacts.Count);
 
             double Weight(VariableCoefficientProjection.Face face, int group) => face.Area / areaSum[face.Axis, group];
-
-            double Part(VariableCoefficientProjection.Face face, int group) => group < 0 ? 0 :
-                (rhoL * state.LiquidM3[group] + rhoG * state.GasM3[group]) * Weight(face, group);
         }
 
         internal CutCellMomentumResult Advance(CutCellInventories before, CutCellTransportResult after,
@@ -159,14 +229,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return new CutCellMomentumResult(result, momentum, exterior, wall, maxMassError);
 
             double DualMass(CutCellInventories state, VariableCoefficientProjection.Face face) =>
-                Part(state, face, face.Low) + Part(state, face, face.High);
-
-            double Part(CutCellInventories state, VariableCoefficientProjection.Face face, int group)
-            {
-                if (group < 0) return 0;
-                double cellMass = liquidDensity * state.LiquidM3[group] + gasDensity * state.GasM3[group];
-                return cellMass * (face.Area / areaSum[face.Axis, group]);
-            }
+                FaceMass(state, face, liquidDensity, gasDensity);
 
             double Distribute(int group, int axis, double total, double incomingMomentum, bool withdraw)
             {
@@ -238,11 +301,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
         public readonly double[] VelocityMPerS, MomentumKgMPerS, BoundaryMomentumKgMPerS, WallImpulseKgMPerS;
         public readonly double MaxDualMassErrorKg;
         public readonly int ContactTractionPatches;
+        public readonly double BulkViscousEnergyLossJ;
         internal CutCellMomentumResult(double[] velocity, double[] momentum, double[] boundary, double[] wall,
-            double error, int contactTractionPatches = 0)
+            double error, int contactTractionPatches = 0, double bulkViscousEnergyLossJ = 0)
         {
             VelocityMPerS = velocity; MomentumKgMPerS = momentum;
             ContactTractionPatches = contactTractionPatches;
+            BulkViscousEnergyLossJ = bulkViscousEnergyLossJ;
             BoundaryMomentumKgMPerS = boundary; WallImpulseKgMPerS = wall; MaxDualMassErrorKg = error;
         }
     }

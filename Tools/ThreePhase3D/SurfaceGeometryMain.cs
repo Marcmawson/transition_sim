@@ -57,6 +57,7 @@ internal static class SurfaceGeometryMain
         CheckSessileCapillaryPressure(75);
         CheckSessileCapillaryPressure(105);
         CheckSessileCapillaryPressure(90, true);
+        CheckSessileCapillaryPressure(90, true, true);
         return 0;
     }
 
@@ -368,7 +369,7 @@ internal static class SurfaceGeometryMain
         }
     }
 
-    private static void CheckSessileCapillaryPressure(double angle, bool dynamicWetting = false)
+    private static void CheckSessileCapillaryPressure(double angle, bool dynamicWetting = false, bool bulkViscosity = false)
     {
         const int n = 24, firstFluidY = 1;
         const double h = .001, wallY = h, radius = .007, sigma = .072, dt = .0001;
@@ -380,7 +381,7 @@ internal static class SurfaceGeometryMain
         var profile = new WettingProfile("Synthetic planar wall", "Dynamic capillary fixture", 90, .0001, h,
             new[] { new WettingMeasurement(0, 90.5), new WettingMeasurement(.02, 91) },
             new[] { new WettingMeasurement(0, 89.5), new WettingMeasurement(.02, 89) });
-        var solver = dynamicWetting ? CutCellVofTransport.WithPlanarWallWetting(plan, firstFluidY, sigma, profile) :
+        var solver = dynamicWetting ? CutCellVofTransport.WithPlanarWallWetting(plan, firstFluidY, sigma, profile, bulkViscosity) :
             CutCellVofTransport.WithPlanarWallCapillarity(plan, firstFluidY, sigma, angle);
         var liquid = SampleSessileCap(plan, wallY, new D3(.012, wallY - radius * Math.Cos(angle * Math.PI / 180), .012), radius);
         var gas = plan.Volumes.Zip(liquid, (volume, water) => volume - water).ToArray();
@@ -405,7 +406,7 @@ internal static class SurfaceGeometryMain
                 : solver.AdvanceCoupled(state, flow, rhoL, rhoG, maxIterations: 16384);
             if (dynamicWetting && (trial.CapillaryWettingContacts == 0 || trial.Momentum.ContactTractionPatches == 0))
                 throw new InvalidOperationException("The dynamic capillary fixture must apply wetting and contact traction.");
-            if (dynamicWetting && step == 1)
+            if (dynamicWetting && !bulkViscosity && step == 1)
             {
                 var wettingOnly = CutCellVofTransport.WithTrackedWetting(plan, profile)
                     .AdvanceCoupledWithWetting(state, flow, rhoL, rhoG, .001, .000018, maxIterations: 16384);
@@ -415,6 +416,26 @@ internal static class SurfaceGeometryMain
                     !wettingOnly.Momentum.VelocityMPerS.SequenceEqual(trial.Momentum.VelocityMPerS))
                     throw new InvalidOperationException("The comparison must isolate the capillary pressure increment.");
                 Console.WriteLine($"Wetting-only comparison pressure jump={jumpWithoutCapillarity:G8} Pa");
+            }
+            if (bulkViscosity)
+            {
+                double loss = trial.Momentum.BulkViscousEnergyLossJ;
+                if (!(loss > 0))
+                    throw new InvalidOperationException("Bulk viscosity must dissipate kinetic energy.");
+                Console.WriteLine($"Viscous sessile cap step {step}: bulk energy loss={loss:E5} J");
+                if (step == 1)
+                {
+                    var reference = CutCellVofTransport.WithPlanarWallWetting(plan, firstFluidY, sigma, profile)
+                        .AdvanceCoupledWithWetting(state, flow, rhoL, rhoG, .001, .000018, maxIterations: 16384);
+                    var total = new double[3];
+                    for (int f = 0; f < plan.FaceCount; f++)
+                        total[plan.Faces[f].Axis] += trial.Momentum.MomentumKgMPerS[f] -
+                            reference.Momentum.MomentumKgMPerS[f];
+                    if (total.Any(value => Math.Abs(value) > 1e-20) ||
+                        !trial.Momentum.WallImpulseKgMPerS.SequenceEqual(reference.Momentum.WallImpulseKgMPerS))
+                        throw new InvalidOperationException("Bulk viscosity must exchange momentum internally.");
+                    Console.WriteLine($"Bulk impulse residual={total.Max(value => Math.Abs(value)):E5} kg m/s");
+                }
             }
             flow = trial.Pressure;
             state = trial.Transport.Fields;
