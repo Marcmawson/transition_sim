@@ -31,6 +31,17 @@ namespace PhysicsSim.ThreePhase3D.Flow
             Advance(state, dt, maxIterations, surfaceTensionNPerM > 0 ? AdvectCapillary : transport.Advance,
                 FlowCpuReference.Project, surfaceTensionNPerM);
 
+        public PeriodicVofStep AdvanceViscousCapillary(VofFields state, double dt, double surfaceTensionNPerM,
+            double liquidViscosityPaS, double gasViscosityPaS, int maxIterations = 4096)
+        {
+            if (!SiUnits.IsFinite(liquidViscosityPaS) || liquidViscosityPaS <= 0 ||
+                !SiUnits.IsFinite(gasViscosityPaS) || gasViscosityPaS <= 0)
+                throw new ArgumentException("Both dynamic viscosities must be finite and positive.");
+            return Advance(state, dt, maxIterations, surfaceTensionNPerM > 0 ? AdvectCapillary : transport.Advance,
+                FlowCpuReference.Project, surfaceTensionNPerM,
+                liquidViscosity: liquidViscosityPaS, gasViscosity: gasViscosityPaS);
+        }
+
         internal VofAdvance AdvectCapillary(VofFields state, double[][] velocity, double dt)
         {
             var normals = new D3[transport.CellCount];
@@ -60,7 +71,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         internal PeriodicVofStep Advance(VofFields state, double dt, int maxIterations,
             Func<VofFields, double[][], double, VofAdvance> advect, PressureSolve project, double surfaceTensionNPerM = 0, double[] sigmaByCell = null,
-            Func<double[], SurfaceCurvature[]> evaluateCurvature = null)
+            Func<double[], SurfaceCurvature[]> evaluateCurvature = null,
+            double liquidViscosity = 0, double gasViscosity = 0)
         {
             dt = (float)dt;
             if (state == null || !SiUnits.IsFinite(dt) || dt <= 0 || maxIterations < 1)
@@ -86,6 +98,9 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 return liquidDensity * fraction + gasDensity * (1 - fraction);
             }, _ => 0, true);
             var tentative = new float[plan.FaceCount];
+            var velocityPredictor = liquidViscosity > 0
+                ? ApplyViscousStress(moved, dt, liquidViscosity, gasViscosity)
+                : moved.FaceVelocity;
             var curvature = surfaceTensionNPerM > 0 ? (evaluateCurvature ?? EvaluateCapillaryCurvature)(moved.LiquidFraction) : null;
             var tangentialForce = sigmaByCell == null ? null :
                 MarangoniStress.ForceDensity(transport, moved.LiquidFraction, sigmaByCell);
@@ -93,7 +108,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             ForEachFace((axis, cell, i, j, k) =>
             {
                 int face = plan.FaceIndex(axis, i, j, k);
-                double predicted = moved.FaceVelocity[axis][cell];
+                double predicted = velocityPredictor[axis][cell];
                 if (curvature != null)
                 {
                     int high = transport.CellIndex(i % shape.X, j % shape.Y, k % shape.Z);
@@ -123,12 +138,92 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 if (!SiUnits.IsFinite(tentative[face]))
                     throw new InvalidOperationException("Predicted face velocity exceeds FP32 range.");
             });
-            var pressure = project(plan, tentative, dt, maxIterations);
             var velocity = new[] { new double[transport.CellCount], new double[transport.CellCount], new double[transport.CellCount] };
-            ForEachFace((a, c, i, j, k) => velocity[a][c] = pressure.VelocityMPerS[plan.FaceIndex(a, i, j, k)]);
+            var pressure = liquidViscosity > 0
+                ? FlowCpuReference.Project(plan, tentative, dt, maxIterations, candidate =>
+                {
+                    CopyVelocity(candidate);
+                    return ReconcileDivergence(velocity, dt) <= 1e-6;
+                })
+                : project(plan, tentative, dt, maxIterations);
+            CopyVelocity(pressure.VelocityMPerS);
             double correction = ReconcileDivergence(velocity, dt);
+            if (correction > 1e-6)
+                throw new InvalidOperationException("Pressure divergence reconciliation exceeds 1e-6 Courant units.");
             return new PeriodicVofStep(new VofFields(moved.LiquidFraction, velocity, moved.LiquidEnergyJ,
                 moved.GasEnergyJ, moved.VapourKg), pressure.Diagnostics, correction, pressure.GroupPressurePa, extrapolatedFaces);
+
+            void CopyVelocity(float[] input) =>
+                ForEachFace((a, c, i, j, k) => velocity[a][c] = input[plan.FaceIndex(a, i, j, k)]);
+        }
+
+        private double[][] ApplyViscousStress(VofFields state, double dt, double muLiquid, double muGas)
+        {
+            // Cell normal stresses and edge shear stresses share the same
+            // negative-transpose scatter as the planar stress operator.
+            var shape = geometry.Grid.Cells;
+            var spacing = geometry.Grid.Spacing;
+            int count = transport.CellCount;
+            var mu = new double[count];
+            var rho = new double[count];
+            var impulse = new[] { new double[count], new double[count], new double[count] };
+            var rowBound = new[] { new double[count], new double[count], new double[count] };
+            var result = new[] { new double[count], new double[count], new double[count] };
+            for (int c = 0; c < count; c++)
+            {
+                double fraction = state.LiquidFraction[c];
+                mu[c] = muLiquid * fraction + muGas * (1 - fraction);
+                rho[c] = liquidDensity * fraction + gasDensity * (1 - fraction);
+            }
+            for (int c = 0; c < count; c++)
+            for (int a = 0; a < 3; a++)
+            {
+                int before = Neighbour(c, a, -1);
+                double inverseA = 1 / spacing[a];
+                double normalFactor = 2 * dt * mu[c] * inverseA * inverseA;
+                Scatter(a, before, c, normalFactor *
+                    (state.FaceVelocity[a][c] - state.FaceVelocity[a][before]), 2 * normalFactor);
+                for (int b = a + 1; b < 3; b++)
+                {
+                    int ca = Neighbour(c, a, 1), cb = Neighbour(c, b, 1);
+                    int cab = Neighbour(ca, b, 1);
+                    double inverseB = 1 / spacing[b];
+                    double factor = dt * (4 / (1 / mu[c] + 1 / mu[ca] + 1 / mu[cb] + 1 / mu[cab]));
+                    double shear = (state.FaceVelocity[a][cb] - state.FaceVelocity[a][c]) * inverseB +
+                        (state.FaceVelocity[b][ca] - state.FaceVelocity[b][c]) * inverseA;
+                    double bound = 2 * factor * (inverseA + inverseB);
+                    Scatter(a, c, cb, factor * shear * inverseB, bound * inverseB);
+                    Scatter(b, c, ca, factor * shear * inverseA, bound * inverseA);
+                }
+            }
+
+            for (int c = 0; c < count; c++)
+            for (int axis = 0; axis < 3; axis++)
+            {
+                double faceDensity = .5 * (rho[c] + rho[Neighbour(c, axis, 1)]);
+                if (!(rowBound[axis][c] <= faceDensity) || !SiUnits.IsFinite(impulse[axis][c]))
+                    throw new ArgumentOutOfRangeException(nameof(dt), "Step exceeds the explicit periodic viscous bound.");
+                result[axis][c] = state.FaceVelocity[axis][c] + impulse[axis][c] / faceDensity;
+            }
+            return result;
+
+            void Scatter(int axis, int low, int high, double delta, double bound)
+            {
+                if (low == high) return;
+                impulse[axis][low] += delta;
+                impulse[axis][high] -= delta;
+                rowBound[axis][low] += bound;
+                rowBound[axis][high] += bound;
+            }
+
+            int Neighbour(int c, int axis, int offset)
+            {
+                int i = c % shape.X, j = c / shape.X % shape.Y, k = c / shape.X / shape.Y;
+                if (axis == 0) i = (i + offset + shape.X) % shape.X;
+                else if (axis == 1) j = (j + offset + shape.Y) % shape.Y;
+                else k = (k + offset + shape.Z) % shape.Z;
+                return transport.CellIndex(i, j, k);
+            }
         }
 
         internal SurfaceCurvature[] EvaluateCapillaryCurvature(double[] fraction) =>
@@ -247,8 +342,6 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 maximum = Math.Max(maximum, Math.Abs(remainder * dt));
                 velocity[axis][parent] += remainder * h[axis];
             }
-            if (maximum > 1e-6)
-                throw new InvalidOperationException("Pressure divergence reconciliation exceeds 1e-6 Courant units.");
             return maximum;
         }
     }

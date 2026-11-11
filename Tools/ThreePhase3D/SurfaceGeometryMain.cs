@@ -12,6 +12,12 @@ internal static class SurfaceGeometryMain
     private static int Main(string[] args)
     {
         if (args.Contains("--v11-diagnostics")) return RunV11(diagnostics: true);
+        if (args.Contains("--v11-decay"))
+        {
+            CheckV11ViscousDecay(24);
+            CheckV11ViscousDecay(32);
+            return 0;
+        }
         if (args.Contains("--v11")) return RunV11();
         if (args.Contains("--wetting")) return BeakerVofMain.Main(args);
         if (args.Contains("--capillary-oscillation"))
@@ -216,6 +222,57 @@ internal static class SurfaceGeometryMain
         double exploratorySpeedLimit = .005 * Math.Sqrt(sigma / (rhoL * radius));
         if (!(maxJumpError <= .05 && maxSpeed <= exploratorySpeedLimit && maxDrift <= initialVolume * 1e-10 && shapeError <= .05))
             throw new InvalidOperationException("One or more pressure, speed, volume or shape tolerances failed.");
+    }
+
+    private static void CheckV11ViscousDecay(int n)
+    {
+        const double rhoL = 997, rhoG = 1.2, muL = .001, muG = .000018;
+        const double extent = .024, radius = .007, sigma = .072, dt = .0002, amplitude = .0002;
+        const int steps = 8, waves = 4;
+        double h = extent / n;
+        var grid = new Grid3D(n, n, n, new D3(h, h, h));
+        var vof = new GeometricVof3D(grid, rhoL, rhoG);
+        var alpha = SampleSphere(vof, new D3(extent / 2, extent / 2, extent / 2), radius, 12);
+        var seeded = VofChecks.Uniform(alpha.Length, 0, 0, 0);
+        for (int k = 0; k < n; k++)
+        for (int j = 0; j < n; j++)
+        for (int i = 0; i < n; i++)
+            seeded[0][vof.CellIndex(i, j, k)] = amplitude * Mode(j);
+        var fields = VofChecks.Fields(grid, alpha, seeded);
+        var flow = new PeriodicVofProjection(grid, rhoL, rhoG);
+        double initialVolume = alpha.Sum() * grid.CellVolume;
+        double maxSpeed = amplitude, maxDrift = 0, maxPressureError = 0;
+        double expectedJump = 2 * sigma / radius;
+        for (int step = 0; step < steps; step++)
+        {
+            var advanced = flow.AdvanceViscousCapillary(fields, dt, sigma, muL, muG, 16384);
+            fields = advanced.Fields;
+            maxSpeed = Math.Max(maxSpeed, fields.FaceVelocity.Max(axis => axis.Max(Math.Abs)));
+            maxDrift = Math.Max(maxDrift, Math.Abs(fields.LiquidFraction.Sum() * grid.CellVolume - initialVolume));
+            double jump = advanced.CellPressurePa[vof.CellIndex(n / 2, n / 2, n / 2)] - advanced.CellPressurePa[0];
+            maxPressureError = Math.Max(maxPressureError, Math.Abs(jump / expectedJump - 1));
+        }
+
+        // Project the gas-plane velocity onto the seeded shear mode.
+        double projection = 0, weight = 0;
+        for (int j = 0; j < n; j++)
+        for (int k = 0; k < n; k++)
+        {
+            double mode = Mode(j);
+            projection += fields.FaceVelocity[0][vof.CellIndex(0, j, k)] * mode;
+            weight += mode * mode;
+        }
+        double retained = projection / (amplitude * weight);
+        double gasModeRate = 4 * (muG / rhoG) * Math.Pow(Math.Sin(Math.PI * waves / n), 2) / (h * h);
+        double expectedRetained = Math.Pow(1 - dt * gasModeRate, steps);
+        Console.WriteLine(FormattableString.Invariant(
+            $"V11 viscous decay: h={h:G5} m t={steps * dt:G5} s retained={retained:F6} gas_reference={expectedRetained:F6} max_speed={maxSpeed:E5} m/s pressure_error={maxPressureError:P3} volume_drift={maxDrift:E5} m^3"));
+        if (!(retained > 0 && retained < .99 && Math.Abs(retained - expectedRetained) < .02) ||
+            !(maxSpeed <= .005 * Math.Sqrt(sigma / (rhoL * radius))) ||
+            !(maxDrift <= initialVolume * 1e-10) || !(maxPressureError <= .05))
+            throw new InvalidOperationException("V11 viscous perturbation failed its decay or balance limits.");
+
+        double Mode(int j) => Math.Sin(2 * Math.PI * waves * (j + .5) / n);
     }
 
     private static double[] SampleSphere(GeometricVof3D transport, D3 centre, double radius, int samples)

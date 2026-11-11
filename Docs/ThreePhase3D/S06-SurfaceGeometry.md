@@ -212,3 +212,11 @@ The CPU periodic isothermal capillary path uses the supported height graph to fo
 The 1 mm translating case now passes the original limits. Moving-frame speed error is 0.118 mm/s, pressure error is 0.851%, and shape L1 error is 0.288% over 1 mm of travel. The two curvature diagnostics use the same updated capillary advection path. The V11 matrix also runs the translating case at 0.75 mm spacing with the same timestep and travel distance. Static viscous decay remains open.
 
 The refined translating run also passes. At 0.75 mm spacing, the maximum speed error is 0.169 mm/s, pressure error is 0.337%, and shape L1 error is 0.154%. The finer grid improves pressure and shape error and increases the maximum moving-frame speed relative to the 1 mm case. Both remain below 0.51 mm/s.
+
+### Periodic viscous capillarity and V11 decay
+
+`AdvanceViscousCapillary` applies the symmetric Newtonian stress to the advected periodic velocity before capillary forcing and pressure projection. Cell viscosities use the transported volume fractions and edge shear uses the harmonic mean of its four adjacent cell viscosities. Each strain stencil scatters paired impulses and the explicit step checks an absolute row-sum bound against the face density. The other periodic entry points retain their previous behavior.
+
+Run the CPU decay cases with `dotnet run -c Release --project Tools/ThreePhase3D/SurfaceGeometryChecks.csproj -- --v11-decay`. The fixture seeds a divergence-free 0.2 mm/s periodic shear around the 7 mm stationary drop, using dynamic viscosities of 0.001 Pa·s and 0.000018 Pa·s for water and air. It measures the seeded mode on a plane in the ambient gas after 1.6 ms, compares it with the discrete pure-gas shear reference, and checks pressure, maximum speed, and volume at 1.0 and 0.75 mm spacing. This probes decay of a small velocity disturbance near a static capillary balance. Longer runs are needed to measure the residual current floor and its grid dependence.
+
+The viscous CPU pressure path checks the existing 1e-6 Courant reconciliation bound before accepting a pressure solve. It uses a scratch velocity field for the check and retains the same limit at the transport handoff. The inviscid and GPU pressure entry points retain their original acceptance behavior.
