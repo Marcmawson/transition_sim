@@ -89,6 +89,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             geometry = setup.scenario.physical.geometry;
             geometry.innerRadiusM = .033;
             geometry.cavityHeightM = .06;
+            geometry.tripodRingRadiusM = geometry.OuterRadiusM * .75;
             setup.scenario.display.glassOpacity = .28f;
             setup.scenario.display.showSetupReport = false;
             setup.Refresh();
