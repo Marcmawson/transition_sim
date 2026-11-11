@@ -30,9 +30,12 @@ namespace PhysicsSim.ThreePhase3D.Geometry
         public readonly IReadOnlyList<double> GroupFluidVolumeM3;
         public readonly int MergedCellCount;
         private readonly bool[] physical;
-        public TinyCellMergePlan(CutCellGeometry geometry,double fraction=.05)
+        public TinyCellMergePlan(CutCellGeometry geometry,double fraction=.05) : this(geometry,fraction,0) { }
+
+        internal TinyCellMergePlan(CutCellGeometry geometry,double fraction,double minimumFaceFraction)
         {
             if(!SiUnits.IsFinite(fraction)||fraction<=0||fraction>=1)throw new ArgumentException("Tiny-cell threshold must lie strictly between 0 and 1.");
+            if(!SiUnits.IsFinite(minimumFaceFraction)||minimumFaceFraction<0||minimumFaceFraction>=1)throw new ArgumentException("Minimum face fraction must be in [0,1).");
             var g=geometry.Grid;_Group=new int[g.Cells.Count];_GroupFluidVolumeM3=new double[_Group.Length];physical=new bool[_Group.Length];for(int q=0;q<_Group.Length;q++){_Group[q]=q;g.Cells.Coordinates(q,out int i,out int j,out int k);physical[q]=g.Cells.Interior(i,j,k);}
             int merged=0;
             for(int k=0;k<g.Cells.Z;k++)for(int j=0;j<g.Cells.Y;j++)for(int i=0;i<g.Cells.X;i++)
@@ -43,7 +46,7 @@ namespace PhysicsSim.ThreePhase3D.Geometry
                 {
                     int ni=i+(axis==0?sign:0),nj=j+(axis==1?sign:0),nk=k+(axis==2?sign:0);if(!g.Cells.Interior(ni,nj,nk))continue;int other=g.Cells.Index(ni,nj,nk);if(geometry.FluidVolumeM3[other]<=0)continue;
                     int fi=i+(axis==0&&sign>0?1:0),fj=j+(axis==1&&sign>0?1:0),fk=k+(axis==2&&sign>0?1:0);double area=geometry.Areas(axis)[g.Shape((GridLocation)(axis+1)).Index(fi,fj,fk)];
-                    if(area>greatest){greatest=area;target=other;}
+                    if(area>greatest&&area>minimumFaceFraction*g.FaceArea(axis)){greatest=area;target=other;}
                 }
                 if(target<0)throw new NotSupportedException("An isolated tiny fluid component requires an explicit component treatment; no volume was discarded.");
                 int a=Root(q),b=Root(target);if(a!=b){_Group[a]=b;merged++;}
@@ -61,7 +64,7 @@ namespace PhysicsSim.ThreePhase3D.Geometry
                     {
                         g.Cells.Coordinates(q,out int i,out int j,out int k);
                         for(int axis=0;axis<3;axis++)foreach(int sign in new[]{-1,1})
-                        {int ni=i+(axis==0?sign:0),nj=j+(axis==1?sign:0),nk=k+(axis==2?sign:0);if(!g.Cells.Interior(ni,nj,nk))continue;int other=g.Cells.Index(ni,nj,nk);if(geometry.FluidVolumeM3[other]<=0||Root(other)==current)continue;int fi=i+(axis==0&&sign>0?1:0),fj=j+(axis==1&&sign>0?1:0),fk=k+(axis==2&&sign>0?1:0);double area=geometry.Areas(axis)[g.Shape((GridLocation)(axis+1)).Index(fi,fj,fk)];if(area>greatest){greatest=area;target=Root(other);}}
+                        {int ni=i+(axis==0?sign:0),nj=j+(axis==1?sign:0),nk=k+(axis==2?sign:0);if(!g.Cells.Interior(ni,nj,nk))continue;int other=g.Cells.Index(ni,nj,nk);if(geometry.FluidVolumeM3[other]<=0||Root(other)==current)continue;int fi=i+(axis==0&&sign>0?1:0),fj=j+(axis==1&&sign>0?1:0),fk=k+(axis==2&&sign>0?1:0);double area=geometry.Areas(axis)[g.Shape((GridLocation)(axis+1)).Index(fi,fj,fk)];if(area>greatest&&area>minimumFaceFraction*g.FaceArea(axis)){greatest=area;target=Root(other);}}
                     }
                     if(target<0)throw new NotSupportedException("An isolated tiny connected component remains below the grouping threshold; no volume was discarded.");
                     _Group[current]=target;_GroupFluidVolumeM3[target]+=_GroupFluidVolumeM3[current];_GroupFluidVolumeM3[current]=0;current=target;merged++;

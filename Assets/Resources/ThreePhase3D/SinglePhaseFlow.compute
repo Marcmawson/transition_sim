@@ -1,0 +1,104 @@
+#pragma kernel PredictMomentum
+#pragma kernel IteratePressure
+#pragma kernel CorrectVelocity
+
+struct Face
+{
+    int low, high, axis, active;
+    float area, mobility, boundaryPressure, viscosity;
+};
+
+StructuredBuffer<Face> Faces;
+StructuredBuffer<int> Stencil;
+StructuredBuffer<int> Rows;
+StructuredBuffer<int> Incidence;
+StructuredBuffer<float> Diagonal;
+StructuredBuffer<float> VelocityIn;
+StructuredBuffer<float> PredictedIn;
+StructuredBuffer<float> PressureIn;
+RWStructuredBuffer<float> PredictedOut;
+RWStructuredBuffer<float> PressureOut;
+RWStructuredBuffer<float> CorrectedOut;
+
+int FaceCount, GroupCount;
+float Dt;
+float4 InverseSpacing, Acceleration;
+
+float SampleVelocity(int index, float centre)
+{
+    if (index >= 0) return VelocityIn[index];
+    if (index == -2) return -centre;
+    if (index == -3) return centre;
+    return 0;
+}
+
+float PressureGradient(Face face)
+{
+    float low = face.boundaryPressure;
+    float high = face.boundaryPressure;
+    if (face.low >= 0) low = PressureIn[face.low];
+    if (face.high >= 0) high = PressureIn[face.high];
+    return (high - low) * face.mobility;
+}
+
+[numthreads(64, 1, 1)]
+void PredictMomentum(uint3 id : SV_DispatchThreadID)
+{
+    uint index = id.x;
+    if (index >= (uint)FaceCount) return;
+    Face face = Faces[index];
+    if (face.active == 0)
+    {
+        PredictedOut[index] = 0;
+        return;
+    }
+
+    float centre = VelocityIn[index];
+    float change = Acceleration[face.axis];
+    int start = (int)index * 18;
+    for (int axis = 0; axis < 3; axis++)
+    {
+        float lower = SampleVelocity(Stencil[start + 2 * axis], centre);
+        float upper = SampleVelocity(Stencil[start + 2 * axis + 1], centre);
+        float transport = 0;
+        for (int sample = 0; sample < 4; sample++)
+            transport += SampleVelocity(Stencil[start + 6 + 4 * axis + sample], centre) * 0.25;
+        float derivative = transport >= 0 ? centre - lower : upper - centre;
+        float inverse = InverseSpacing[axis];
+        change += face.viscosity * (upper - 2 * centre + lower) * inverse * inverse
+            - transport * derivative * inverse;
+    }
+    PredictedOut[index] = centre + Dt * change;
+}
+
+[numthreads(64, 1, 1)]
+void IteratePressure(uint3 id : SV_DispatchThreadID)
+{
+    uint group = id.x;
+    if (group >= (uint)GroupCount) return;
+    // Accumulate velocity flux separately: a nearly solenoidal, fast
+    // background flow must not hide a small pressure correction in FP32.
+    float velocityFlux = 0;
+    float pressureFlux = 0;
+    for (int entry = Rows[group]; entry < Rows[group + 1]; entry++)
+    {
+        int incidence = Incidence[entry];
+        int index = abs(incidence) - 1;
+        Face face = Faces[index];
+        float area = incidence > 0 ? face.area : -face.area;
+        velocityFlux += area * PredictedIn[index];
+        pressureFlux += area * PressureGradient(face);
+    }
+    float residual = pressureFlux - velocityFlux / Dt;
+    float diagonal = Diagonal[group];
+    PressureOut[group] = diagonal > 0 ? PressureIn[group] + (2.0 / 3.0) * residual / diagonal : 0;
+}
+
+[numthreads(64, 1, 1)]
+void CorrectVelocity(uint3 id : SV_DispatchThreadID)
+{
+    uint index = id.x;
+    if (index >= (uint)FaceCount) return;
+    Face face = Faces[index];
+    CorrectedOut[index] = face.active == 0 ? 0 : PredictedIn[index] - Dt * PressureGradient(face);
+}

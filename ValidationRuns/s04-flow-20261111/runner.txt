@@ -1,0 +1,10 @@
+S04 development verification, 11 November 2026 UTC.
+Base Git commit: d78f0a4a775337b0c62044278dbc13ac5a6446c2.
+The tested source was in a working tree before publication; source-hashes.txt identifies the tested source and entry points.
+Managed runtime: .NET SDK 8.0.428, Linux x86_64. The ThreePhase3D core, geometry, diagnostics, materials and verification sources compiled and executed outside Unity.
+CPU run entry: Tools/ThreePhase3D/FlowMain.cs. 89 checks, all passing.
+Regressions: S01 25 groups, S02 5,817 comparisons, S03 120 comparisons, all passing.
+Shader compiler: DXC libdxcompiler 1.9(5512-01b62ad4)(1.9.2609.5). All three entry points compiled with warnings as errors, profile cs_6_0, for DXIL and SPIR-V.
+Shader dispatch: standalone Vulkan 1.1 harness with Chromium's SwiftShader software device. It added Vulkan descriptor-binding annotations to the same HLSL and used the production layouts, pressure iteration blocks, tail guards, readback acceptance criteria and CPU field parity checks. 89 comparisons, all passing.
+Preview parameter smoke run: 40 accepted software Vulkan steps, t=1.812072 s, centre speed=0.05085039 m/s.
+Unity Editor import, device GPU execution and Unity Profiler timings were not run in this environment.

@@ -1,0 +1,90 @@
+PASS hydrostatic | tiny cells merged | 0 | 0 ± 0
+PASS hydrostatic | pressure algebraic residual L2 [m3/s2] | 2.742826648E-07 | 0 ± 5.765109517E-07
+PASS hydrostatic | post-projection dt times max absolute divergence | 1.470247249E-09 | 0 ± 1E-05
+PASS hydrostatic | max spurious velocity [m/s] | 3.352761269E-08 | 0 ± 2E-06
+PASS hydrostatic | max closed face velocity [m/s] | 0 | 0 ± 0
+PASS hydrostatic | max hydrostatic neighbour head error [Pa] | 0.0004865195313 | 0 ± 0.04
+PASS hydrostatic-translated-rotated | tiny cells merged | 0 | 0 ± 0
+PASS hydrostatic-translated-rotated | pressure algebraic residual L2 [m3/s2] | 2.881391044E-07 | 0 ± 5.751485987E-07
+PASS hydrostatic-translated-rotated | post-projection dt times max absolute divergence | 2.196369073E-09 | 0 ± 1E-05
+PASS hydrostatic-translated-rotated | max spurious velocity [m/s] | 3.352761269E-08 | 0 ± 2E-06
+PASS hydrostatic-translated-rotated | max closed face velocity [m/s] | 0 | 0 ± 0
+PASS hydrostatic-translated-rotated | max hydrostatic neighbour head error [Pa] | 0.0005180410817 | 0 ± 0.04
+PASS hydrostatic-disconnected-cut | tiny cells merged | 1 | 1 ± 0
+PASS hydrostatic-disconnected-cut | pressure algebraic residual L2 [m3/s2] | 2.214220609E-07 | 0 ± 4.840692043E-07
+PASS hydrostatic-disconnected-cut | post-projection dt times max absolute divergence | 1.543510584E-09 | 0 ± 1E-05
+PASS hydrostatic-disconnected-cut | max spurious velocity [m/s] | 2.980232239E-08 | 0 ± 2E-06
+PASS hydrostatic-disconnected-cut | max closed face velocity [m/s] | 0 | 0 ± 0
+PASS hydrostatic-disconnected-cut | max hydrostatic neighbour head error [Pa] | 0.0004708203126 | 0 ± 0.04
+PASS hydrostatic-disconnected-cut | total aperture closed within geometry roundoff [m2] | 8.67361738E-18 | 0 ± 1E-15
+PASS hydrostatic-disconnected-cut | closed chamber mean gauge [Pa] 0 | 0 | 0 ± 1E-06
+PASS hydrostatic-disconnected-cut | closed chamber mean gauge [Pa] 1 | 1.823026313E-13 | 0 ± 1E-06
+PASS hydrostatic-variable-density | tiny cells merged | 0 | 0 ± 0
+PASS hydrostatic-variable-density | pressure algebraic residual L2 [m3/s2] | 2.193347678E-07 | 0 ± 5.371323491E-07
+PASS hydrostatic-variable-density | post-projection dt times max absolute divergence | 1.400823705E-09 | 0 ± 1E-05
+PASS hydrostatic-variable-density | max spurious velocity [m/s] | 1.862645149E-08 | 0 ± 2E-06
+PASS hydrostatic-variable-density | max closed face velocity [m/s] | 0 | 0 ± 0
+PASS hydrostatic-variable-density | max hydrostatic neighbour head error [Pa] | 0.0003576660156 | 0 ± 0.04
+PASS plane-poiseuille-from-rest | pressure algebraic residual L2 [m3/s2] | 2.032807514E-12 | 0 ± 2.078460901E-12
+PASS plane-poiseuille-from-rest | post-projection dt times max absolute divergence | 1.032021637E-08 | 0 ± 1E-05
+PASS plane-poiseuille | pressure accelerates fluid from rest [m/s] | 0.0001499999635 | 0.0001499999799 ± 1E-08
+PASS plane-poiseuille-4 | pressure algebraic residual L2 [m3/s2] | 2.032807507E-12 | 0 ± 2.078460901E-12
+PASS plane-poiseuille-4 | post-projection dt times max absolute divergence | 2.30982748E-10 | 0 ± 1E-05
+PASS plane-poiseuille-4 | max change in discrete steady profile [m/s] | 0 | 0 ± 2E-07
+PASS plane-poiseuille-4 | max pressure error [Pa] | 1.363456249E-07 | 0 ± 2E-06
+PASS plane-poiseuille-8 | pressure algebraic residual L2 [m3/s2] | 1.082086521E-12 | 0 ± 1.469693798E-12
+PASS plane-poiseuille-8 | post-projection dt times max absolute divergence | 1.948795707E-10 | 0 ± 1E-05
+PASS plane-poiseuille-8 | max change in discrete steady profile [m/s] | 0 | 0 ± 2E-07
+PASS plane-poiseuille-8 | max pressure error [Pa] | 9.968876839E-08 | 0 ± 2E-06
+PASS plane-poiseuille-16 | pressure algebraic residual L2 [m3/s2] | 9.288206351E-13 | 0 ± 1.039230451E-12
+PASS plane-poiseuille-16 | post-projection dt times max absolute divergence | 5.49480695E-10 | 0 ± 1E-05
+PASS plane-poiseuille-16 | max change in discrete steady profile [m/s] | 0 | 0 ± 2E-07
+PASS plane-poiseuille-16 | max pressure error [Pa] | 1.065433025E-07 | 0 ± 2E-06
+PASS plane-poiseuille-16 | accepted-grid relative L2 profile error | 0.005348824195 | 0 ± 0.01
+PASS plane-poiseuille | profile error ratio under spatial refinement 1 | 0.2504000578 | 0.25 ± 0.02
+PASS plane-poiseuille | profile error ratio under spatial refinement 2 | 0.2500253105 | 0.25 ± 0.02
+PASS viscous-decay-4-0 | pressure algebraic residual L2 [m3/s2] | 0 | 0 ± 1E-12
+PASS viscous-decay-4-0 | post-projection dt times max absolute divergence | 0 | 0 ± 1E-05
+PASS viscous-decay-4-0 | kinetic energy decreases | 1 | 1 ± 0
+PASS viscous-decay-4-1 | pressure algebraic residual L2 [m3/s2] | 0 | 0 ± 1E-12
+PASS viscous-decay-4-1 | post-projection dt times max absolute divergence | 0 | 0 ± 1E-05
+PASS viscous-decay-4-1 | kinetic energy decreases | 1 | 1 ± 0
+PASS viscous-decay-4-2 | pressure algebraic residual L2 [m3/s2] | 0 | 0 ± 1E-12
+PASS viscous-decay-4-2 | post-projection dt times max absolute divergence | 0 | 0 ± 1E-05
+PASS viscous-decay-4-2 | kinetic energy decreases | 1 | 1 ± 0
+PASS viscous-decay-4-3 | pressure algebraic residual L2 [m3/s2] | 0 | 0 ± 1E-12
+PASS viscous-decay-4-3 | post-projection dt times max absolute divergence | 0 | 0 ± 1E-05
+PASS viscous-decay-4-3 | kinetic energy decreases | 1 | 1 ± 0
+PASS viscous-decay-4 | decay amplitude relative to initial | 0.9758630395 | 0.9759357257 ± 0.001
+PASS viscous-decay-8-0 | pressure algebraic residual L2 [m3/s2] | 0 | 0 ± 1E-12
+PASS viscous-decay-8-0 | post-projection dt times max absolute divergence | 0 | 0 ± 1E-05
+PASS viscous-decay-8-0 | kinetic energy decreases | 1 | 1 ± 0
+PASS viscous-decay-8-1 | pressure algebraic residual L2 [m3/s2] | 0 | 0 ± 1E-12
+PASS viscous-decay-8-1 | post-projection dt times max absolute divergence | 0 | 0 ± 1E-05
+PASS viscous-decay-8-1 | kinetic energy decreases | 1 | 1 ± 0
+PASS viscous-decay-8-2 | pressure algebraic residual L2 [m3/s2] | 0 | 0 ± 1E-12
+PASS viscous-decay-8-2 | post-projection dt times max absolute divergence | 0 | 0 ± 1E-05
+PASS viscous-decay-8-2 | kinetic energy decreases | 1 | 1 ± 0
+PASS viscous-decay-8-3 | pressure algebraic residual L2 [m3/s2] | 0 | 0 ± 1E-12
+PASS viscous-decay-8-3 | post-projection dt times max absolute divergence | 0 | 0 ± 1E-05
+PASS viscous-decay-8-3 | kinetic energy decreases | 1 | 1 ± 0
+PASS viscous-decay-8-4 | pressure algebraic residual L2 [m3/s2] | 0 | 0 ± 1E-12
+PASS viscous-decay-8-4 | post-projection dt times max absolute divergence | 0 | 0 ± 1E-05
+PASS viscous-decay-8-4 | kinetic energy decreases | 1 | 1 ± 0
+PASS viscous-decay-8-5 | pressure algebraic residual L2 [m3/s2] | 0 | 0 ± 1E-12
+PASS viscous-decay-8-5 | post-projection dt times max absolute divergence | 0 | 0 ± 1E-05
+PASS viscous-decay-8-5 | kinetic energy decreases | 1 | 1 ± 0
+PASS viscous-decay-8-6 | pressure algebraic residual L2 [m3/s2] | 0 | 0 ± 1E-12
+PASS viscous-decay-8-6 | post-projection dt times max absolute divergence | 0 | 0 ± 1E-05
+PASS viscous-decay-8-6 | kinetic energy decreases | 1 | 1 ± 0
+PASS viscous-decay-8-7 | pressure algebraic residual L2 [m3/s2] | 0 | 0 ± 1E-12
+PASS viscous-decay-8-7 | post-projection dt times max absolute divergence | 0 | 0 ± 1E-05
+PASS viscous-decay-8-7 | kinetic energy decreases | 1 | 1 ± 0
+PASS viscous-decay-8 | decay amplitude relative to initial | 0.9758995175 | 0.9759357257 ± 0.001
+PASS viscous-decay | time refinement error ratio | 0.4981432438 | 0.5 ± 0.04
+PASS rollback | iteration cap rejected | 1 | 1 ± 0
+PASS rollback | input unchanged after failed trial | 1 | 1 ± 0
+PASS rollback-retry | pressure algebraic residual L2 [m3/s2] | 1.212012642E-07 | 0 ± 4.804257782E-07
+PASS rollback-retry | post-projection dt times max absolute divergence | 5.587935198E-10 | 0 ± 1E-05
+PASS rollback | acceleration bounds oversized timestep | 1 | 1 ± 0
+89/89 passed
