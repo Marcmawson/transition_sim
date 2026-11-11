@@ -38,7 +38,7 @@ A `CutCellVofTransport` caller can supply a contact sample for each active mixed
 
 The stationary-wall Navier closure evaluates tangential wall traction as `-mu * uTangential / (distance + slipLength)`. This is a two-point local approximation for wall momentum flux. The contact-line closure uses an empirical dynamic-angle curve at the declared matching distance, consistent with the need for a matching scale described in [M08](Sources.md#m08-dynamic-wetting). It does not use a Cox asymptotic fit to extrapolate beyond the data.
 
-The CPU fixture uses synthetic calibration data. It checks both speed branches, zero-speed hysteresis, out-of-range rejection, normal orientation, Navier traction, and conservation during wetting-aware cut-cell transport. Actual glass calibration, automatic contact-line tracking, and the dynamic sessile-drop V13 gate remain open.
+The CPU fixture uses synthetic calibration data. It checks both speed branches, zero-speed hysteresis, out-of-range rejection, normal orientation, Navier traction, and conservation during wetting-aware cut-cell transport. Actual glass calibration and the dynamic sessile-drop V13 gate remain open.
 
 ### Navier slip in the embedded-wall momentum predictor
 
@@ -46,7 +46,7 @@ The optional wall-wetting selector on `MomentumPredictor3D` supplies a calibrate
 
 For an oblique patch, the drag matrix per unit area and unit kinematic viscosity is `n nᵀ / distance + (I - n nᵀ) / (distance + slipLength)`. The two transverse components at each staggered face use the existing four-point MAC interpolation, including zero samples at inactive faces. The explicit timestep bound includes the absolute cross-component rates. This is a local centroid approximation. Patch normals and positive resolved dual-centroid distances are required, and the predictor still requires uniform fluid properties.
 
-The checks cover an off-grid planar wall and a cylindrical section of the beaker geometry. The cylindrical tests check reduced axial plug damping and exercise cross-component coupling with a swirl. Automatic contact-line selection, fully coupled two-phase slip in the beaker, and the sessile-drop benchmark remain open.
+The checks cover an off-grid planar wall and a cylindrical section of the beaker geometry. The cylindrical tests check reduced axial plug damping and exercise cross-component coupling with a swirl. The two-phase contact-region path is described below.
 
 ### Automatic contact detection for cut-cell transport
 
@@ -54,4 +54,16 @@ Use `CutCellVofTransport.WithTrackedWetting(plan, profile)` to opt in to automat
 
 The tracker estimates signed line speed from the aperture-weighted cell velocity projected along the wall-parallel liquid-to-gas normal. This local advection proxy selects the advancing or receding calibration curve. It does not estimate geometric line displacement between timesteps. The synthetic flat-wall fixture checks an intersection, an interface separated from the wall, receding speed and agreement with explicitly prescribed wetting during transport.
 
-Tracking currently supplies the angle constraint during donor reconstruction. Applying the detected contact region to the two-phase beaker wall momentum solve and completing the measured sessile-drop benchmark remain open.
+Tracking currently supplies the angle constraint during donor reconstruction. The following section describes its use in the CPU wall momentum step.
+
+### Two-phase beaker contact traction
+
+`AdvanceCoupledWithWetting` reconstructs the contact region from the transported liquid inventory, samples remapped staggered velocity with the pressure-group aperture weights, and applies tangential Navier traction before pressure projection. The same weights scatter the impulse back to the staggered momentum and the wall ledger. Normal impermeability is handled by the existing pressure topology. The local dynamic viscosity is a liquid-volume-weighted phase blend and each intersected triangle patch contributes its exposed area. The explicit drag bound rejects a step whose summed patch weights exceed the affected face mass. Patches outside the detected band receive no viscous wall force in this isolated fixture.
+
+Run the synthetic eight-step CPU beaker case with:
+
+```sh
+dotnet run --project Tools/ThreePhase3D/SurfaceGeometryChecks.csproj -- --wetting
+```
+
+The fixture checks that contacts and wall impulse occur, liquid moves, and the volume, staggered mass, and pre-projection momentum ledgers close. The calibrated glass data, bulk viscous stresses outside the contact band, GPU execution of the contact traction step, and the moving sessile-drop validation remain open.

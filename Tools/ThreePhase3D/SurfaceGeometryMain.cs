@@ -9,8 +9,9 @@ using PhysicsSim.ThreePhase3D.Materials;
 
 internal static class SurfaceGeometryMain
 {
-    private static void Main()
+    private static int Main(string[] args)
     {
+        if (args.Contains("--wetting")) return BeakerVofMain.Main(args);
         var grid = new Grid3D(15, 15, 15, new D3(.012, .008, .01));
         var transport = new GeometricVof3D(grid, 997, 1.2);
         var alpha = new double[transport.CellCount];
@@ -48,6 +49,7 @@ internal static class SurfaceGeometryMain
         CheckSphericalDrop();
         CheckThermocapillarySlab();
         CheckWetting();
+        return 0;
     }
 
     private static void CheckSphericalDrop()

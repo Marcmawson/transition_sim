@@ -75,6 +75,8 @@ namespace PhysicsSim.ThreePhase3D.Geometry
         public readonly Grid3D Grid;
         private TriangleSurface fixedInput, iceInput;
         private D3[] solidMomentOffsets;
+        internal CutCellGeometry WithFluidCentroidMoments() =>
+            solidMomentOffsets != null ? this : Build(Grid, fixedInput, iceInput, true);
         internal D3 FluidCentroidOffset(int cell) => -solidMomentOffsets[cell] / _FluidVolumeM3[cell];
 
         internal IEnumerable<List<SignedTetrahedron>> BuildSolidTetrahedra()

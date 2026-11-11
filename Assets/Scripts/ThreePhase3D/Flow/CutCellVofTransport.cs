@@ -119,6 +119,31 @@ namespace PhysicsSim.ThreePhase3D.Flow
             double liquidDensity, double gasDensity, Func<int, CutCellInflow> inflow = null, int maxIterations = 4096) =>
             AdvanceCoupled(state, transportingFlow, liquidDensity, gasDensity, inflow, maxIterations, FlowCpuReference.Project);
 
+        public CutCellCoupledStep AdvanceCoupledWithWetting(CutCellInventories state, FlowStep transportingFlow,
+            double liquidDensity, double gasDensity, double liquidViscosityPaS, double gasViscosityPaS,
+            Func<int, CutCellInflow> inflow = null, int maxIterations = 4096)
+        {
+            if (trackedPatches == null) throw new InvalidOperationException("Tracked wetting is required.");
+            if (!SiUnits.IsFinite(liquidViscosityPaS) || !SiUnits.IsFinite(gasViscosityPaS) ||
+                liquidViscosityPaS <= 0 || gasViscosityPaS <= 0)
+                throw new ArgumentException("Both dynamic viscosities must be finite and positive.");
+            return AdvanceCoupled(state, transportingFlow, liquidDensity, gasDensity, inflow, maxIterations,
+                FlowCpuReference.Project, remap: (before, after, velocity, rhoL, rhoG) =>
+                {
+                    var advected = AdvanceMomentum(before, after, velocity, rhoL, rhoG);
+                    var contacts = new List<InterfacePatch>();
+                    foreach (int cell in trackedPatches.Keys)
+                    {
+                        int group = plan.GroupByCell[cell];
+                        if (group < 0 || after.Fields.LiquidM3[group] <= 0 || after.Fields.GasM3[group] <= 0) continue;
+                        TrackContact(cell, group, after.Fields.LiquidM3[group],
+                            EstimateNormal(cell, group, after.Fields.LiquidM3), advected.VelocityMPerS, contacts.Add);
+                    }
+                    return momentum.ApplyContactTraction(advected, after.Fields, contacts, trackedWetting,
+                        rhoL, rhoG, liquidViscosityPaS, gasViscosityPaS, transportingFlow.Diagnostics.Dt);
+                });
+        }
+
         internal CutCellCoupledStep AdvanceCoupled(CutCellInventories state, FlowStep transportingFlow,
             double liquidDensity, double gasDensity, Func<int, CutCellInflow> inflow, int maxIterations,
             PeriodicVofProjection.PressureSolve project,
@@ -396,7 +421,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return normal;
         }
 
-        internal WettingContact TrackContact(int cell, int group, double liquidVolume, D3 normal, double[] velocity)
+        internal WettingContact TrackContact(int cell, int group, double liquidVolume, D3 normal, double[] velocity,
+            Action<InterfacePatch> onIntersection = null)
         {
             if (normal.Length == 0 || !trackedPatches.TryGetValue(cell, out var patches)) return null;
             var plane = geometry.Reconstruct(cell, normal, liquidVolume / plan.Volumes[group] * plan.Geometry.FluidVolumeM3[cell]);
@@ -412,8 +438,9 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     negative |= distance < -tolerance;
                     positive |= distance > tolerance;
                 }
-                if (negative && positive && (selected == null || patch.AreaM2 > selected.AreaM2))
-                    selected = patch;
+                if (!negative || !positive) continue;
+                onIntersection?.Invoke(patch);
+                if (selected == null || patch.AreaM2 > selected.AreaM2) selected = patch;
             }
             if (selected == null) return null;
             D3 tangent = plane.N - selected.NormalLocal * D3.Dot(plane.N, selected.NormalLocal);
