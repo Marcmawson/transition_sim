@@ -32,7 +32,7 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
             Evaluate(transport, liquidFraction, -1, 0);
 
         internal static SurfaceCurvature[] Evaluate(GeometricVof3D transport, double[] liquidFraction,
-            int wallRow, double contactCotangent, Func<int, int, double> wallCotangent = null)
+            int wallRow, double contactCotangent, Func<int, int, double> wallCotangent = null, bool extendColumns = false)
         {
             if (transport == null) throw new ArgumentNullException(nameof(transport));
             if (liquidFraction == null || liquidFraction.Length != transport.CellCount)
@@ -59,10 +59,10 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
                     (j + sizes[1]) % sizes[1], (k + sizes[2]) % sizes[2])];
             }
 
-            bool TryHeights(int axis, int u, int v, int direction)
+            bool TryHeights(int axis, int u, int v, int direction, int start, int end)
             {
                 bool angledWall = wallRow >= 0 && (contactCotangent != 0 || wallCotangent != null);
-                int start = -Radius, end = Radius;
+                int columnSize = end - start + 1;
                 if (angledWall && axis == 1)
                 {
                     // Keep a common integration baseline across the columns.
@@ -71,7 +71,7 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
                     if (direction > 0) start = Math.Max(start, wallRow - origin[1]);
                     else end = Math.Min(end, origin[1] - wallRow);
                 }
-                if (sizes[axis] < 2 * Radius + 1 || sizes[u] < 3 || sizes[v] < 3) return false;
+                if (sizes[axis] < columnSize || sizes[u] < 3 || sizes[v] < 3) return false;
                 for (int b = -1; b <= 1; b++)
                 for (int a = -1; a <= 1; a++)
                 {
@@ -144,7 +144,17 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
                     if (slope == 0) break;
                     slopes[axis] = 0;
                     int u = (axis + 1) % 3, v = (axis + 2) % 3;
-                    if (!TryHeights(axis, u, v, Math.Sign(slope))) continue;
+                    int direction = Math.Sign(slope);
+                    bool supported = TryHeights(axis, u, v, direction, -Radius, Radius);
+                    if (!supported && extendColumns)
+                    {
+                        // Extend either end independently. Extending both can
+                        // cross the far side of a curved drop unnecessarily.
+                        for (int extra = 1; extra <= 4 && !supported; extra++)
+                        for (int left = Math.Max(0, extra - 2); left <= Math.Min(2, extra) && !supported; left++)
+                            supported = TryHeights(axis, u, v, direction, -Radius - left, Radius + extra - left);
+                    }
+                    if (!supported) continue;
 
                     double du = grid.Spacing[u], dv = grid.Spacing[v];
                     double hu = (heights[5] - heights[3]) / (2 * du);

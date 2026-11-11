@@ -77,7 +77,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 return liquidDensity * fraction + gasDensity * (1 - fraction);
             }, _ => 0, true);
             var tentative = new float[plan.FaceCount];
-            var curvature = surfaceTensionNPerM > 0 ? FilterCurvature(SurfaceGeometry.Evaluate(transport, moved.LiquidFraction), moved.LiquidFraction) : null;
+            var curvature = surfaceTensionNPerM > 0 ? FilterCurvature(SurfaceGeometry.Evaluate(transport, moved.LiquidFraction, -1, 0, extendColumns: true), moved.LiquidFraction) : null;
             var tangentialForce = sigmaByCell == null ? null :
                 MarangoniStress.ForceDensity(transport, moved.LiquidFraction, sigmaByCell);
             int extrapolatedFaces = 0;
