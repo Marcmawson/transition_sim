@@ -232,3 +232,20 @@ At 0.4 ms, the 1.0 mm grid repeated the late rebound. RMS rose from 0.03072 to 0
 Run `--v11-residual-exact` for the 1.0 mm, 0.8 ms, 48 ms control. It substitutes the analytical curvature `2/R` into the same viscous capillary step while retaining the transported fractions, densities, pressure projection and flux reconciliation. It reports the same absolute speed, pressure, volume and near-interface RMS measurements. The relative window-growth check applies to the production runs. The control is interpreted by its absolute RMS against those runs.
 
 The exact-curvature control completed 48 ms. Its earlier and later near-interface RMS values were 0.000103 and 0.000143 mm/s, versus 0.03129 and 0.07594 mm/s with reconstructed curvature. The late-window RMS fell by about 530 times. The domain-wide peak fell from 0.19334 to 0.02590 mm/s, and pressure and volume stayed within the existing limits. This implicates curvature reconstruction in the observed near-interface rebound. The production solver and its settling check remain unchanged.
+
+### Four-pass curvature filter and viscosity sensitivity
+
+The periodic capillary predictor now applies four passes of the existing orientation-weighted curvature filter. Each pass averages the previous pass's curvature using the same volume-fraction normals and weights. This extends the effective averaging neighbourhood and can smooth real local curvature variation. The solver continues to use its supplied material viscosities. The CPU residual probe accepts `--v11-residual-viscosity-2x` and `--v11-residual-viscosity-4x` to scale both viscosities in the 1 mm diagnostic case. The 4× case uses a 0.4 ms timestep because 0.8 ms exceeds the explicit viscous stability bound. Compare each diagnostic with the physical-viscosity result at its timestep.
+
+For the 7 mm drop, the proposed static parasitic-speed limit in [Validation.md](Validation.md) is 0.10157 mm/s and the static pressure-jump target on the accepted resolved grid is 1%. The 1 mm case with four filter passes and physical viscosity reached 0.14110 mm/s peak speed and 0.820% maximum pressure error at a 0.8 ms timestep. Its RMS fell from 0.04492 to 0.02214 mm/s across the final two windows, a 71% reduction in late-window RMS compared with the two-pass run. The 1.4 mm case reached 0.05254 mm/s peak speed and 1.857% pressure error. Its window RMS grew from 0.00092 to 0.00125 mm/s, triggering the exploratory 10% growth check despite the low absolute RMS.
+
+| 1 mm grid viscosity | Timestep | Peak speed | Late-window RMS | Maximum pressure error |
+| --- | ---: | ---: | ---: | ---: |
+| Physical | 0.8 ms | 0.14110 mm/s | 0.02214 mm/s | 0.820% |
+| 2× | 0.8 ms | 0.13948 mm/s | 0.02224 mm/s | 0.810% |
+| Physical | 0.4 ms | 0.14198 mm/s | 0.02283 mm/s | 0.819% |
+| 4× | 0.4 ms | 0.13738 mm/s | 0.02316 mm/s | 0.792% |
+
+At matched timesteps, doubling and quadrupling viscosity reduced peak speed by about 1% and 3%, respectively. Late RMS rose slightly in both comparisons. All four 1 mm runs met the exploratory settling criterion and exceeded the proposed static speed limit. V11 remains open.
+
+The CPU surface geometry regression suite, short V11 matrix, and seeded viscous decay checks passed their existing limits. Moving-frame speed error was 0.04688 mm/s at 1 mm and 0.10660 mm/s at 0.75 mm. These results cover the CPU periodic path.

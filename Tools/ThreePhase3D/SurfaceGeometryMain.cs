@@ -11,7 +11,11 @@ internal static class SurfaceGeometryMain
 {
     private static int Main(string[] args)
     {
+        if (args.Contains("--beaker-gravity")) return BeakerVofMain.CheckGravity();
+        if (args.Contains("--beaker-release")) return BeakerVofMain.CheckRelease();
         if (args.Contains("--v11-diagnostics")) return RunV11(diagnostics: true);
+        if (args.Contains("--v11-residual-viscosity-2x")) return RunV11Residual(viscosityMultiplier: 2);
+        if (args.Contains("--v11-residual-viscosity-4x")) return RunV11Residual(refinedTime: true, viscosityMultiplier: 4);
         if (args.Contains("--v11-residual-exact")) return RunV11Residual(exactCurvature: true);
         if (args.Contains("--v11-residual-refined-time")) return RunV11Residual(refinedTime: true);
         if (args.Contains("--v11-residual")) return RunV11Residual();
@@ -278,16 +282,16 @@ internal static class SurfaceGeometryMain
         double Mode(int j) => Math.Sin(2 * Math.PI * waves * (j + .5) / n);
     }
 
-    private static int RunV11Residual(bool refinedTime = false, bool exactCurvature = false)
+    private static int RunV11Residual(bool refinedTime = false, bool exactCurvature = false, double viscosityMultiplier = 1)
     {
         bool passed = true;
-        if (!refinedTime && !exactCurvature) Check(20, .0014, .0008);
+        if (!refinedTime && !exactCurvature && viscosityMultiplier == 1) Check(20, .0014, .0008);
         Check(24, .001, refinedTime ? .0004 : .0008);
         return passed ? 0 : 1;
 
         void Check(int n, double h, double dt)
         {
-            try { CheckV11Residual(n, h, dt, exactCurvature); }
+            try { CheckV11Residual(n, h, dt, exactCurvature, viscosityMultiplier); }
             catch (Exception failure)
             {
                 passed = false;
@@ -296,9 +300,10 @@ internal static class SurfaceGeometryMain
         }
     }
 
-    private static void CheckV11Residual(int n, double h, double dt, bool exactCurvature)
+    private static void CheckV11Residual(int n, double h, double dt, bool exactCurvature, double viscosityMultiplier)
     {
-        const double rhoL = 997, rhoG = 1.2, muL = .001, muG = .000018;
+        const double rhoL = 997, rhoG = 1.2;
+        double muL = .001 * viscosityMultiplier, muG = .000018 * viscosityMultiplier;
         const double radius = .007, sigma = .072;
         int steps = (int)Math.Round(.048 / dt), window = (int)Math.Round(.012 / dt);
         var grid = new Grid3D(n, n, n, new D3(h, h, h));
@@ -312,7 +317,8 @@ internal static class SurfaceGeometryMain
         double expectedJump = 2 * sigma / radius;
         var prescribed = exactCurvature ? Enumerable.Repeat(
             new SurfaceCurvature(CurvatureSupport.HeightFunction, 2 / radius), alpha.Length).ToArray() : null;
-        double earlierRms = 0, laterRms = 0, maxSpeed = 0;
+        double earlierRms = 0, laterRms = 0, maxSpeed = 0, maxPressureError = 0;
+        double proposedSpeedLimit = .001 * Math.Sqrt(sigma / (rhoL * radius));
         for (int step = 1; step <= steps; step++)
         {
             PeriodicVofStep result;
@@ -333,6 +339,7 @@ internal static class SurfaceGeometryMain
             double jump = result.CellPressurePa[vof.CellIndex(n / 2, n / 2, n / 2)] - result.CellPressurePa[0];
             double drift = Math.Abs(fields.LiquidFraction.Sum() * grid.CellVolume - initialVolume);
             maxSpeed = Math.Max(maxSpeed, speed);
+            maxPressureError = Math.Max(maxPressureError, Math.Abs(jump / expectedJump - 1));
             if (step > steps - window) laterRms += rms / window;
             else if (step > steps - 2 * window) earlierRms += rms / window;
             bool withinLimits = speed <= speedLimit && Math.Abs(jump / expectedJump - 1) <= .05 &&
@@ -344,7 +351,7 @@ internal static class SurfaceGeometryMain
                 throw new InvalidOperationException($"The existing speed, pressure or volume limit failed at t={step * dt:G6} s.");
         }
         Console.WriteLine(FormattableString.Invariant(
-            $"V11 residual windows: h={h:G5} m earlier_rms={earlierRms:E5} m/s later_rms={laterRms:E5} m/s peak={maxSpeed:E5} m/s"));
+            $"V11 residual windows: h={h:G5} m viscosity_multiplier={viscosityMultiplier:G3} earlier_rms={earlierRms:E5} m/s later_rms={laterRms:E5} m/s peak={maxSpeed:E5} m/s pressure_error={maxPressureError:P3} proposed_peak_limit={proposedSpeedLimit:E5} m/s"));
         if (!exactCurvature && !(laterRms <= 1.1 * earlierRms))
             throw new InvalidOperationException("Near-interface RMS increased by more than 10% between the final two windows.");
 

@@ -84,9 +84,17 @@ Gate: V11–V13 and V39. Check spherical-drop pressure, parasitic currents, capi
 
 Dependencies: S06.
 
+Approved exception: S07 implementation may begin with V11 open. The S06 1 mm static-drop run measured a peak parasitic velocity of 0.1411 mm/s against the proposed 0.1016 mm/s limit. S07 acceptance for coupled cases sensitive to weak interface flow remains provisional until V11 closes or case-specific controls establish that numerical currents are small enough for the measured observable. See [S06 surface geometry results](S06-SurfaceGeometry.md).
+
+The first CPU check applies gravity to the coupled cut-cell predictor before variable-density pressure projection. Run `dotnet run -c Release --project Tools/ThreePhase3D/SurfaceGeometryChecks.csproj -- --beaker-gravity`. The check starts the existing mixed-density beaker fixture at rest with a 1 ms timestep. Its zero-gravity control stays at rest. With 9.81 m/s² downward acceleration, the first pressure solve produces a peak of 0.04464 m/s and the second step redistributes 1.46e-8 m³ (sum of absolute group-volume changes), with 1.69e-21 m³ total liquid drift. This is an acceleration and inventory check ahead of the dedicated release scene and V14/V15 validation.
+
 Build a partial-volume 3D water release, collision with the beaker base, sloshing, resolved spray, overflow and a gas-filled headspace. Include the physical exterior so escaped water remains in the domain inventory.
 
+The CPU release fixture initializes a 20 × 20 mm rectangular water column 10 mm above the beaker floor. The requested mass or volume determines the column height, with density from the liquid-water property provider at the requested temperature and pressure. Exact overlap with fully fluid cells sets the starting liquid inventory and gas fills the available volume around it. The water starts at rest. Run `dotnet run -c Release --project Tools/ThreePhase3D/SurfaceGeometryChecks.csproj -- --beaker-release`. At 293.15 K and 101325 Pa the 9 mL release corresponds to 8.984 g. The two input modes gave matching fields and four 1 ms gravity steps conserved liquid volume to 1.69e-21 m³. This check covers initialization and early motion in the coarse closed-domain fixture. Impact, slosh, overflow, spray and Unity/GPU behavior still need validation.
+
 Create a separate scene matching the geometry, initial conditions and sensors of a selected published dam-break experiment [B01]. Preserve the experiment's sidewall conditions; do not compare an unrelated cylinder and call it validation.
+
+To view the beaker release, open `Assets/Scenes/ThreePhase3D/BeakerReleaseS07.unity` and enter Play Mode. **Spawn Water** loads the 9 mL CPU fixture paused. **Step** advances 1 ms and **Run** advances repeatedly. The cyan blocks display cell liquid fractions. **Spawn Ice** places a stationary 20 mm block on the floor for inspection. The ice preview has no thermal or motion solver attached. Either spawn replaces the previous contents, and **Clear** empties the preview.
 
 Gate: V14 and V15. Compare front position, surface height, integrated impact force/pressure impulse and published uncertainty. Report point-pressure limitations of the low Mach model. The beaker visual scene is an integration test, distinct from the matched experimental benchmark.
 

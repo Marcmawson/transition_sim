@@ -247,7 +247,10 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 if (gradient.Length > 0) normals[cell] = gradient.Unit();
             }
 
-            return FilterPass(FilterPass(raw));
+            var filtered = raw;
+            for (int pass = 0; pass < 4; pass++)
+                filtered = FilterPass(filtered);
+            return filtered;
 
             SurfaceCurvature[] FilterPass(SurfaceCurvature[] source)
             {
