@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace PhysicsSim.ThreePhase3D.Rendering
 {
@@ -106,15 +107,26 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
         }
 
+        private void ResolveControls()
+        {
+            if (controls != null) return;
+            var scene = gameObject.scene;
+            foreach (var root in scene.GetRootGameObjects())
+            {
+                controls = root.GetComponentInChildren<BeakerSimulationControls>(true);
+                if (controls != null) return;
+            }
+
+            var container = new GameObject("Simulation Controls");
+            SceneManager.MoveGameObjectToScene(container, scene);
+            controls = container.AddComponent<BeakerSimulationControls>();
+        }
+
         private void SpawnWater()
         {
             if (solverWork != null) return;
             Clear();
-            if (controls == null)
-            {
-                Fail(new InvalidOperationException("Assign the Simulation Controls object to the beaker preview."));
-                return;
-            }
+            ResolveControls();
             double volume = controls.WaterVolumeM3;
             double jitter = controls.SpawnHeightJitterM;
             StartSolverWork(() =>
