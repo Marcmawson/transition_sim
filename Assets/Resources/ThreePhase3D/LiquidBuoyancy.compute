@@ -1,0 +1,33 @@
+#pragma kernel PredictBuoyancy
+
+StructuredBuffer<float2> LiquidState;
+StructuredBuffer<uint> RecoveryStatus;
+StructuredBuffer<float> DensityTable;
+StructuredBuffer<int2> VerticalNeighbours;
+StructuredBuffer<float> VelocityRead;
+RWStructuredBuffer<float> TentativeVelocity;
+int FaceCount, TableCount;
+float MinimumK, StepK, ReferenceDensity, GravityMagnitude, Dt;
+
+float DensityAt(float kelvin)
+{
+    float x = clamp((kelvin - MinimumK) / StepK, 0, (float)(TableCount - 1));
+    int lo = min((int)x, TableCount - 2);
+    return lerp(DensityTable[lo], DensityTable[lo + 1], x - lo);
+}
+
+[numthreads(64, 1, 1)]
+void PredictBuoyancy(uint3 id : SV_DispatchThreadID)
+{
+    uint face = id.x;
+    if (face >= (uint)FaceCount) return;
+    TentativeVelocity[face] = VelocityRead[face];
+    int2 neighbours = VerticalNeighbours[face];
+    if (neighbours.x < 0 || neighbours.y < 0) return;
+    if (RecoveryStatus[neighbours.x] != 0 || RecoveryStatus[neighbours.y] != 0) return;
+
+    float a = DensityAt(LiquidState[neighbours.x].x);
+    float b = DensityAt(LiquidState[neighbours.y].x);
+    float density = .5 * (a + b);
+    TentativeVelocity[face] += Dt * GravityMagnitude * (ReferenceDensity - density) / ReferenceDensity;
+}
