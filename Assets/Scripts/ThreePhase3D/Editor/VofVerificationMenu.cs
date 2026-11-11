@@ -78,11 +78,8 @@ namespace PhysicsSim.ThreePhase3D.Editor
                         var result = gpu.Advance(fields, velocity, dt);
                         report.GpuExecuted = true;
                         return result;
-                    }, (plan, tentative, dt, cap) =>
-                    {
-                        using (var solver = new FlowGpuSolver(plan, Resources.Load<ComputeShader>("ThreePhase3D/SinglePhaseFlow")))
-                            return solver.Project(tentative, dt, cap);
-                    });
+                    }, (plan, tentative, dt, cap) => FlowGpuSolver.Project(plan,
+                        Resources.Load<ComputeShader>("ThreePhase3D/SinglePhaseFlow"), tentative, dt, cap));
                 }
                 else checks = new VofChecks();
                 checks.Run();

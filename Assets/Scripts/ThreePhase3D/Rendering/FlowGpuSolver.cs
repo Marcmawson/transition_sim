@@ -30,8 +30,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
         public FlowGpuSolver(MomentumPredictor3D predictor, ComputeShader shader)
             : this(predictor?.Plan ?? throw new ArgumentNullException(nameof(predictor)), predictor, shader) { }
 
-        internal FlowGpuSolver(VariableCoefficientProjection plan, ComputeShader shader)
-            : this(plan, null, shader) { }
+        public static FlowStep Project(VariableCoefficientProjection plan, ComputeShader shader,
+            float[] tentative, double dt, int maxIterations)
+        {
+            if (plan == null) throw new ArgumentNullException(nameof(plan));
+            using (var solver = new FlowGpuSolver(plan, null, shader))
+                return solver.Project(tentative, dt, maxIterations);
+        }
 
         private FlowGpuSolver(VariableCoefficientProjection plan, MomentumPredictor3D predictor, ComputeShader shader)
         {
@@ -115,7 +120,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return SolvePressure(dt, maxIterations);
         }
 
-        internal FlowStep Project(float[] tentative, double dt, int maxIterations)
+        private FlowStep Project(float[] tentative, double dt, int maxIterations)
         {
             if (disposed) throw new ObjectDisposedException(nameof(FlowGpuSolver));
             if (maxIterations <= 0 || tentative.Length != plan.FaceCount || !SiUnits.IsFinite(dt) || dt <= 0)

@@ -13,7 +13,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
         private readonly PeriodicVofProjection.PressureSolve pressureSolve;
         public VofChecks(Advance advance = null) : this(advance, null) { }
 
-        internal VofChecks(Advance advance, PeriodicVofProjection.PressureSolve pressureSolve)
+        public VofChecks(Advance advance, PeriodicVofProjection.PressureSolve pressureSolve)
         {
             this.pressureSolve = pressureSolve ?? FlowCpuReference.Project;
             this.advance = advance ?? ((vof, state, velocity, dt) => vof.Advance(state, velocity, dt));

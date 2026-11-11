@@ -8,7 +8,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // projection so the accepted velocity is not advected twice.
     public sealed class PeriodicVofProjection
     {
-        internal delegate FlowStep PressureSolve(VariableCoefficientProjection plan, float[] velocity, double dt, int maxIterations);
+        public delegate FlowStep PressureSolve(VariableCoefficientProjection plan, float[] velocity, double dt, int maxIterations);
         private readonly GeometricVof3D transport;
         private readonly CutCellGeometry geometry;
         private readonly double liquidDensity, gasDensity;
