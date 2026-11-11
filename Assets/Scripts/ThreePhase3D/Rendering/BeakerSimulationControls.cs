@@ -12,7 +12,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         [Header("GPU solver · live")]
         [Tooltip("Negative points down.")] [SerializeField] private float gravityY = -9.81f;
         [Tooltip("Upper bound. Cut-cell CFL can reduce the actual timestep.")]
-        [Range(.1f, 4f)] [SerializeField] private float maximumStepMs = 1f;
+        [Range(.1f, 8f)] [SerializeField] private float maximumStepMs = 8f;
         [Tooltip("Pressure solve iteration cap. The solver still requires convergence.")]
         [Min(31)] [SerializeField] private int pressureIterationLimit = 16384;
 
@@ -25,7 +25,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         internal double WaterVolumeM3 => Mathf.Clamp(waterVolumeMl, 4.1f, 19.9f) * 1e-6;
         internal double SpawnHeightJitterM => Mathf.Clamp(spawnHeightJitterMm, 0f, 5f) * .001;
         internal double GravityY => gravityY;
-        internal double MaximumStepS => Mathf.Clamp(maximumStepMs, .1f, 4f) * .001;
+        internal double MaximumStepS => Mathf.Clamp(maximumStepMs, .1f, 8f) * .001;
         internal int PressureIterationLimit => Mathf.Max(31, pressureIterationLimit);
         internal int SamplesPerCellAxis => Mathf.Clamp(samplesPerCellAxis, 1, 8);
         internal float ParticleDiameterM => Mathf.Clamp(particleDiameterMm, .1f, 2f) * .001f;

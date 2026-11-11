@@ -387,7 +387,7 @@ MonoBehaviour:
   waterVolumeMl: 9
   spawnHeightJitterMm: 3
   gravityY: -9.81
-  maximumStepMs: 1
+  maximumStepMs: 8
   pressureIterationLimit: 16384
   samplesPerCellAxis: 5
   particleDiameterMm: 0.8
