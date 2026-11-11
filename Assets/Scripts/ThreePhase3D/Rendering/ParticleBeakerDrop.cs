@@ -13,9 +13,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const float VolumeMl = 9;
         private const float DropGapM = .01f;
         private const int TargetFrameRate = 60;
-        private const double StepSeconds = 0.0004;
-        private const int TestSteps = 1000;
-        private const int MaxStepsPerFrame = 80;
+        private const int BenchmarkMicroseconds = 400000;
+        private const double MaxPendingSeconds = 0.032;
+        private const int DefaultTimestepIndex = 3;
+        private static readonly int[] TimestepMicroseconds = { 100, 200, 250, 400, 500, 800, 1000 };
         [SerializeField] private ComputeShader fluidCompute;
         [SerializeField] private Shader particleShader;
 
@@ -29,8 +30,14 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private int previousFrameRate, previousVSync;
         private string evidence;
         private float frameMs;
-        private float playbackSpeed = .25f;
+        private float playbackSpeed;
         private float measuredPlaybackSpeed;
+        private int timestepIndex;
+        private int benchmarkSteps;
+        private Vector2 panelScroll;
+
+        private int StepMicroseconds => TimestepMicroseconds[timestepIndex];
+        private double StepSeconds => StepMicroseconds / 1_000_000.0;
 
         private void OnEnable()
         {
@@ -88,13 +95,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.compute = computeInstance;
             fluid.spawner = spawner;
             fluid.manualControl = true;
-            fluid.gravity = -9.81f;
             // Start from the demo's liquid parameters scaled to metre-sized particles.
             fluid.smoothingRadius = .002f;
             fluid.targetDensity = 630e6f;
-            fluid.pressureMultiplier = 2.88f;
-            fluid.nearPressureMultiplier = .0216f;
-            fluid.collisionDamping = .2f;
+            RestoreDefaults();
             fluid.maxFoamParticleCount = 1;
             const float particleRadiusM = .0004f;
             fluid.beakerCollision = new Vector4(0, 0,
@@ -129,20 +133,22 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
             if (!running || fluid == null || fluid.positionBuffer == null) return;
             double now = Time.realtimeSinceStartupAsDouble;
-            pendingSeconds = Math.Min(pendingSeconds + (now - lastTick) * (measuring ? measuredPlaybackSpeed : playbackSpeed), MaxStepsPerFrame * StepSeconds);
+            double stepSeconds = StepSeconds;
+            float speed = measuring ? measuredPlaybackSpeed : playbackSpeed;
+            pendingSeconds = Math.Min(pendingSeconds + (now - lastTick) * speed, MaxPendingSeconds);
             lastTick = now;
-            int steps = (int)(pendingSeconds / StepSeconds);
+            int steps = (int)(pendingSeconds / stepSeconds);
             if (measuring)
             {
                 measuredFrames++;
-                steps = Math.Min(steps, TestSteps - measuredSteps);
+                steps = Math.Min(steps, benchmarkSteps - measuredSteps);
             }
             if (steps == 0) return;
-            fluid.AdvanceManually((float)StepSeconds, steps);
-            pendingSeconds -= steps * StepSeconds;
+            fluid.AdvanceManually((float)stepSeconds, steps);
+            pendingSeconds -= steps * stepSeconds;
             if (!measuring) return;
             measuredSteps += steps;
-            if (measuredSteps == TestSteps)
+            if (measuredSteps == benchmarkSteps)
             {
                 running = false;
                 finishOnNextFrame = true;
@@ -162,6 +168,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             evidence = null;
             measuredFrames = measuredSteps = 0;
             measuredPlaybackSpeed = playbackSpeed;
+            benchmarkSteps = BenchmarkMicroseconds / StepMicroseconds;
             SetRunning(true);
             startTime = lastTick;
             measuring = true;
@@ -172,7 +179,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             measuring = false;
             double elapsed = Time.realtimeSinceStartupAsDouble - startTime;
             string timing = FormattableString.Invariant(
-                $"GPU drop: {measuredFrames} frames, {measuredFrames / elapsed:F1} FPS, {fluid.SimulatedSeconds:F3} s simulated in {elapsed:F3} s at {measuredPlaybackSpeed:P0} playback");
+                $"GPU drop: {measuredFrames} frames, {measuredFrames / elapsed:F1} FPS, {fluid.SimulatedSeconds:F3} s simulated in {elapsed:F3} s at {measuredPlaybackSpeed:P0} playback · {StepMicroseconds / 1000.0:0.##} ms per step");
             evidence = timing;
             if (!SystemInfo.supportsAsyncGPUReadback)
             {
@@ -217,8 +224,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(16, 16, Mathf.Min(480, Screen.width - 32), 195), GUI.skin.box);
-            GUILayout.Label("GPU particle beaker · 9 mL drop");
+            var bounds = new Rect(16, 16, Mathf.Max(1, Mathf.Min(460, Screen.width - 32)),
+                Mathf.Max(1, Mathf.Min(345, Screen.height - 32)));
+            GUILayout.BeginArea(bounds, GUI.skin.box);
+            panelScroll = GUILayout.BeginScrollView(panelScroll);
+            GUILayout.Label("Simulation Controls", GUI.skin.box);
             if (fluid != null && fluid.positionBuffer != null)
             {
                 GUILayout.Label($"{fluid.positionBuffer.count} particles · {fluid.SimulatedSeconds:F3} s · {(frameMs > 0 ? 1000 / frameMs : 0):F1} FPS");
@@ -238,14 +248,58 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 }
                 if (GUILayout.Button("Measure drop + slosh")) StartMeasurement();
                 GUILayout.EndHorizontal();
+
+                GUI.enabled = !running && !measuring && !readbackPending && !finishOnNextFrame;
+                if (GUILayout.Button("Step once")) fluid.AdvanceManually((float)StepSeconds, 1);
+
                 GUI.enabled = !measuring && !readbackPending && !finishOnNextFrame;
-                GUILayout.Label($"Playback speed {playbackSpeed:P0}");
-                playbackSpeed = GUILayout.HorizontalSlider(playbackSpeed, .05f, 1f);
+                int nextTimestep = Mathf.RoundToInt(Slider($"Solver step  {StepMicroseconds / 1000.0:0.##} ms",
+                    timestepIndex, 0, TimestepMicroseconds.Length - 1));
+                if (nextTimestep != timestepIndex)
+                {
+                    timestepIndex = nextTimestep;
+                    SetRunning(running);
+                }
+
+                playbackSpeed = Slider($"Playback speed  {playbackSpeed:P0}", playbackSpeed, .05f, 1f);
+                float gravity = Slider($"Gravity  {-fluid.gravity:F2} m/s²", -fluid.gravity, 0, 20);
+                fluid.gravity = -gravity;
+                fluid.pressureMultiplier = Slider($"Pressure  {fluid.pressureMultiplier:F2}", fluid.pressureMultiplier, 0, 6);
+                fluid.nearPressureMultiplier = Slider($"Near pressure  {fluid.nearPressureMultiplier:F4}", fluid.nearPressureMultiplier, 0, .1f);
+                fluid.viscosityStrength = Slider($"Viscosity strength  {fluid.viscosityStrength:F2}", fluid.viscosityStrength, 0, 1);
+                fluid.collisionDamping = Slider($"Wall bounce  {fluid.collisionDamping:P0}", fluid.collisionDamping, 0, 1);
+                if (GUILayout.Button("Restore default settings"))
+                {
+                    RestoreDefaults();
+                    SetRunning(running);
+                }
+
                 GUI.enabled = true;
             }
             if (evidence != null) GUILayout.Label(evidence);
             GUILayout.Label("WASD move · Right mouse look · Wheel zoom · R reset view");
+            GUILayout.EndScrollView();
             GUILayout.EndArea();
+        }
+
+        private static float Slider(string label, float value, float min, float max)
+        {
+            GUILayout.BeginHorizontal();
+            GUILayout.Label(label, GUILayout.Width(168));
+            float selected = GUILayout.HorizontalSlider(value, min, max);
+            GUILayout.EndHorizontal();
+            return selected;
+        }
+
+        private void RestoreDefaults()
+        {
+            timestepIndex = DefaultTimestepIndex;
+            playbackSpeed = .25f;
+            fluid.gravity = -9.81f;
+            fluid.pressureMultiplier = 2.88f;
+            fluid.nearPressureMultiplier = .0216f;
+            fluid.viscosityStrength = 0;
+            fluid.collisionDamping = .2f;
         }
 
         private void OnDestroy()
