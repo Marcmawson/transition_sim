@@ -1,6 +1,7 @@
 using System;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Geometry;
+using PhysicsSim.ThreePhase3D.Materials;
 using PhysicsSim.ThreePhase3D.PhaseChange;
 
 namespace PhysicsSim.ThreePhase3D.Flow
@@ -29,8 +30,28 @@ namespace PhysicsSim.ThreePhase3D.Flow
             int maxIterations = 4096) =>
             Advance(state, dt, maxIterations, transport.Advance, FlowCpuReference.Project, surfaceTensionNPerM);
 
+        // Prescribed interface-temperature extension in compact periodic cell order,
+        // evaluated at the projection time. This entry point does not evolve temperature.
+        public PeriodicVofStep AdvanceThermocapillary(VofFields state, double dt, double[] temperatureKelvin,
+            int maxIterations = 4096)
+        {
+            if (temperatureKelvin == null || temperatureKelvin.Length != transport.CellCount)
+                throw new ArgumentException("Expected one temperature per periodic cell.", nameof(temperatureKelvin));
+            var sigma = new double[temperatureKelvin.Length];
+            double maximum = 0;
+            double minimum = double.PositiveInfinity;
+            for (int cell = 0; cell < sigma.Length; cell++)
+            {
+                sigma[cell] = WaterTransport.SurfaceTension(temperatureKelvin[cell]);
+                maximum = Math.Max(maximum, sigma[cell]);
+                minimum = Math.Min(minimum, sigma[cell]);
+            }
+            return Advance(state, dt, maxIterations, transport.Advance, FlowCpuReference.Project,
+                maximum, minimum == maximum ? null : sigma);
+        }
+
         internal PeriodicVofStep Advance(VofFields state, double dt, int maxIterations,
-            Func<VofFields, double[][], double, VofAdvance> advect, PressureSolve project, double surfaceTensionNPerM = 0)
+            Func<VofFields, double[][], double, VofAdvance> advect, PressureSolve project, double surfaceTensionNPerM = 0, double[] sigmaByCell = null)
         {
             dt = (float)dt;
             if (state == null || !SiUnits.IsFinite(dt) || dt <= 0 || maxIterations < 1)
@@ -57,6 +78,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
             }, _ => 0, true);
             var tentative = new float[plan.FaceCount];
             var curvature = surfaceTensionNPerM > 0 ? SurfaceGeometry.Evaluate(transport, moved.LiquidFraction) : null;
+            var tangentialForce = sigmaByCell == null ? null :
+                MarangoniStress.ForceDensity(transport, moved.LiquidFraction, sigmaByCell);
             int extrapolatedFaces = 0;
             ForEachFace((axis, cell, i, j, k) =>
             {
@@ -65,6 +88,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 if (curvature != null)
                 {
                     int high = transport.CellIndex(i % shape.X, j % shape.Y, k % shape.Z);
+                    double mobility = plan.Faces[face].Mobility;
                     double jump = moved.LiquidFraction[high] - moved.LiquidFraction[cell];
                     if (jump != 0)
                     {
@@ -78,8 +102,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
                             faceCurvature = NearbyCurvature(curvature, axis, i, j, k);
                             extrapolatedFaces++;
                         }
-                        predicted += dt * plan.Faces[face].Mobility * surfaceTensionNPerM * faceCurvature * jump;
+                        double faceSigma = sigmaByCell == null ? surfaceTensionNPerM :
+                            .5 * (sigmaByCell[cell] + sigmaByCell[high]);
+                        predicted += dt * mobility * faceSigma * faceCurvature * jump;
                     }
+                    if (tangentialForce != null)
+                        predicted += dt * mobility * grid.Spacing[axis] *
+                            .5 * (tangentialForce[cell][axis] + tangentialForce[high][axis]);
                 }
                 tentative[face] = (float)predicted;
                 if (!SiUnits.IsFinite(tentative[face]))

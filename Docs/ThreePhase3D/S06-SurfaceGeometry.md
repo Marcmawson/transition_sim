@@ -21,3 +21,11 @@ dotnet run --project Tools/ThreePhase3D/SurfaceGeometryChecks.csproj
 ```
 
 The checks exercise flat and quadratic surfaces on an anisotropic grid, reversed phase orientation, the alternate-axis fallback, and the unsupported-stencil diagnostic.
+
+## Prescribed-temperature capillary and Marangoni forces
+
+`PeriodicVofProjection.AdvanceThermocapillary` accepts a prescribed interface-temperature extension at the projection time, with one kelvin value per compact periodic cell. It evaluates the existing [D05](Sources.md#d05-water-surface-tension) IAPWS correlation over 273.16–647.096 K. Maximum surface tension sets the capillary timestep bound and the arithmetic face mean sets the normal capillary term.
+
+The continuum tangential force density is approximated by `|grad(alpha)| * (I - n nᵀ) grad(sigma)`, where `n` is the normalised volume-fraction gradient. Both gradients use periodic centred differences. The cell force components are averaged to the staggered faces and multiplied by the same inverse face density used by pressure. The surface-force decomposition follows [Seric, Afkhami and Kondic (2018)](https://web.njit.edu/~kondic/thin_films/2018_JCP_surface_tension.pdf). The centred-gradient approximation used here requires a smooth extension of interface temperature through the stencil.
+
+The CPU check uses a flat periodic slab with a sinusoidal temperature profile. It compares integrated tangential stress against the analytical derivative of the IAPWS correlation, checks zero tangential force for normal-only temperature variation, measures the net tangential force, verifies flow toward colder water, and checks uniform-temperature parity with the isothermal path. The check covers one prescribed-temperature case. Coupled heat transport, curved-interface migration, a general discrete net-force guarantee, wall wetting, and Unity/GPU validation remain open.

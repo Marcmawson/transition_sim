@@ -4,6 +4,7 @@ using PhysicsSim.ThreePhase3D.Verification;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
 using PhysicsSim.ThreePhase3D.PhaseChange;
+using PhysicsSim.ThreePhase3D.Materials;
 
 internal static class SurfaceGeometryMain
 {
@@ -44,6 +45,7 @@ internal static class SurfaceGeometryMain
         Console.WriteLine("Isolated mixed cell: unresolved; pure cell: pure phase.");
         CheckAlternateAxis();
         CheckSphericalDrop();
+        CheckThermocapillarySlab();
     }
 
     private static void CheckSphericalDrop()
@@ -94,6 +96,54 @@ internal static class SurfaceGeometryMain
                 throw new InvalidOperationException("Stationary sphere capillary check failed.");
             state = step.Fields;
         }
+    }
+
+    private static void CheckThermocapillarySlab()
+    {
+        const int n = 20;
+        const double h = .001, dt = .0001, meanTemperature = 310, amplitude = 10;
+        var grid = new Grid3D(n, n, 3, new D3(h, h, h));
+        var transport = new GeometricVof3D(grid, 997, 1.2);
+        var alpha = new double[transport.CellCount];
+        var temperature = new double[alpha.Length];
+        var sigma = new double[alpha.Length];
+        var normalSigma = new double[alpha.Length];
+        for (int k = 0; k < 3; k++)
+        for (int j = 0; j < n; j++)
+        for (int i = 0; i < n; i++)
+        {
+            int cell = transport.CellIndex(i, j, k);
+            alpha[cell] = j == 5 || j == 14 ? .5 : j > 5 && j < 14 ? 1 : 0;
+            temperature[cell] = meanTemperature + amplitude * Math.Sin(2 * Math.PI * i / n);
+            sigma[cell] = WaterTransport.SurfaceTension(temperature[cell]);
+            normalSigma[cell] = WaterTransport.SurfaceTension(meanTemperature + .5 * j);
+        }
+
+        var force = MarangoniStress.ForceDensity(transport, alpha, sigma);
+        var normalForce = MarangoniStress.ForceDensity(transport, alpha, normalSigma);
+        if (normalForce.Any(f => f.Length > 1e-10) || force.Any(f => f.Y != 0 || f.Z != 0))
+            throw new InvalidOperationException("Marangoni force must be tangential.");
+        double stress = 0;
+        for (int j = 0; j < n / 2; j++) stress += h * force[transport.CellIndex(0, j, 0)].X;
+        double expected = WaterTransport.SurfaceTensionDerivative(meanTemperature) * amplitude * 2 * Math.PI / (n * h);
+        double netForce = force.Sum(f => f.X) * grid.CellVolume;
+
+        var state = VofChecks.Fields(grid, alpha, VofChecks.Uniform(alpha.Length, 0, 0, 0));
+        var solver = new PeriodicVofProjection(grid, 997, 1.2);
+        var step = solver.AdvanceThermocapillary(state, dt, temperature);
+        double coldwardSpeed = -step.Fields.FaceVelocity[0][transport.CellIndex(0, 4, 0)];
+        var uniform = solver.AdvanceThermocapillary(state, dt,
+            Enumerable.Repeat(meanTemperature, alpha.Length).ToArray());
+        var isothermal = solver.AdvanceCapillary(state, dt, WaterTransport.SurfaceTension(meanTemperature));
+        if (!uniform.CellPressurePa.SequenceEqual(isothermal.CellPressurePa) ||
+            !uniform.Fields.FaceVelocity.SelectMany(axis => axis)
+                .SequenceEqual(isothermal.Fields.FaceVelocity.SelectMany(axis => axis)))
+            throw new InvalidOperationException("Uniform temperature changed the isothermal result.");
+
+        Console.WriteLine($"Thermocapillary slab: stress={stress:G8} Pa (expected {expected:G8}), net force={netForce:G8} N, coldward speed={coldwardSpeed:G8} m/s");
+        if (!(Math.Abs(stress / expected - 1) < .03) || !(Math.Abs(netForce) < 1e-16) ||
+            !(coldwardSpeed > 0) || !step.Pressure.Converged)
+            throw new InvalidOperationException("Thermocapillary slab check failed.");
     }
 
     private static void CheckAlternateAxis()
