@@ -1,0 +1,29 @@
+#pragma kernel HeatFloor
+
+StructuredBuffer<float2> GlassRead;
+RWStructuredBuffer<float2> GlassWrite;
+StructuredBuffer<int> LiquidGroups;
+StructuredBuffer<float2> LiquidState;
+RWStructuredBuffer<float> LiquidGainJ;
+int Width, Depth, HeatedColumn;
+float Dt, InitialK, CellCapacity, AxialConductance, LateralConductance, ContactConductance, TilePowerW;
+
+[numthreads(64, 1, 1)]
+void HeatFloor(uint3 id : SV_DispatchThreadID)
+{
+    int tile = (int)id.x;
+    if (tile >= Width * Depth) return;
+    int x = tile % Width, z = tile / Width;
+    float2 glass = GlassRead[tile];
+    float2 lateral = 0;
+    if (x > 0) lateral += GlassRead[tile - 1] - glass;
+    if (x + 1 < Width) lateral += GlassRead[tile + 1] - glass;
+    if (z > 0) lateral += GlassRead[tile - Width] - glass;
+    if (z + 1 < Depth) lateral += GlassRead[tile + Width] - glass;
+    float throughJ = Dt * AxialConductance * (glass.x - glass.y);
+    float liquidJ = Dt * ContactConductance * (glass.y - (LiquidState[LiquidGroups[tile]].x - InitialK));
+    float inputJ = x == HeatedColumn ? Dt * TilePowerW : 0;
+    GlassWrite[tile] = glass + (Dt * LateralConductance * lateral +
+        float2(inputJ - throughJ, throughJ - liquidJ)) / CellCapacity;
+    LiquidGainJ[tile] = liquidJ;
+}

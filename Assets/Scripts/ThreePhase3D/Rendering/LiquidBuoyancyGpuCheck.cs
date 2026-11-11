@@ -96,34 +96,94 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 float sinking = Check(274f, 277.125f, -1);
                 float rising = Check(277.125f, 283f, 1);
                 Debug.Log($"S09 buoyancy check passed: uniform {uniform:G5} m/s, warmed below 4 °C {sinking:G5} m/s, warmed above 4 °C {rising:G5} m/s.");
-                CheckCirculation();
+                CheckCirculation(false);
+                CheckCirculation(true);
 
-                void CheckCirculation()
+                void CheckCirculation(bool heatedFloor)
                 {
                     const int steps = 40;
-                    const float ambientK = 277.125f, warmK = 283f;
+                    float ambientK = heatedFloor ? 293.15f : 277.125f;
+                    const float warmK = 283f;
                     var energy = plan.Volumes.Select(v => enthalpy.EnergyJ(v, ambientK)).ToArray();
-                    for (int k = 0; k < grid.Cells.Z; k++)
-                        for (int j = 0; j < grid.Cells.Y; j++)
-                        {
-                            int group = plan.PressureGroup(1, j, k);
-                            energy[group] = enthalpy.EnergyJ(plan.Volumes[group], warmK);
-                        }
+                    if (!heatedFloor)
+                        for (int k = 0; k < grid.Cells.Z; k++)
+                            for (int j = 0; j < grid.Cells.Y; j++)
+                            {
+                                int group = plan.PressureGroup(1, j, k);
+                                energy[group] = enthalpy.EnergyJ(plan.Volumes[group], warmK);
+                            }
 
                     double initialEnergy = energy.Sum(), initialVolume = plan.Volumes.Sum();
                     var inventory = new CutCellInventories(plan.Volumes, zero, energy, zero, zero);
                     var correction = transport.MeasurePressureCorrection(dt);
                     var flow = FlowGpuSolver.Project(plan, pressure, new float[plan.FaceCount], dt, 4096, correction);
-                    int risingFace = plan.FaceIndex(1, 1, 2, 0);
-                    int returnFace = plan.FaceIndex(1, 2, 2, 0);
+                    int sampleY = heatedFloor ? 1 : 2;
+                    int risingFace = plan.FaceIndex(1, 1, sampleY, 0);
+                    int returnFace = plan.FaceIndex(1, 2, sampleY, 0);
                     double worstEnergy = 0, worstVolume = 0;
                     float minimumRise = float.PositiveInfinity, maximumReturn = float.NegativeInfinity;
                     shader.SetFloat("ReferenceDensity", table.EvaluateFloat(ambientK, 101325)[0]);
+
+                    int width = grid.Cells.X, depth = grid.Cells.Z;
+                    var floorGroups = new int[width * depth];
+                    var gains = new float[floorGroups.Length];
+                    var glassTemperatures = new Vector2[floorGroups.Length];
+                    const float tileWatts = 2.5f, glassCapacity = .27f;
+                    var floorShader = heatedFloor ? Resources.Load<ComputeShader>("ThreePhase3D/HeatedLiquidFloor") : null;
+                    if (heatedFloor && floorShader == null)
+                        throw new InvalidOperationException("The S09 heated-floor shader is missing.");
+
+                    using var glassA = heatedFloor ? new ComputeBuffer(floorGroups.Length, 8) : null;
+                    using var glassB = heatedFloor ? new ComputeBuffer(floorGroups.Length, 8) : null;
+                    using var floorIndex = heatedFloor ? new ComputeBuffer(floorGroups.Length, 4) : null;
+                    using var heatGain = heatedFloor ? new ComputeBuffer(floorGroups.Length, 4) : null;
+                    ComputeBuffer glassRead = glassA, glassWrite = glassB;
+                    int heatKernel = -1;
+                    if (heatedFloor)
+                    {
+                        for (int z = 0; z < depth; z++)
+                            for (int x = 0; x < width; x++)
+                                floorGroups[z * width + x] = plan.PressureGroup(x, 0, z);
+                        floorIndex.SetData(floorGroups);
+                        glassRead.SetData(glassTemperatures);
+                        heatKernel = floorShader.FindKernel("HeatFloor");
+                        if (!floorShader.IsSupported(heatKernel)) throw new NotSupportedException("S09 heated-floor kernel is unsupported.");
+                        floorShader.SetInt("Width", width);
+                        floorShader.SetInt("Depth", depth);
+                        floorShader.SetInt("HeatedColumn", 1);
+                        floorShader.SetFloat("Dt", dt);
+                        floorShader.SetFloat("InitialK", ambientK);
+                        floorShader.SetFloat("TilePowerW", tileWatts);
+                        // Synthetic 10 × 10 mm glass tiles, two 1.5 mm layers.
+                        floorShader.SetFloat("CellCapacity", glassCapacity);
+                        floorShader.SetFloat("AxialConductance", .08f);
+                        floorShader.SetFloat("LateralConductance", .0018f);
+                        double waterK = table.EvaluateFloat(ambientK, 101325)[10];
+                        float contact = (float)CoupledHeatFaces.HeatRateW(.0001, 2, 1, .00075, 1.2, 0, .005, waterK);
+                        floorShader.SetFloat("ContactConductance", contact);
+                        floorShader.SetBuffer(heatKernel, "LiquidGroups", floorIndex);
+                        floorShader.SetBuffer(heatKernel, "LiquidState", recovery.State);
+                        floorShader.SetBuffer(heatKernel, "LiquidGainJ", heatGain);
+                        transport.AdvanceWithTemperature(inventory, zeroFlow, dt, recovery);
+                    }
 
                     using (var momentum = new CutCellGpuMomentum(plan,
                         Resources.Load<ComputeShader>("ThreePhase3D/CutCellVofMomentum")))
                         for (int i = 0; i < steps; i++)
                         {
+                            if (heatedFloor)
+                            {
+                                floorShader.SetBuffer(heatKernel, "GlassRead", glassRead);
+                                floorShader.SetBuffer(heatKernel, "GlassWrite", glassWrite);
+                                floorShader.Dispatch(heatKernel, (floorGroups.Length + 63) / 64, 1, 1);
+                                (glassRead, glassWrite) = (glassWrite, glassRead);
+                                heatGain.GetData(gains);
+                                var nextEnergy = (double[])inventory.LiquidEnergyJ.Clone();
+                                for (int j = 0; j < gains.Length; j++) nextEnergy[floorGroups[j]] += gains[j];
+                                inventory = new CutCellInventories(inventory.LiquidM3, inventory.GasM3, nextEnergy,
+                                    inventory.GasEnergyJ, inventory.VapourKg);
+                            }
+
                             var moved = transport.AdvanceProjectedWithTemperature(inventory, flow, recovery);
                             var advected = momentum.Advance(inventory, moved,
                                 Array.ConvertAll(flow.VelocityMPerS, value => (double)value), transportDensity, 1.2);
@@ -144,6 +204,21 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                             worstEnergy = Math.Max(worstEnergy, Math.Abs(inventory.LiquidEnergyJ.Sum() - initialEnergy));
                             worstVolume = Math.Max(worstVolume, Math.Abs(inventory.LiquidM3.Sum() - initialVolume));
                         }
+
+                    if (heatedFloor)
+                    {
+                        glassRead.GetData(glassTemperatures);
+                        double glassJ = glassTemperatures.Sum(value => glassCapacity * (double)(value.x + value.y));
+                        double waterJ = inventory.LiquidEnergyJ.Sum() - initialEnergy;
+                        double inputJ = steps * (double)dt * depth * tileWatts;
+                        double residual = glassJ + waterJ - inputJ;
+                        float up = flow.VelocityMPerS[risingFace], down = flow.VelocityMPerS[returnFace];
+                        if (!(waterJ > 0 && glassJ > 0 && up > 1e-7 && down < -1e-7) ||
+                            !SiUnits.IsFinite(residual) || Math.Abs(residual) > 1e-4 || worstVolume > 1e-12)
+                            throw new InvalidOperationException($"S09 heated floor failed: glass {glassJ:G5} J, water {waterJ:G5} J, residual {residual:G5} J, up {up:G5}, return {down:G5} m/s.");
+                        Debug.Log($"S09 heated floor check passed: {inputJ:F3} J supplied, glass {glassJ:F4} J, water {waterJ:F4} J, residual {residual:G5} J, rising {up:G5} m/s, return {down:G5} m/s.");
+                        return;
+                    }
 
                     double redistribution = inventory.LiquidEnergyJ.Zip(energy, (after, before) => Math.Abs(after - before)).Sum();
                     if (minimumRise <= 1e-7 || maximumReturn >= -1e-7 ||
