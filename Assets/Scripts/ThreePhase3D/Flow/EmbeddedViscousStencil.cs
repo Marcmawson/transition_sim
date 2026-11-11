@@ -1,5 +1,7 @@
 using System;
 using PhysicsSim.ThreePhase3D.Core;
+using PhysicsSim.ThreePhase3D.Geometry;
+using PhysicsSim.ThreePhase3D.PhaseChange;
 
 namespace PhysicsSim.ThreePhase3D.Flow
 {
@@ -27,7 +29,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
         internal readonly float[] Rates;
         internal double MaximumDiagonal { get; private set; }
 
-        internal EmbeddedViscousStencil(VariableCoefficientProjection plan, int[] neighbours, bool embedded)
+        internal EmbeddedViscousStencil(VariableCoefficientProjection plan, int[] neighbours, bool embedded,
+            Func<InterfacePatch, WettingProfile> wallWetting)
         {
             this.plan = plan;
             this.neighbours = neighbours;
@@ -52,7 +55,22 @@ namespace PhysicsSim.ThreePhase3D.Flow
                         double distance = D3.Dot(centre - patch.CentroidLocalM, patch.NormalLocal);
                         if (distance <= GeometricTolerance * MinimumSpacing())
                             throw new NotSupportedException("The dual fluid centroid does not resolve an embedded wall patch. Refine or reposition the grid.");
-                        wallConductance[patch.Cell] += patch.FluidExposedAreaM2 / distance;
+                        var wetting = patch.Role == SolidRole.Fixed ? wallWetting?.Invoke(patch) : null;
+                        if (wetting == null)
+                        {
+                            wallConductance[patch.Cell] += patch.FluidExposedAreaM2 / distance;
+                            continue;
+                        }
+                        // This scalar MAC row has no cross-component wall terms.
+                        // An oblique wall needs those terms for a tangential traction.
+                        var normal = patch.NormalLocal;
+                        double alignment = Math.Max(Math.Abs(normal.X), Math.Max(Math.Abs(normal.Y), Math.Abs(normal.Z)));
+                        if (alignment < 1 - GeometricTolerance ||
+                            Math.Abs(normal.X) + Math.Abs(normal.Y) + Math.Abs(normal.Z) - alignment > GeometricTolerance)
+                            throw new NotSupportedException("Navier slip requires a grid-aligned embedded wall in the scalar viscous stencil.");
+                        double inverseDistance = Math.Abs(normal[axis]) <= GeometricTolerance
+                            ? wetting.WallGradientPerVelocity(distance) : 1 / distance;
+                        wallConductance[patch.Cell] += patch.FluidExposedAreaM2 * inverseDistance;
                     }
                 }
 

@@ -1,5 +1,7 @@
 using System;
 using PhysicsSim.ThreePhase3D.Core;
+using PhysicsSim.ThreePhase3D.Geometry;
+using PhysicsSim.ThreePhase3D.PhaseChange;
 
 namespace PhysicsSim.ThreePhase3D.Flow
 {
@@ -25,7 +27,11 @@ namespace PhysicsSim.ThreePhase3D.Flow
         internal readonly VariableCoefficientProjection Plan;
         internal readonly EmbeddedViscousStencil Diffusion;
 
-        public MomentumPredictor3D(VariableCoefficientProjection plan)
+        public MomentumPredictor3D(VariableCoefficientProjection plan) : this(plan, null) { }
+
+        // Select slip patches by their geometry in the staggered dual grid.
+        // Rebuild the predictor when the selected contact-line region changes.
+        public MomentumPredictor3D(VariableCoefficientProjection plan, Func<InterfacePatch, WettingProfile> wallWetting)
         {
             Plan = plan ?? throw new ArgumentNullException(nameof(plan));
             double maximumViscosity = 0;
@@ -59,7 +65,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             }
             if (plan.HasVariableProperties && maximumViscosity > 0)
                 throw new NotSupportedException("The viscous predictor requires uniform density and dynamic viscosity.");
-            Diffusion = new EmbeddedViscousStencil(plan, Stencil, plan.HasEmbeddedSolid && maximumViscosity > 0);
+            Diffusion = new EmbeddedViscousStencil(plan, Stencil, plan.HasEmbeddedSolid && maximumViscosity > 0, wallWetting);
         }
 
         private int Neighbour(int axis, int direction, int i, int j, int k, int sign)

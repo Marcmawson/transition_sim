@@ -4,6 +4,7 @@ using System.Runtime.Serialization;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
 using PhysicsSim.ThreePhase3D.Geometry;
+using PhysicsSim.ThreePhase3D.PhaseChange;
 
 namespace PhysicsSim.ThreePhase3D.Verification
 {
@@ -106,7 +107,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
             var slip = new FlowBoundary(FlowBoundaryKind.FreeSlip);
             var boundary = new BoundaryConditions3D(open, open, slip, slip, slip, slip);
             var grid = new Grid3D(4, 8, 3, new D3(.005, .005, .005));
-            const double wallY = .0073, shear = 3;
+            const double wallY = .0077, shear = 3;
             var slab = SurfacePrimitives.Box(new D3(-.01, -.01, -.01), new D3(.03, wallY, .025));
             var geometry = CutCellGeometry.Build(grid, slab);
             var plan = new VariableCoefficientProjection(geometry, boundary, _ => 1000, _ => .001);
@@ -128,6 +129,31 @@ namespace PhysicsSim.ThreePhase3D.Verification
             Check(id, "wall damps uniform tangential speed by the expected amount [m/s]",
                 damped.VelocityMPerS[probe], plug[probe] * (1 - damped.Diagnostics.Dt * expectedRate), 2e-8);
             Check(id, "wall damping reduces the velocity norm", Energy(damped.VelocityMPerS) < Energy(plug) ? 1 : 0, 1, 0);
+
+            const string slipId = "embedded-navier-slip";
+            const double slipLength = .001;
+            var profile = new WettingProfile("Synthetic planar wall", "Analytical slip fixture", 60, slipLength, .01,
+                new[] { new WettingMeasurement(0, 70), new WettingMeasurement(.01, 75) },
+                new[] { new WettingMeasurement(0, 50), new WettingMeasurement(.01, 45) });
+            var navier = new MomentumPredictor3D(plan, _ => profile);
+            double slipRate = 1e-6 / (cutHeight * (.5 * cutHeight + slipLength));
+            Check(slipId, "tangential wall rate [1/s]",
+                navier.Diffusion.Rates[probe * EmbeddedViscousStencil.Stride + 6], slipRate, 2e-6);
+            int normalFace = plan.FaceIndex(1, 1, 2, 1);
+            int normalRate = normalFace * EmbeddedViscousStencil.Stride + 6;
+            Check(slipId, "normal wall rate remains positive", predictor.Diffusion.Rates[normalRate] > 0 ? 1 : 0, 1, 0);
+            Check(slipId, "normal wall rate is unchanged [1/s]", navier.Diffusion.Rates[normalRate],
+                predictor.Diffusion.Rates[normalRate], 0);
+            var localSlip = new MomentumPredictor3D(plan, patch => patch.CentroidLocalM.X > .005 ? profile : null);
+            int outside = plan.FaceIndex(0, 0, 1, 1) * EmbeddedViscousStencil.Stride + 6;
+            Check(slipId, "unselected wall rate remains positive", predictor.Diffusion.Rates[outside] > 0 ? 1 : 0, 1, 0);
+            Check(slipId, "unselected wall retains no-slip [1/s]", localSlip.Diffusion.Rates[outside],
+                predictor.Diffusion.Rates[outside], 0);
+            Check(slipId, "selected wall applies slip [1/s]",
+                localSlip.Diffusion.Rates[probe * EmbeddedViscousStencil.Stride + 6], slipRate, 2e-6);
+            var slipDecay = RunStep(slipId, navier, plug, new D3(), .01);
+            Check(slipId, "analytical plug decay [m/s]", slipDecay.VelocityMPerS[probe],
+                plug[probe] * (1 - slipDecay.Diagnostics.Dt * slipRate), 2e-8);
         }
 
         private void UnresolvedViscousBeaker()

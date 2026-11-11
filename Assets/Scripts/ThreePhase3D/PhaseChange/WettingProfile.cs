@@ -83,8 +83,10 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
                 throw new ArgumentException("Wall distance must be positive and viscosity nonnegative.");
             var n = wallNormal.Unit();
             var tangent = fluidVelocityMPerS - n * D3.Dot(n, fluidVelocityMPerS);
-            return tangent * (-viscosityPaS / (distanceM + SlipLengthM));
+            return tangent * (-viscosityPaS * WallGradientPerVelocity(distanceM));
         }
+
+        internal double WallGradientPerVelocity(double distanceM) => 1 / (distanceM + SlipLengthM);
 
         private static WettingMeasurement[] CopyCurve(WettingMeasurement[] curve, string name)
         {
