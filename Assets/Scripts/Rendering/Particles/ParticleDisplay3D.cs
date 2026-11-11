@@ -19,6 +19,7 @@ namespace Seb.Fluid.Rendering
 		public Gradient colourMap;
 		public int gradientResolution;
 		public float velocityDisplayMax;
+		[HideInInspector] public float temperatureRiseDisplayMax = 10f;
 		public int meshResolution;
 
 		[Header("References")] public FluidSim sim;
@@ -90,6 +91,8 @@ namespace Seb.Fluid.Rendering
 
 				mat.SetFloat("scale", scale * 0.01f);
 				mat.SetFloat("velocityMax", velocityDisplayMax);
+				if (mode == DisplayMode.Billboard && sim.TemperatureRise != null)
+					mat.SetFloat("temperatureRiseMax", Mathf.Max(.1f, temperatureRiseDisplayMax));
 
 				Vector3 s = transform.localScale;
 				transform.localScale = Vector3.one;

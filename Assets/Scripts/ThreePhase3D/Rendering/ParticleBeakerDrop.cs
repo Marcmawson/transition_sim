@@ -39,6 +39,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         [Header("Thermal Coupling")]
         [SerializeField] private bool heatMovingWater = false;
         [SerializeField, Range(0f, 100f)] private float absorbedBurnerWatts = 10f;
+        [SerializeField, Range(20.1f, 100f)] private float hotColourC = 30f;
 
         [Header("Simulation Settings")]
         [SerializeField] private SolverTimestep solverTimestep = SolverTimestep.Ms040;
@@ -51,6 +52,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         [SerializeField, Range(0f, 1f)] private float wallBounce = .2f;
 
         private FluidSim fluid;
+        private ParticleDisplay3D particleDisplay;
+        private Texture2D temperatureLegend;
         private MovingBeakerHeat movingHeat;
         private ComputeShader computeInstance;
         private GameObject solverObject;
@@ -142,7 +145,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 floor + particleRadiusM);
             fluid.beakerRimY = rim;
 
-            var display = solverObject.AddComponent<ParticleDisplay3D>();
+            var display = particleDisplay = solverObject.AddComponent<ParticleDisplay3D>();
             display.sim = fluid;
             display.mode = ParticleDisplay3D.DisplayMode.Billboard;
             display.shaderBillboard = particleShader;
@@ -155,6 +158,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 new GradientColorKey(new Color(.05f, .55f, .88f), 0),
                 new GradientColorKey(heatMovingWater ? new Color(1f, .08f, .04f) : new Color(.52f, .92f, 1f), 1)
             }, new[] { new GradientAlphaKey(1, 0), new GradientAlphaKey(1, 1) });
+            if (heatMovingWater)
+            {
+                display.temperatureRiseDisplayMax = hotColourC - 20f;
+                ParticleDisplay3D.TextureFromGradient(ref temperatureLegend, 64, display.colourMap);
+            }
             solverObject.SetActive(true);
         }
 
@@ -281,7 +289,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void OnGUI()
         {
             var bounds = new Rect(16, 16, Mathf.Max(1, Mathf.Min(460, Screen.width - 32)),
-                Mathf.Max(1, Mathf.Min(345, Screen.height - 32)));
+                Mathf.Max(1, Mathf.Min(heatMovingWater ? 460 : 345, Screen.height - 32)));
             GUILayout.BeginArea(bounds, GUI.skin.box);
             panelScroll = GUILayout.BeginScrollView(panelScroll);
             GUILayout.Label($"Simulation Controls · {releaseVolumeMl:F0} mL release", GUI.skin.box);
@@ -332,7 +340,14 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 fluid.viscosityStrength = Slider($"Viscosity strength  {fluid.viscosityStrength:F2}", fluid.viscosityStrength, 0, 1);
                 fluid.collisionDamping = Slider($"Wall bounce  {fluid.collisionDamping:P0}", fluid.collisionDamping, 0, 1);
                 if (movingHeat != null)
+                {
                     absorbedBurnerWatts = Slider($"Burner {absorbedBurnerWatts:F0} W", absorbedBurnerWatts, 0, 100);
+                    hotColourC = Slider($"Red endpoint  {hotColourC:F1} °C", hotColourC, 20.1f, 100f);
+                    particleDisplay.temperatureRiseDisplayMax = hotColourC - 20f;
+                    GUILayout.Label($"Water temperature   20.0 °C to {hotColourC:F1} °C");
+                    Rect legend = GUILayoutUtility.GetRect(1, 12, GUILayout.ExpandWidth(true));
+                    GUI.DrawTexture(legend, temperatureLegend, ScaleMode.StretchToFill);
+                }
                 if (GUILayout.Button("Restore scene settings"))
                 {
                     ApplySceneSettings();
@@ -372,6 +387,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void OnDestroy()
         {
             movingHeat?.Dispose();
+            if (temperatureLegend != null) Destroy(temperatureLegend);
             if (solverObject != null) Destroy(solverObject);
             if (computeInstance != null) Destroy(computeInstance);
         }

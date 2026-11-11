@@ -25,6 +25,7 @@ Shader "Fluid/ParticleBillboard" {
 			Texture2D<float4> ColourMap;
 			SamplerState linear_clamp_sampler;
 			float velocityMax;
+			float temperatureRiseMax;
 
 			float scale;
 			float3 colour;
@@ -52,7 +53,7 @@ Shader "Fluid/ParticleBillboard" {
 
 
 				#ifdef PARTICLE_TEMPERATURE
-				float colT = saturate(TemperatureRise[instanceID] / 10);
+				float colT = saturate(TemperatureRise[instanceID] / temperatureRiseMax);
 				#else
 				float colT = saturate(length(Velocities[instanceID]) / velocityMax);
 				#endif
