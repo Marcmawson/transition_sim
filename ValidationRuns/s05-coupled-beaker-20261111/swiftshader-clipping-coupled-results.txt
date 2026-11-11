@@ -1,0 +1,8 @@
+steps=1 dispatches=1 time=0.025 liquidDrift=0.0000E+000 dualMassError=1.0842E-019 momentumError=5.0293E-022 liquidChange=7.6735E-009
+steps=2 dispatches=2 time=0.050 liquidDrift=0.0000E+000 dualMassError=3.2526E-019 momentumError=8.4703E-022 liquidChange=1.5402E-008
+steps=3 dispatches=3 time=0.075 liquidDrift=0.0000E+000 dualMassError=3.2526E-019 momentumError=2.3293E-021 liquidChange=2.3187E-008
+steps=4 dispatches=4 time=0.100 liquidDrift=-1.6941E-021 dualMassError=3.2526E-019 momentumError=2.3293E-021 liquidChange=3.1030E-008
+steps=5 dispatches=5 time=0.125 liquidDrift=-1.6941E-021 dualMassError=3.2526E-019 momentumError=2.3293E-021 liquidChange=3.8924E-008
+steps=6 dispatches=6 time=0.150 liquidDrift=-1.6941E-021 dualMassError=3.2526E-019 momentumError=2.3293E-021 liquidChange=4.6870E-008
+steps=7 dispatches=7 time=0.175 liquidDrift=-1.6941E-021 dualMassError=3.2526E-019 momentumError=6.1410E-021 liquidChange=5.4866E-008
+steps=8 dispatches=8 time=0.200 liquidDrift=0.0000E+000 dualMassError=3.2526E-019 momentumError=6.1410E-021 liquidChange=6.2913E-008

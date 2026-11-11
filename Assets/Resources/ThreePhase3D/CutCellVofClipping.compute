@@ -68,6 +68,16 @@ float HalfVolume(Tet t, float3 n, float intercept)
     return Volume(a) + (count == 3 ? Volume(b) + Volume(c) : 0);
 }
 
+float3 AxisVector(int axis)
+{
+    return axis == 0 ? float3(1,0,0) : axis == 1 ? float3(0,1,0) : float3(0,0,1);
+}
+
+float3 ReflectAtUpperFace(float3 p, float3 axis)
+{
+    return p * (1-axis) + (1-p) * axis;
+}
+
 float Integrate(int4 job, float3 n, float intercept, float3 slab, float edge, bool twoPlanes)
 {
     precise float sum = 0, correction = 0;
@@ -76,6 +86,12 @@ float Integrate(int4 job, float3 n, float intercept, float3 slab, float edge, bo
         int index = (job.x+j)*4;
         float4 first = TetraVertices[index];
         Tet t = MakeTet(first.xyz,TetraVertices[index+1].xyz,TetraVertices[index+2].xyz,TetraVertices[index+3].xyz);
+        if (job.w < 0)
+        {
+            float3 axis = AxisVector(job.z);
+            t = MakeTet(ReflectAtUpperFace(t.a,axis),ReflectAtUpperFace(t.b,axis),
+                ReflectAtUpperFace(t.c,axis),ReflectAtUpperFace(t.d,axis));
+        }
         float amount;
         if (twoPlanes)
         {
@@ -101,7 +117,10 @@ void ClipCutFaces(uint3 id : SV_DispatchThreadID)
     int4 job = Jobs[f];
     float4 plane = Normals[f];
     float2 volume = Volumes[f];
-    float3 n = plane.xyz;
+    float3 slab = AxisVector(job.z);
+    // For outward flow at the positive face, reflect the cell so the
+    // slab is always measured from zero. Tiny widths retain precision.
+    float3 n = job.w < 0 ? plane.xyz * (1-2*slab) : plane.xyz;
     float lo = dot(min(n,0),float3(1,1,1)), hi = dot(max(n,0),float3(1,1,1));
     for (int i = 0; i < 25; i++)
     {
@@ -110,20 +129,16 @@ void ClipCutFaces(uint3 id : SV_DispatchThreadID)
         else hi = middle;
     }
     float intercept = .5*(lo+hi);
-    float3 slab = job.z == 0 ? float3(1,0,0) : job.z == 1 ? float3(0,1,0) : float3(0,0,1);
-    slab *= job.w;
-    // Negative-axis plane clips the upper slab; its offset is width - 1.
-    float origin = job.w < 0 ? -1 : 0;
     lo = 0; hi = 1;
-    for (int i = 0; i < 25; i++)
+    for (int i = 0; i < 36; i++)
     {
         float middle = .5*(lo+hi);
-        if (Integrate(job,slab,origin+middle,0,0,false) < volume.y) lo = middle;
+        if (Integrate(job,slab,middle,0,0,false) < volume.y) lo = middle;
         else hi = middle;
     }
-    float edge = origin+.5*(lo+hi);
+    float edge = .5*(lo+hi);
     Results[f] = float4(Integrate(job,n,intercept,slab,edge,true),
         Integrate(job,n,intercept,0,0,false)-plane.w,
         Integrate(job,slab,edge,0,0,false)-volume.y,
-        Integrate(job,slab,origin+1,0,0,false)-volume.x);
+        Integrate(job,slab,1,0,0,false)-volume.x);
 }

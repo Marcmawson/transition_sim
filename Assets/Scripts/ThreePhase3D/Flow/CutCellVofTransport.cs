@@ -84,11 +84,14 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         internal CutCellCoupledStep AdvanceCoupled(CutCellInventories state, FlowStep transportingFlow,
             double liquidDensity, double gasDensity, Func<int, CutCellInflow> inflow, int maxIterations,
-            PeriodicVofProjection.PressureSolve project)
+            PeriodicVofProjection.PressureSolve project,
+            Func<CutCellScalarWork, CutCellScalarOutput> apply = null, CutCellGeometryBatch clip = null,
+            Func<CutCellInventories, CutCellTransportResult, double[], double, double, CutCellMomentumResult> remap = null)
         {
-            var transported = AdvanceProjected(state, transportingFlow, inflow);
+            var transported = AdvanceProjected(state, transportingFlow, inflow, apply, clip);
             var previousVelocity = Array.ConvertAll(transportingFlow.VelocityMPerS, value => (double)value);
-            var advected = AdvanceMomentum(state, transported, previousVelocity, liquidDensity, gasDensity);
+            var advected = remap == null ? AdvanceMomentum(state, transported, previousVelocity, liquidDensity, gasDensity) :
+                remap(state, transported, previousVelocity, liquidDensity, gasDensity);
             var nextPlan = new VariableCoefficientProjection(plan.Geometry, plan.Boundaries, cell =>
             {
                 int group = plan.GroupByCell[cell];
@@ -110,7 +113,10 @@ namespace PhysicsSim.ThreePhase3D.Flow
         }
 
         public CutCellTransportResult AdvanceProjected(CutCellInventories state, FlowStep pressure,
-            Func<int, CutCellInflow> inflow = null)
+            Func<int, CutCellInflow> inflow = null) => AdvanceProjected(state, pressure, inflow, null, null);
+
+        private CutCellTransportResult AdvanceProjected(CutCellInventories state, FlowStep pressure,
+            Func<int, CutCellInflow> inflow, Func<CutCellScalarWork, CutCellScalarOutput> apply, CutCellGeometryBatch clip)
         {
             if (pressure == null || !pressure.Diagnostics.Converged || pressure.VelocityMPerS.Length != plan.FaceCount)
                 throw new ArgumentException("A converged compatible pressure result is required.");
@@ -141,7 +147,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             }
             if (maximum > 1e-6)
                 throw new InvalidOperationException("Cut-cell pressure flux correction exceeds 1e-6 Courant units.");
-            return Advance(state, velocity, dt, inflow, absolute, null);
+            return Advance(state, velocity, dt, inflow, absolute, apply, clip);
         }
 
         public CutCellTransportResult Advance(CutCellInventories state, double[] faceVelocity, double dt,

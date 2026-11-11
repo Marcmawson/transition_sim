@@ -1,0 +1,5 @@
+Base GitHub commit: 19c2d6a145f01be8dcaaeca53f6789fb4dc9233e.
+Managed coupled run: Tools/ThreePhase3D/BeakerVofMain.cs, .NET 8, eight accepted steps with transport and pressure on CPU.
+Hybrid coupled run: production ClipCutFaces shader and wrapper dispatched through SwiftShader Vulkan, CPU reference scalar and momentum updates, CPU emulation of the FP32 pressure kernel arithmetic. Eight accepted steps and eight clipping dispatches.
+Clipping regression: 94/94 checks with the updated ClipCutFaces shader on SwiftShader. DXC compiled DXIL and SPIR-V with warnings as errors.
+Runtime and editor assembly split compiled with Unity API stubs. Full coupled GPU execution and preview rendering in Unity Direct3D 11 remain pending.

@@ -104,7 +104,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                         !SiUnits.IsFinite(value.z) || !SiUnits.IsFinite(value.w) ||
                         Math.Abs(value.y)>2e-6 || Math.Abs(value.w)>2e-6 ||
                         Math.Abs(value.z)>Math.Max(5e-8,2e-4*requests[n].SweptVolume/full))
-                        throw new InvalidOperationException($"GPU clipping volume inversion failed for face {requests[n].Face}.");
+                        throw new InvalidOperationException($"GPU clipping volume inversion failed for face {requests[n].Face}: " +
+                            $"interface={value.y:E3}, slab={value.z:E3}, accessible={value.w:E3}, target slab={volume[n].y:E3}.");
                     output[n] = value.x * full;
                 }
                 Dispatches++;

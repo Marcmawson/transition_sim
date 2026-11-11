@@ -1,0 +1,8 @@
+step=1 time=0.025 iterations=1520 drift=0.0000E+000 dualMassError=5.4210E-020 momentumError=2.6470E-023 redistribution=7.6734E-009
+step=2 time=0.050 iterations=1568 drift=0.0000E+000 dualMassError=3.2526E-019 momentumError=2.5411E-021 redistribution=1.5405E-008
+step=3 time=0.075 iterations=1616 drift=-3.3881E-021 dualMassError=3.2526E-019 momentumError=2.5411E-021 redistribution=2.3197E-008
+step=4 time=0.100 iterations=1664 drift=0.0000E+000 dualMassError=4.3368E-019 momentumError=2.5411E-021 redistribution=3.1043E-008
+step=5 time=0.125 iterations=1696 drift=-1.6941E-021 dualMassError=4.3368E-019 momentumError=2.5411E-021 redistribution=3.8940E-008
+step=6 time=0.150 iterations=1728 drift=-5.0822E-021 dualMassError=4.3368E-019 momentumError=2.5411E-021 redistribution=4.6887E-008
+step=7 time=0.175 iterations=1760 drift=-1.6941E-021 dualMassError=4.3368E-019 momentumError=2.5411E-021 redistribution=5.4885E-008
+step=8 time=0.200 iterations=1792 drift=-1.6941E-021 dualMassError=4.3368E-019 momentumError=2.5411E-021 redistribution=6.2933E-008

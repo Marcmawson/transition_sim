@@ -54,8 +54,19 @@ The host preprocesses the fixed geometry into signed tetrahedra clipped to each 
 
 The open channel, closed circulation and curved beaker tests compare both phase fluxes and the net liquid ledger against the CPU reference. The standalone harness dispatches the production clipping shader and uses the CPU transport reference around it. Unity verification exercises clipping with the GPU scalar kernels. [Clipping verification](../../ValidationRuns/s05-cut-gpu-clipping-20261111)
 
+### Coupled beaker preview
+
+The verification scene uses the same tessellated glass surface for the displayed apparatus and the cut cells. It seeds a circulation across mixed cells near the curved wall of a synthetic thick-walled beaker. Each accepted pressure field transports the next step. The GPU clips the interface and swept slabs, limits and transports phase inventories, remaps staggered momentum and projects the resulting velocity with updated mixture densities. The host checks liquid-volume drift, dual mass and the momentum remap ledger before accepting a step. The momentum check applies to transport and its wall impulse, before pressure forces.
+
+The preview uses a fixed 0.025 s timestep and a closed domain. The seeded circulation isolates S05 transport and pressure. Gravity-driven release is covered by the later dam-break work, and this coarse fixture uses inviscid flow. The preview includes the glass apparatus and a horizontal liquid-fraction slice.
+
+- **Run S05 coupled beaker checks** advances eight GPU steps and requires a clipping dispatch at every step and measurable liquid redistribution.
+- **Create S05 coupled beaker preview** opens a verification scene. Press Play and open Game to see the slice and conservation readouts. Pause or step from the Game view.
+
+[Coupled beaker verification](../../ValidationRuns/s05-coupled-beaker-20261111)
+
 ## Open integration
 
-The compensated GPU path passed 84 checks on both lavapipe and SwiftShader with shaderFloat64 disabled. The user reported a passing Unity Direct3D 11 run for the periodic checkpoint at commit `9562ce4`. The user also reported a passing Direct3D 11 run for the cut-cell scalar checkpoint at `d91b3c3`. [Compensated GPU verification](../../ValidationRuns/s05-compensated-gpu-20261111) The user reported that the donor-budget and momentum checkpoint at `e247f7b` passed on Unity Direct3D 11. The new clipping kernel still needs a Direct3D 11 run. The curved beaker test uses prescribed circulation. The beaker scene still needs a coupled time integration and a grid that resolves its embedded viscous wall distances.
+The compensated GPU path passed 84 checks on both lavapipe and SwiftShader with shaderFloat64 disabled. The user reported a passing Unity Direct3D 11 run for the periodic checkpoint at commit `9562ce4`. The user also reported a passing Direct3D 11 run for the cut-cell scalar checkpoint at `d91b3c3`. [Compensated GPU verification](../../ValidationRuns/s05-compensated-gpu-20261111) The user reported that the donor-budget and momentum checkpoint at `e247f7b` passed on Unity Direct3D 11. The user also reported that the GPU clipping checkpoint at `19c2d6a` passed on Direct3D 11. Direct3D 11 verification of the coupled beaker and the small-sweep clipping change is pending. The coarse verification grid does not resolve embedded viscous wall distances.
 
 Method references are [M04 and M13](Sources.md). The capacity limiter and dual-volume averaging above are the discretisation used by this implementation.
