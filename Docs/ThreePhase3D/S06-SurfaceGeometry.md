@@ -172,3 +172,9 @@ The matrix uses 997 kg/m³ liquid, 1.2 kg/m³ gas, and 0.072 N/m surface tension
 | 7 mm translating, 1.0 mm cells | 6.809% | 20.85 mm/s | 1.371% |
 
 The three static cases pass the short-run limits, with speed increasing over the sampled interval. The translating case completes one cell of travel and conserves liquid volume to 1.23e-20 m³, but fails the pressure and speed limits. With surface tension disabled, the translating control preserves the prescribed velocity exactly and gives 1.408% shape error. That isolates the velocity error to the interaction of transported interface geometry and capillary forcing. V11 remains open for translating-drop accuracy and viscous decay.
+
+### Local filtering of periodic curvature
+
+The periodic capillary predictor now averages supported height-function curvature over a one-cell stencil before evaluating the face force. The weights are `alpha * (1 - alpha) / (1 + offsetSquared)` in grid-index coordinates. This favours nearby mixed cells and reduces the influence of nearly pure cells. The filter operates on curvature only, retains support diagnostics, and leaves the transported phase inventories and shared pressure mobility intact. Closely spaced interfaces within the stencil may influence one another. The planar wall path uses its existing curvature calculation.
+
+With the same V11 limits, maximum translating speed error fell from 20.85 to 6.24 mm/s, pressure error changed from 6.809% to 6.767%, and shape error changed from 1.371% to 1.396%. The translating case still fails the speed and pressure limits. Static maximum speeds fell to 0.0179, 0.0474 and 0.0596 mm/s in the three cases, with pressure errors of 1.857%, 0.702% and 1.180%, respectively. Longer-run decay remains unverified.

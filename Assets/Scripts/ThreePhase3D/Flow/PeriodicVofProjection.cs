@@ -77,7 +77,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 return liquidDensity * fraction + gasDensity * (1 - fraction);
             }, _ => 0, true);
             var tentative = new float[plan.FaceCount];
-            var curvature = surfaceTensionNPerM > 0 ? SurfaceGeometry.Evaluate(transport, moved.LiquidFraction) : null;
+            var curvature = surfaceTensionNPerM > 0 ? FilterCurvature(SurfaceGeometry.Evaluate(transport, moved.LiquidFraction), moved.LiquidFraction) : null;
             var tangentialForce = sigmaByCell == null ? null :
                 MarangoniStress.ForceDensity(transport, moved.LiquidFraction, sigmaByCell);
             int extrapolatedFaces = 0;
@@ -120,6 +120,35 @@ namespace PhysicsSim.ThreePhase3D.Flow
             double correction = ReconcileDivergence(velocity, dt);
             return new PeriodicVofStep(new VofFields(moved.LiquidFraction, velocity, moved.LiquidEnergyJ,
                 moved.GasEnergyJ, moved.VapourKg), pressure.Diagnostics, correction, pressure.GroupPressurePa, extrapolatedFaces);
+        }
+
+        private SurfaceCurvature[] FilterCurvature(SurfaceCurvature[] raw, double[] fraction)
+        {
+            var shape = geometry.Grid.Cells;
+            var result = (SurfaceCurvature[])raw.Clone();
+            for (int k = 0; k < shape.Z; k++)
+            for (int j = 0; j < shape.Y; j++)
+            for (int i = 0; i < shape.X; i++)
+            {
+                int cell = transport.CellIndex(i, j, k);
+                if (!SiUnits.IsFinite(raw[cell].InverseMetres)) continue;
+                double weighted = 0, weights = 0;
+                for (int z = -1; z <= 1; z++)
+                for (int y = -1; y <= 1; y++)
+                for (int x = -1; x <= 1; x++)
+                {
+                    int sample = transport.CellIndex((i + x + shape.X) % shape.X,
+                        (j + y + shape.Y) % shape.Y, (k + z + shape.Z) % shape.Z);
+                    double curvature = raw[sample].InverseMetres;
+                    if (!SiUnits.IsFinite(curvature)) continue;
+                    double alpha = fraction[sample];
+                    double weight = alpha * (1 - alpha) / (1 + x * x + y * y + z * z);
+                    weighted += weight * curvature;
+                    weights += weight;
+                }
+                if (weights > 0) result[cell] = new SurfaceCurvature(raw[cell].Support, weighted / weights);
+            }
+            return result;
         }
 
         private double NearbyCurvature(SurfaceCurvature[] curvature, int axis, int i, int j, int k)
