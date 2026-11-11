@@ -30,11 +30,14 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         internal CutCellMomentumResult ApplyContactTraction(CutCellMomentumResult input,
             CutCellInventories state, List<InterfacePatch> contacts, WettingProfile profile,
-            double rhoL, double rhoG, double muL, double muG, double dt)
+            double rhoL, double rhoG, double muL, double muG, double dt,
+            Func<ContactTractionWork, double[]> dispatch = null)
         {
             if (contacts.Count == 0) return input;
             var geometry = geometryWithMoments ??= plan.Geometry.WithFluidCentroidMoments();
-            var impulses = new double[plan.FaceCount];
+            var tensors = new D3[checked(3 * plan.GroupCount)];
+            var samples = new D3[plan.GroupCount];
+            var coefficients = new double[plan.GroupCount];
             var explicitWeights = new double[plan.FaceCount];
             var wall = (double[])input.WallImpulseKgMPerS.Clone();
             foreach (var patch in contacts)
@@ -46,34 +49,41 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 double distance = D3.Dot(centroid - patch.CentroidLocalM, patch.NormalLocal);
                 double alpha = state.LiquidM3[group] / plan.Volumes[group];
                 double viscosity = alpha * muL + (1 - alpha) * muG;
+                if (!(distance > 0))
+                    throw new InvalidOperationException("Contact traction requires a resolved fluid centroid.");
+                double coefficient = dt * patch.FluidExposedAreaM2 * viscosity *
+                    profile.WallGradientPerVelocity(distance);
+                var normal = patch.NormalLocal;
+                coefficients[group] += coefficient;
+                tensors[3 * group] += (normal * normal.X - new D3(1, 0, 0)) * coefficient;
+                tensors[3 * group + 1] += (normal * normal.Y - new D3(0, 1, 0)) * coefficient;
+                tensors[3 * group + 2] += (normal * normal.Z - new D3(0, 0, 1)) * coefficient;
+            }
+            for (int group = 0; group < samples.Length; group++)
+            {
+                if (coefficients[group] == 0) continue;
                 var sampled = new double[3];
                 for (int entry = plan.Rows[group]; entry < plan.Rows[group + 1]; entry++)
                 {
                     int f = Math.Abs(plan.Incidence[entry]) - 1;
                     var face = plan.Faces[f];
-                    sampled[face.Axis] += Weight(face, group) * input.VelocityMPerS[f];
-                }
-                var traction = profile.WallTractionPa(new D3(sampled[0], sampled[1], sampled[2]),
-                    patch.NormalLocal, distance, viscosity);
-                var impulse = traction * (dt * patch.FluidExposedAreaM2);
-                double coefficient = dt * patch.FluidExposedAreaM2 * viscosity *
-                    profile.WallGradientPerVelocity(distance);
-                for (int entry = plan.Rows[group]; entry < plan.Rows[group + 1]; entry++)
-                {
-                    int f = Math.Abs(plan.Incidence[entry]) - 1;
-                    var face = plan.Faces[f];
                     double weight = Weight(face, group);
-                    double contribution = weight * impulse[face.Axis];
-                    impulses[f] += contribution;
-                    wall[face.Axis] += contribution;
-                    explicitWeights[f] += weight * coefficient;
+                    sampled[face.Axis] += weight * input.VelocityMPerS[f];
+                    explicitWeights[f] += weight * coefficients[group];
                 }
+                samples[group] = new D3(sampled[0], sampled[1], sampled[2]);
             }
+            var work = new ContactTractionWork(plan, tensors, samples, areaSum);
+            var impulses = dispatch == null ? work.ReferenceImpulses() : dispatch(work);
+            if (impulses == null || impulses.Length != plan.FaceCount)
+                throw new InvalidOperationException("Invalid contact traction result size.");
 
             var velocity = (double[])input.VelocityMPerS.Clone();
             var momentum = (double[])input.MomentumKgMPerS.Clone();
             for (int f = 0; f < impulses.Length; f++)
             {
+                if (!SiUnits.IsFinite(impulses[f]) || (explicitWeights[f] == 0 && impulses[f] != 0))
+                    throw new InvalidOperationException("Invalid impulse on a contact traction face.");
                 if (explicitWeights[f] == 0) continue;
                 var face = plan.Faces[f];
                 double mass = Part(face, face.Low) + Part(face, face.High);
@@ -81,6 +91,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 // limits the largest mass-normalised drag eigenvalue to one.
                 if (explicitWeights[f] > mass)
                     throw new InvalidOperationException("Timestep exceeds the explicit contact traction bound.");
+                wall[face.Axis] += impulses[f];
                 momentum[f] += impulses[f];
                 velocity[f] = momentum[f] / mass;
             }
@@ -184,6 +195,41 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 }
                 return outgoingMomentum;
             }
+        }
+    }
+
+    internal sealed class ContactTractionWork
+    {
+        internal readonly VariableCoefficientProjection Plan;
+        internal readonly D3[] Tensors, Samples;
+        private readonly double[,] areaSum;
+
+        internal ContactTractionWork(VariableCoefficientProjection plan, D3[] tensors, D3[] samples, double[,] areaSum)
+        {
+            Plan = plan;
+            Tensors = tensors;
+            Samples = samples;
+            this.areaSum = areaSum;
+        }
+
+        internal D3 WeightedRow(int faceIndex, int group)
+        {
+            var face = Plan.Faces[faceIndex];
+            return face.Active == 0 || group < 0 ? default :
+                Tensors[3 * group + face.Axis] * (face.Area / areaSum[face.Axis, group]);
+        }
+
+        internal double[] ReferenceImpulses()
+        {
+            var impulses = new double[Plan.FaceCount];
+            for (int f = 0; f < impulses.Length; f++)
+            {
+                var face = Plan.Faces[f];
+                if (face.Active == 0) continue;
+                impulses[f] = Contribution(face.Low) + Contribution(face.High);
+                double Contribution(int group) => group < 0 ? 0 : D3.Dot(WeightedRow(f, group), Samples[group]);
+            }
+            return impulses;
         }
     }
 

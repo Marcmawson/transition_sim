@@ -1,7 +1,6 @@
 using System;
 using System.Linq;
 using PhysicsSim.ThreePhase3D.Flow;
-using PhysicsSim.ThreePhase3D.PhaseChange;
 
 internal static class BeakerVofMain
 {
@@ -9,11 +8,9 @@ internal static class BeakerVofMain
     {
         var beaker = new BeakerVofTimeIntegration();
         bool wetting = args.Contains("--wetting");
-        var profile = new WettingProfile("Synthetic beaker wall", "S06 numerical fixture", 65, .001, .01,
-            new[] { new WettingMeasurement(0, 80), new WettingMeasurement(.2, 100) },
-            new[] { new WettingMeasurement(0, 50), new WettingMeasurement(.2, 30) });
-        var transport = wetting ? CutCellVofTransport.WithTrackedWetting(beaker.Plan, profile) :
-            new CutCellVofTransport(beaker.Plan);
+        var transport = wetting
+            ? CutCellVofTransport.WithTrackedWetting(beaker.Plan, BeakerVofTimeIntegration.SyntheticWettingProfile())
+            : new CutCellVofTransport(beaker.Plan);
         int totalPatches = 0;
         double totalImpulse = 0;
         var initial = (double[])beaker.State.LiquidM3.Clone();
@@ -25,7 +22,7 @@ internal static class BeakerVofMain
                 var trial = wetting
                     ? transport.AdvanceCoupledWithWetting(state, flow,
                         BeakerVofTimeIntegration.LiquidDensity, BeakerVofTimeIntegration.GasDensity,
-                        .001, .000018, maxIterations: BeakerVofTimeIntegration.IterationLimit)
+                        BeakerVofTimeIntegration.LiquidViscosityPaS, BeakerVofTimeIntegration.GasViscosityPaS, maxIterations: BeakerVofTimeIntegration.IterationLimit)
                     : transport.AdvanceCoupled(state, flow,
                         BeakerVofTimeIntegration.LiquidDensity, BeakerVofTimeIntegration.GasDensity,
                         maxIterations: BeakerVofTimeIntegration.IterationLimit);

@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Geometry;
+using PhysicsSim.ThreePhase3D.PhaseChange;
 
 namespace PhysicsSim.ThreePhase3D.Flow
 {
@@ -11,6 +12,12 @@ namespace PhysicsSim.ThreePhase3D.Flow
     {
         public const int Segments = 24, IterationLimit = 16384;
         public const double LiquidDensity = 997, GasDensity = 1.2, Dt = .025;
+        public const double LiquidViscosityPaS = .001, GasViscosityPaS = .000018;
+        public static WettingProfile SyntheticWettingProfile() =>
+            new WettingProfile("Synthetic beaker wall", "S06 numerical fixture", 65, .001, .01,
+                new[] { new WettingMeasurement(0, 80), new WettingMeasurement(.2, 100) },
+                new[] { new WettingMeasurement(0, 50), new WettingMeasurement(.2, 30) });
+
         public readonly CutCellGeometry Geometry;
         public readonly VariableCoefficientProjection Plan;
         public readonly int SliceJ;

@@ -47,21 +47,27 @@ namespace PhysicsSim.ThreePhase3D.Editor
         private sealed class Evidence
         {
             [DataMember] public bool Passed;
-            [DataMember] public int Steps, ClippingDispatches;
+            [DataMember] public int Steps, ClippingDispatches, TractionDispatches, ContactPatches;
             [DataMember] public double LiquidDriftM3, LiquidRedistributionM3, MaxDualMassErrorKg, MaxMomentumErrorKgMPerS;
             [DataMember] public string Device, GraphicsApi, Error;
         }
 
         [MenuItem("Physics Sim/Three Phase 3D/Run S05 coupled beaker checks")]
-        public static void RunChecks()
+        public static void RunChecks() => RunChecks(false);
+
+        [MenuItem("Physics Sim/Three Phase 3D/Run S06 coupled wetting GPU checks")]
+        public static void RunWettingChecks() => RunChecks(true);
+
+        private static void RunChecks(bool wetting)
         {
             var report = new Evidence { Device = SystemInfo.graphicsDeviceName, GraphicsApi = SystemInfo.graphicsDeviceType.ToString() };
+            string stage = wetting ? "S06" : "S05";
             string folder = Path.Combine(Directory.GetParent(Application.dataPath).FullName, "ValidationRuns/local",
-                "s05-beaker-" + DateTime.UtcNow.ToString("yyyyMMddTHHmmss") + "-" + Guid.NewGuid().ToString("N"));
+                stage.ToLowerInvariant() + "-beaker-" + DateTime.UtcNow.ToString("yyyyMMddTHHmmss") + "-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(folder);
             try
             {
-                using (var session = new BeakerVofGpuSession())
+                using (var session = new BeakerVofGpuSession(wetting))
                 {
                     var initial = (double[])session.Simulation.State.LiquidM3.Clone();
                     for (int i = 0; i < 8; i++)
@@ -70,6 +76,8 @@ namespace PhysicsSim.ThreePhase3D.Editor
                         var sim = session.Simulation;
                         report.Steps = sim.Steps;
                         report.ClippingDispatches = session.ClippingDispatches;
+                        report.TractionDispatches = session.TractionDispatches;
+                        report.ContactPatches = session.ContactPatches;
                         report.LiquidDriftM3 = sim.LiquidDriftM3;
                         report.LiquidRedistributionM3 = sim.State.LiquidM3.Zip(initial,(a,b) => Math.Abs(a-b)).Sum();
                         report.MaxDualMassErrorKg = sim.MaxDualMassErrorKg;
@@ -77,13 +85,15 @@ namespace PhysicsSim.ThreePhase3D.Editor
                     }
                 }
                 report.Passed = report.Steps == 8 && report.ClippingDispatches == report.Steps && report.LiquidRedistributionM3 > 1e-9;
-                if (!report.Passed) throw new InvalidOperationException("Expected GPU clipping in each beaker step and a nonzero redistribution of liquid.");
+                if (wetting) report.Passed &= report.TractionDispatches == report.Steps && report.ContactPatches > 0;
+                if (!report.Passed) throw new InvalidOperationException("Coupled beaker checks did not meet the step, dispatch, and redistribution requirements.");
             }
             catch (Exception exception) { report.Error = exception.ToString(); throw; }
             finally
             {
                 File.WriteAllBytes(Path.Combine(folder,"beaker-results.json"),RecordJson.Encode(report));
-                Debug.Log($"S05 coupled beaker evidence: {folder}; steps={report.Steps}; clippingDispatches={report.ClippingDispatches}; passed={report.Passed}");
+                string traction = wetting ? $"; tractionDispatches={report.TractionDispatches}; contactPatches={report.ContactPatches}" : "";
+                Debug.Log($"{stage} coupled beaker evidence: {folder}; steps={report.Steps}; clippingDispatches={report.ClippingDispatches}{traction}; passed={report.Passed}");
             }
         }
     }

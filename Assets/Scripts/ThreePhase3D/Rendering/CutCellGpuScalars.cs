@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using PhysicsSim.ThreePhase3D.Flow;
+using PhysicsSim.ThreePhase3D.PhaseChange;
 using UnityEngine;
 
 namespace PhysicsSim.ThreePhase3D.Rendering
@@ -18,7 +19,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly ComputeBuffer endpoints, rows, incidence, groups, candidates, transfers, updated, donorBudget;
         private readonly VofFloatPair[] groupData, candidateData, transferData, updatedData;
 
-        public CutCellGpuScalars(VariableCoefficientProjection plan, ComputeShader shader, ComputeShader clippingShader = null)
+        public CutCellGpuScalars(VariableCoefficientProjection plan, ComputeShader shader, ComputeShader clippingShader = null, WettingProfile wetting = null)
         {
             this.plan = plan ?? throw new ArgumentNullException(nameof(plan));
             if (shader == null || !SystemInfo.supportsComputeShaders)
@@ -38,7 +39,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 4L * (plan.Rows.Length + (long)Math.Max(1, plan.Incidence.Length));
             if (bytes > 512L * 1024 * 1024)
                 throw new NotSupportedException("Cut-cell scalar GPU buffers exceed the 512 MiB payload budget.");
-            transport = new CutCellVofTransport(plan);
+            transport = wetting == null ? new CutCellVofTransport(plan) : CutCellVofTransport.WithTrackedWetting(plan, wetting);
             groupData = new VofFloatPair[CutCellScalarGpuLayout.GroupPlanes * ng];
             candidateData = new VofFloatPair[CutCellScalarGpuLayout.CandidatePlanes * nf];
             transferData = new VofFloatPair[CutCellScalarGpuLayout.TransferPlanes * nf + 1];
@@ -79,6 +80,16 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             return transport.AdvanceCoupled(state, flow, liquidDensity, gasDensity, null, maxIterations,
                 (next, velocity, dt, cap) => FlowGpuSolver.Project(next, pressureShader, velocity, dt, cap),
                 Dispatch, clipping.Clip, momentum.Advance);
+        }
+
+        internal CutCellCoupledStep AdvanceCoupledWithWetting(CutCellInventories state, FlowStep flow,
+            CutCellGpuMomentum momentum, ComputeShader pressureShader, CutCellGpuContactTraction traction)
+        {
+            return transport.AdvanceCoupledWithWetting(state, flow, BeakerVofTimeIntegration.LiquidDensity,
+                BeakerVofTimeIntegration.GasDensity, BeakerVofTimeIntegration.LiquidViscosityPaS,
+                BeakerVofTimeIntegration.GasViscosityPaS, null, BeakerVofTimeIntegration.IterationLimit,
+                (next, velocity, dt, cap) => FlowGpuSolver.Project(next, pressureShader, velocity, dt, cap),
+                Dispatch, clipping.Clip, momentum.Advance, traction.Apply);
         }
 
         private CutCellScalarOutput Dispatch(CutCellScalarWork work)

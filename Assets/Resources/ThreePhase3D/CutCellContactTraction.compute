@@ -1,0 +1,14 @@
+#pragma kernel ApplyContactTraction
+
+StructuredBuffer<float4> ContactData;
+RWStructuredBuffer<float> FaceImpulse;
+int FaceCount;
+
+[numthreads(64, 1, 1)]
+void ApplyContactTraction(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)FaceCount) return;
+    uint row = id.x * 4;
+    FaceImpulse[id.x] = dot(ContactData[row].xyz, ContactData[row + 1].xyz)
+        + dot(ContactData[row + 2].xyz, ContactData[row + 3].xyz);
+}

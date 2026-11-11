@@ -123,14 +123,25 @@ namespace PhysicsSim.ThreePhase3D.Flow
             double liquidDensity, double gasDensity, double liquidViscosityPaS, double gasViscosityPaS,
             Func<int, CutCellInflow> inflow = null, int maxIterations = 4096)
         {
+            return AdvanceCoupledWithWetting(state, transportingFlow, liquidDensity, gasDensity,
+                liquidViscosityPaS, gasViscosityPaS, inflow, maxIterations, FlowCpuReference.Project);
+        }
+
+        internal CutCellCoupledStep AdvanceCoupledWithWetting(CutCellInventories state, FlowStep transportingFlow,
+            double liquidDensity, double gasDensity, double liquidViscosityPaS, double gasViscosityPaS,
+            Func<int, CutCellInflow> inflow, int maxIterations, PeriodicVofProjection.PressureSolve project,
+            Func<CutCellScalarWork, CutCellScalarOutput> apply = null, CutCellGeometryBatch clip = null,
+            Func<CutCellInventories, CutCellTransportResult, double[], double, double, CutCellMomentumResult> remap = null,
+            Func<ContactTractionWork, double[]> traction = null)
+        {
             if (trackedPatches == null) throw new InvalidOperationException("Tracked wetting is required.");
             if (!SiUnits.IsFinite(liquidViscosityPaS) || !SiUnits.IsFinite(gasViscosityPaS) ||
                 liquidViscosityPaS <= 0 || gasViscosityPaS <= 0)
                 throw new ArgumentException("Both dynamic viscosities must be finite and positive.");
             return AdvanceCoupled(state, transportingFlow, liquidDensity, gasDensity, inflow, maxIterations,
-                FlowCpuReference.Project, remap: (before, after, velocity, rhoL, rhoG) =>
+                project, apply, clip, (before, after, velocity, rhoL, rhoG) =>
                 {
-                    var advected = AdvanceMomentum(before, after, velocity, rhoL, rhoG);
+                    var advected = (remap ?? AdvanceMomentum)(before, after, velocity, rhoL, rhoG);
                     var contacts = new List<InterfacePatch>();
                     foreach (int cell in trackedPatches.Keys)
                     {
@@ -140,7 +151,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                             EstimateNormal(cell, group, after.Fields.LiquidM3), advected.VelocityMPerS, contacts.Add);
                     }
                     return momentum.ApplyContactTraction(advected, after.Fields, contacts, trackedWetting,
-                        rhoL, rhoG, liquidViscosityPaS, gasViscosityPaS, transportingFlow.Diagnostics.Dt);
+                        rhoL, rhoG, liquidViscosityPaS, gasViscosityPaS, transportingFlow.Diagnostics.Dt, traction);
                 });
         }
 

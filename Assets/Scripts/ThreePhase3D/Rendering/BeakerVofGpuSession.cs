@@ -10,9 +10,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly ComputeShader pressure;
         private readonly CutCellGpuScalars scalars;
         private readonly CutCellGpuMomentum momentum;
+        private readonly CutCellGpuContactTraction traction;
+        public int TractionDispatches => traction?.Dispatches ?? 0;
+        public int ContactPatches { get; private set; }
         public int ClippingDispatches => scalars.ClippingDispatches;
 
-        public BeakerVofGpuSession()
+        public BeakerVofGpuSession(bool wetting = false)
         {
             pressure = Load("SinglePhaseFlow");
             var scalarShader = Load("CutCellVofScalars");
@@ -21,15 +24,29 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             Simulation = new BeakerVofTimeIntegration((plan, u, dt, cap) => FlowGpuSolver.Project(plan, pressure, u, dt, cap));
             try
             {
-                scalars = new CutCellGpuScalars(Simulation.Plan, scalarShader, clippingShader);
+                scalars = new CutCellGpuScalars(Simulation.Plan, scalarShader, clippingShader,
+                    wetting ? BeakerVofTimeIntegration.SyntheticWettingProfile() : null);
+                if (wetting)
+                    traction = new CutCellGpuContactTraction(Simulation.Plan, Load("CutCellContactTraction"));
                 momentum = new CutCellGpuMomentum(Simulation.Plan, momentumShader);
             }
             catch { Dispose(); throw; }
         }
 
-        public void Step() => Simulation.Step((state, flow) => scalars.AdvanceCoupled(state, flow,
-            BeakerVofTimeIntegration.LiquidDensity, BeakerVofTimeIntegration.GasDensity, momentum, pressure,
-            BeakerVofTimeIntegration.IterationLimit));
+        public void Step()
+        {
+            int contacts = 0;
+            Simulation.Step((state, flow) =>
+            {
+                var step = traction == null
+                    ? scalars.AdvanceCoupled(state, flow, BeakerVofTimeIntegration.LiquidDensity,
+                        BeakerVofTimeIntegration.GasDensity, momentum, pressure, BeakerVofTimeIntegration.IterationLimit)
+                    : scalars.AdvanceCoupledWithWetting(state, flow, momentum, pressure, traction);
+                contacts = step.Momentum.ContactTractionPatches;
+                return step;
+            });
+            ContactPatches += contacts;
+        }
 
         private static ComputeShader Load(string name)
         {
@@ -40,6 +57,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         public void Dispose()
         {
+            traction?.Dispose();
             momentum?.Dispose();
             scalars?.Dispose();
         }

@@ -66,4 +66,10 @@ Run the synthetic eight-step CPU beaker case with:
 dotnet run --project Tools/ThreePhase3D/SurfaceGeometryChecks.csproj -- --wetting
 ```
 
-The fixture checks that contacts and wall impulse occur, liquid moves, and the volume, staggered mass, and pre-projection momentum ledgers close. The calibrated glass data, bulk viscous stresses outside the contact band, GPU execution of the contact traction step, and the moving sessile-drop validation remain open.
+The fixture checks that contacts and wall impulse occur, liquid moves, and the volume, staggered mass, and pre-projection momentum ledgers close. The calibrated glass data, bulk viscous stresses outside the contact band, Unity validation of the GPU contact traction step, and the moving sessile-drop validation remain open.
+
+### GPU contact traction
+
+The Unity command **Physics Sim → Three Phase 3D → Run S06 coupled wetting GPU checks** runs the same synthetic beaker through eight accepted steps. It requires GPU clipping and GPU traction dispatches on every step and records the detected patch count and conservation ledgers. The GPU evaluates the two aperture-weighted traction contributions to each staggered face from the local velocity and wall tensor prepared on the CPU. The host compares each FP32 face impulse with the FP64 reference, then applies the returned impulse to momentum and the wall ledger before GPU pressure projection.
+
+The CPU still owns contact detection, wall geometry, coefficient assembly, and ledger checks. The Unity run uses the existing GPU clipping, scalar transport, momentum remap and pressure solver. A local SwiftShader Vulkan check executes the production traction shader with the other stages on the CPU. Unity Direct3D 11 verification covers the combined path.
