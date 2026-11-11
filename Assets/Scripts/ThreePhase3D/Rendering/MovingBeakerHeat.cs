@@ -7,6 +7,7 @@ using PhysicsSim.ThreePhase3D.Materials;
 using PhysicsSim.ThreePhase3D.Thermal;
 using Seb.Fluid.Simulation;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace PhysicsSim.ThreePhase3D.Rendering
 {
@@ -29,7 +30,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly double maxStep, particleCapacity;
         private readonly float[] solidSnapshot, particleSnapshot;
         private ComputeBuffer glassRead, glassWrite;
-        private double inputJ;
+        private double inputJ, nextSampleTime;
+        private int sampleRevision;
+        private bool samplePending, sampleDirty;
+        public double SampledInputJ { get; private set; }
+        public double SampledSolidJ { get; private set; }
+        public double SampledWaterJ { get; private set; }
 
         public MovingBeakerHeat(FluidSim fluid, GeometryInputs geometry, double volumeM3)
         {
@@ -126,7 +132,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             Array.Clear(solidSnapshot, 0, solidSnapshot.Length);
             glassRead.SetData(solidSnapshot);
-            inputJ = 0;
+            inputJ = SampledInputJ = SampledSolidJ = SampledWaterJ = 0;
+            sampleRevision++;
+            samplePending = sampleDirty = false;
+            nextSampleTime = 0;
         }
 
         public void Advance(double seconds, float watts)
@@ -148,6 +157,64 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 (glassRead, glassWrite) = (glassWrite, glassRead);
             }
             inputJ += (double)dt * steps * watts;
+            sampleDirty = true;
+        }
+
+        public void SampleIfDue(double now)
+        {
+            if (!sampleDirty || samplePending || now < nextSampleTime) return;
+            nextSampleTime = now + .5;
+            if (!SystemInfo.supportsAsyncGPUReadback)
+            {
+                Measure();
+                return;
+            }
+
+            sampleDirty = false;
+            samplePending = true;
+            int revision = sampleRevision;
+            double sampledInput = inputJ, solidJ = 0, waterJ = 0;
+            bool failed = false;
+            int remaining = 2;
+
+            void Complete()
+            {
+                if (--remaining != 0 || revision != sampleRevision) return;
+                samplePending = false;
+                if (failed) { sampleDirty = true; return; }
+                PublishSample(sampledInput, solidJ, waterJ);
+            }
+
+            AsyncGPUReadback.Request(glassRead, result =>
+            {
+                if (revision != sampleRevision) return;
+                failed |= result.hasError;
+                if (!result.hasError)
+                {
+                    var data = result.GetData<float>();
+                    for (int i = 0; i < data.Length; i++) solidJ += data[i] * mesh.CapacityJPerK[i];
+                }
+                Complete();
+            });
+            AsyncGPUReadback.Request(fluid.TemperatureRise, result =>
+            {
+                if (revision != sampleRevision) return;
+                failed |= result.hasError;
+                if (!result.hasError)
+                {
+                    var data = result.GetData<float>();
+                    for (int i = 0; i < data.Length; i++) waterJ += data[i];
+                    waterJ *= particleCapacity;
+                }
+                Complete();
+            });
+        }
+
+        private void PublishSample(double absorbed, double solid, double water)
+        {
+            SampledInputJ = absorbed;
+            SampledSolidJ = solid;
+            SampledWaterJ = water;
         }
 
         public string Measure()
@@ -156,6 +223,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.TemperatureRise.GetData(particleSnapshot);
             double solidJ = solidSnapshot.Select((value, i) => value * mesh.CapacityJPerK[i]).Sum();
             double liquidJ = particleSnapshot.Sum(value => (double)value) * particleCapacity;
+            sampleRevision++;
+            samplePending = sampleDirty = false;
+            PublishSample(inputJ, solidJ, liquidJ);
             double residual = solidJ + liquidJ - inputJ;
             return FormattableString.Invariant($"burner {inputJ:F4} J · solids {solidJ:F4} J · water {liquidJ:F4} J · residual {residual:G4} J");
         }
@@ -176,6 +246,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         public void Dispose()
         {
+            sampleRevision++;
             foreach (var buffer in owned) buffer.Release();
             owned.Clear();
             if (shader != null) UnityEngine.Object.Destroy(shader);

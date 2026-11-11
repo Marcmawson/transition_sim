@@ -53,7 +53,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private FluidSim fluid;
         private ParticleDisplay3D particleDisplay;
-        private Texture2D temperatureLegend;
+        private Texture2D temperatureLegend, speedLegend;
+        private Gradient temperatureColours, speedColours;
+        private bool showTemperature;
+        private static readonly string[] ColourViews = { "Temperature", "Speed" };
         private MovingBeakerHeat movingHeat;
         private ComputeShader computeInstance;
         private GameObject solverObject;
@@ -152,18 +155,26 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             display.scale = particleRadiusM * 100;
             display.gradientResolution = 32;
             display.velocityDisplayMax = .65f;
-            display.colourMap = new Gradient();
-            display.colourMap.SetKeys(new[]
-            {
-                new GradientColorKey(new Color(.05f, .55f, .88f), 0),
-                new GradientColorKey(heatMovingWater ? new Color(1f, .08f, .04f) : new Color(.52f, .92f, 1f), 1)
-            }, new[] { new GradientAlphaKey(1, 0), new GradientAlphaKey(1, 1) });
+            showTemperature = heatMovingWater;
+            speedColours = CreateColourMap(Color.white);
+            display.colourMap = speedColours;
+            ParticleDisplay3D.TextureFromGradient(ref speedLegend, 64, speedColours);
             if (heatMovingWater)
             {
+                temperatureColours = CreateColourMap(new Color(1f, .08f, .04f));
+                display.colourMap = temperatureColours;
                 display.temperatureRiseDisplayMax = hotColourC - 20f;
-                ParticleDisplay3D.TextureFromGradient(ref temperatureLegend, 64, display.colourMap);
+                ParticleDisplay3D.TextureFromGradient(ref temperatureLegend, 64, temperatureColours);
             }
             solverObject.SetActive(true);
+        }
+
+        private static Gradient CreateColourMap(Color endpoint)
+        {
+            var gradient = new Gradient();
+            gradient.SetKeys(new[] { new GradientColorKey(new Color(.05f, .55f, .88f), 0),
+                new GradientColorKey(endpoint, 1) }, new[] { new GradientAlphaKey(1, 0), new GradientAlphaKey(1, 1) });
+            return gradient;
         }
 
         private void Update()
@@ -187,6 +198,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     return;
                 }
             }
+            movingHeat?.SampleIfDue(Time.realtimeSinceStartupAsDouble);
             if (!running) return;
             double now = Time.realtimeSinceStartupAsDouble;
             double stepSeconds = StepSeconds;
@@ -289,7 +301,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void OnGUI()
         {
             var bounds = new Rect(16, 16, Mathf.Max(1, Mathf.Min(460, Screen.width - 32)),
-                Mathf.Max(1, Mathf.Min(heatMovingWater ? 460 : 345, Screen.height - 32)));
+                Mathf.Max(1, Mathf.Min(heatMovingWater ? 535 : 400, Screen.height - 32)));
             GUILayout.BeginArea(bounds, GUI.skin.box);
             panelScroll = GUILayout.BeginScrollView(panelScroll);
             GUILayout.Label($"Simulation Controls · {releaseVolumeMl:F0} mL release", GUI.skin.box);
@@ -297,6 +309,24 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 GUILayout.Label($"{fluid.positionBuffer.count} particles · {(frameMs > 0 ? 1000 / frameMs : 0):F1} FPS");
                 GUILayout.Label($"{fluid.SimulatedSeconds:F4} s simulated · {solverSteps:N0} solver steps");
+                if (movingHeat != null)
+                {
+                    double solid = movingHeat.SampledSolidJ, water = movingHeat.SampledWaterJ;
+                    GUILayout.Label($"Absorbed {movingHeat.SampledInputJ:F4} J · Retained {solid + water:F4} J");
+                    GUILayout.Label($"Solids {solid:F4} J · Water {water:F4} J");
+                    bool selected = GUILayout.Toolbar(showTemperature ? 0 : 1, ColourViews) == 0;
+                    if (selected != showTemperature)
+                    {
+                        showTemperature = selected;
+                        particleDisplay.showTemperature = selected;
+                        particleDisplay.colourMap = selected ? temperatureColours : speedColours;
+                    }
+                }
+                GUILayout.Label(showTemperature
+                    ? $"Water temperature · blue 20.0 °C to red {hotColourC:F1} °C"
+                    : $"Water speed · blue 0 to white {particleDisplay.velocityDisplayMax:F2} m/s");
+                Rect legend = GUILayoutUtility.GetRect(1, 12, GUILayout.ExpandWidth(true));
+                GUI.DrawTexture(legend, showTemperature ? temperatureLegend : speedLegend, ScaleMode.StretchToFill);
                 GUI.enabled = !readbackPending && !finishOnNextFrame;
                 GUILayout.BeginHorizontal();
                 if (GUILayout.Button(running ? "Pause" : "Run"))
@@ -342,11 +372,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (movingHeat != null)
                 {
                     absorbedBurnerWatts = Slider($"Burner {absorbedBurnerWatts:F0} W", absorbedBurnerWatts, 0, 100);
-                    hotColourC = Slider($"Red endpoint  {hotColourC:F1} °C", hotColourC, 20.1f, 100f);
-                    particleDisplay.temperatureRiseDisplayMax = hotColourC - 20f;
-                    GUILayout.Label($"Water temperature   20.0 °C to {hotColourC:F1} °C");
-                    Rect legend = GUILayoutUtility.GetRect(1, 12, GUILayout.ExpandWidth(true));
-                    GUI.DrawTexture(legend, temperatureLegend, ScaleMode.StretchToFill);
+                    if (showTemperature)
+                    {
+                        hotColourC = Slider($"Red endpoint  {hotColourC:F1} °C", hotColourC, 20.1f, 100f);
+                        particleDisplay.temperatureRiseDisplayMax = hotColourC - 20f;
+                    }
                 }
                 if (GUILayout.Button("Restore scene settings"))
                 {
@@ -388,6 +418,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             movingHeat?.Dispose();
             if (temperatureLegend != null) Destroy(temperatureLegend);
+            if (speedLegend != null) Destroy(speedLegend);
             if (solverObject != null) Destroy(solverObject);
             if (computeInstance != null) Destroy(computeInstance);
         }

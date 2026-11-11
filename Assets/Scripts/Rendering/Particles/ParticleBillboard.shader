@@ -26,6 +26,7 @@ Shader "Fluid/ParticleBillboard" {
 			SamplerState linear_clamp_sampler;
 			float velocityMax;
 			float temperatureRiseMax;
+			float temperatureView;
 
 			float scale;
 			float3 colour;
@@ -52,10 +53,10 @@ Shader "Fluid/ParticleBillboard" {
 				o.pos = mul(UNITY_MATRIX_P, viewPos);
 
 
+				float colT = saturate(length(Velocities[instanceID]) / max(velocityMax, .001));
 				#ifdef PARTICLE_TEMPERATURE
-				float colT = saturate(TemperatureRise[instanceID] / temperatureRiseMax);
-				#else
-				float colT = saturate(length(Velocities[instanceID]) / velocityMax);
+				if (temperatureView > .5)
+					colT = saturate(TemperatureRise[instanceID] / temperatureRiseMax);
 				#endif
 				o.colour = ColourMap.SampleLevel(linear_clamp_sampler, float2(colT, 0.5), 0);
 

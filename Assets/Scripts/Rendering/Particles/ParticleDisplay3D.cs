@@ -17,6 +17,8 @@ namespace Seb.Fluid.Rendering
 		[Header("Settings")] public DisplayMode mode;
 		public float scale;
 		public Gradient colourMap;
+		[HideInInspector] public bool showTemperature = true;
+		Gradient previousColourMap;
 		public int gradientResolution;
 		public float velocityDisplayMax;
 		[HideInInspector] public float temperatureRiseDisplayMax = 10f;
@@ -82,9 +84,10 @@ namespace Seb.Fluid.Rendering
 
 			if (mat != null)
 			{
-				if (needsUpdate)
+				if (needsUpdate || previousColourMap != colourMap)
 				{
 					needsUpdate = false;
+					previousColourMap = colourMap;
 					TextureFromGradient(ref gradientTexture, gradientResolution, colourMap);
 					mat.SetTexture("ColourMap", gradientTexture);
 				}
@@ -92,7 +95,10 @@ namespace Seb.Fluid.Rendering
 				mat.SetFloat("scale", scale * 0.01f);
 				mat.SetFloat("velocityMax", velocityDisplayMax);
 				if (mode == DisplayMode.Billboard && sim.TemperatureRise != null)
+					{
 					mat.SetFloat("temperatureRiseMax", Mathf.Max(.1f, temperatureRiseDisplayMax));
+					mat.SetFloat("temperatureView", showTemperature ? 1f : 0f);
+				}
 
 				Vector3 s = transform.localScale;
 				transform.localScale = Vector3.one;
