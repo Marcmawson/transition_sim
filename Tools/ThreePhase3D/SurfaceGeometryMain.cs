@@ -386,7 +386,11 @@ internal static class SurfaceGeometryMain
         var liquid = SampleSessileCap(plan, wallY, new D3(.012, wallY - radius * Math.Cos(angle * Math.PI / 180), .012), radius);
         var gas = plan.Volumes.Zip(liquid, (volume, water) => volume - water).ToArray();
         var state = new CutCellInventories(liquid, gas, new double[gas.Length], new double[gas.Length], new double[gas.Length]);
-        if (bulkViscosity) CheckRigidRotation(plan, state, rhoL, rhoG, dt);
+        if (bulkViscosity)
+        {
+            CheckRigidRotation(plan, state, rhoL, rhoG, dt);
+            CheckPlanarNoSlip(plan, rhoL, rhoG, dt);
+        }
         var seed = new float[plan.FaceCount];
         if (dynamicWetting)
         {
@@ -432,10 +436,12 @@ internal static class SurfaceGeometryMain
                     for (int f = 0; f < plan.FaceCount; f++)
                         total[plan.Faces[f].Axis] += trial.Momentum.MomentumKgMPerS[f] -
                             reference.Momentum.MomentumKgMPerS[f];
-                    if (total.Any(value => Math.Abs(value) > 1e-20) ||
-                        !trial.Momentum.WallImpulseKgMPerS.SequenceEqual(reference.Momentum.WallImpulseKgMPerS))
-                        throw new InvalidOperationException("Bulk viscosity must exchange momentum internally.");
-                    Console.WriteLine($"Bulk impulse residual={total.Max(value => Math.Abs(value)):E5} kg m/s");
+                    for (int axis = 0; axis < 3; axis++)
+                        total[axis] -= trial.Momentum.WallImpulseKgMPerS[axis] -
+                            reference.Momentum.WallImpulseKgMPerS[axis];
+                    if (total.Any(value => Math.Abs(value) > 1e-20))
+                        throw new InvalidOperationException("Viscous momentum change must match the wall impulse.");
+                    Console.WriteLine($"Viscous momentum ledger residual={total.Max(value => Math.Abs(value)):E5} kg m/s");
                 }
             }
             flow = trial.Pressure;
@@ -448,6 +454,31 @@ internal static class SurfaceGeometryMain
                 !(speed <= speedLimit) || !(Math.Abs(drift) <= 1e-15))
                 throw new InvalidOperationException("Wall-compatible capillary pressure check failed.");
         }
+    }
+
+    private static void CheckPlanarNoSlip(VariableCoefficientProjection plan, double rhoL, double rhoG, double dt)
+    {
+        const double speed = .01, viscosity = .001;
+        var state = new CutCellInventories((double[])plan.Volumes.Clone(), new double[plan.GroupCount],
+            new double[plan.GroupCount], new double[plan.GroupCount], new double[plan.GroupCount]);
+        var velocity = new double[plan.FaceCount];
+        for (int f = 0; f < velocity.Length; f++)
+            if (plan.Faces[f].Active != 0 && plan.Faces[f].Axis == 0) velocity[f] = speed;
+        var transport = new CutCellVofTransport(plan);
+        var stationary = transport.Advance(state, new double[plan.FaceCount], dt);
+        var momentum = new CutCellMomentum(plan);
+        var initial = momentum.Advance(state, stationary, velocity, rhoL, rhoG);
+        var stressed = momentum.ApplyContactTraction(initial, state,
+            new System.Collections.Generic.List<InterfacePatch>(), null, rhoL, rhoG, viscosity, .000018, dt,
+            planarNoSlip: true);
+        double area = plan.Grid.Cells.X * plan.Grid.Cells.Z * plan.Grid.FaceArea(1);
+        double expected = -dt * viscosity * area * speed / (.5 * plan.Grid.Spacing.Y);
+        double actual = stressed.WallImpulseKgMPerS[0];
+        if (!(Math.Abs(actual / expected - 1) <= 1e-9) ||
+            stressed.ContactTractionPatches != 0 || stressed.WallImpulseKgMPerS[1] != 0 ||
+            stressed.WallImpulseKgMPerS[2] != 0)
+            throw new InvalidOperationException("Planar no-slip wall impulse differs from the analytical plug result.");
+        Console.WriteLine($"Planar no-slip plug: wall impulse={actual:E5} kg m/s, expected={expected:E5} kg m/s");
     }
 
     private static void CheckRigidRotation(VariableCoefficientProjection plan, CutCellInventories state,

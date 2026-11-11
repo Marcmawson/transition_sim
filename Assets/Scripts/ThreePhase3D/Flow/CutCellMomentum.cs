@@ -132,16 +132,29 @@ namespace PhysicsSim.ThreePhase3D.Flow
         internal CutCellMomentumResult ApplyContactTraction(CutCellMomentumResult input,
             CutCellInventories state, List<InterfacePatch> contacts, WettingProfile profile,
             double rhoL, double rhoG, double muL, double muG, double dt,
-            Func<ContactTractionWork, double[]> dispatch = null)
+            Func<ContactTractionWork, double[]> dispatch = null, bool planarNoSlip = false)
         {
-            if (contacts.Count == 0) return input;
+            if (contacts.Count == 0 && !planarNoSlip) return input;
             var geometry = geometryWithMoments ??= plan.Geometry.WithFluidCentroidMoments();
             var tensors = new D3[checked(3 * plan.GroupCount)];
             var samples = new D3[plan.GroupCount];
             var coefficients = new double[plan.GroupCount];
             var explicitWeights = new double[plan.FaceCount];
             var wall = (double[])input.WallImpulseKgMPerS.Clone();
-            foreach (var patch in contacts)
+            if (planarNoSlip)
+            {
+                var slipPatches = new HashSet<InterfacePatch>(contacts);
+                foreach (var patch in plan.Geometry.Patches)
+                    if (patch.Role == SolidRole.Fixed && patch.FluidExposedAreaM2 > 0 &&
+                        plan.GroupByCell[patch.Cell] >= 0)
+                        AccumulatePatch(patch, slipPatches.Contains(patch));
+            }
+            else
+            {
+                foreach (var patch in contacts) AccumulatePatch(patch, true);
+            }
+
+            void AccumulatePatch(InterfacePatch patch, bool slip)
             {
                 int group = plan.GroupByCell[patch.Cell];
                 plan.Grid.Cells.Coordinates(patch.Cell, out int i, out int j, out int k);
@@ -153,7 +166,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 if (!(distance > 0))
                     throw new InvalidOperationException("Contact traction requires a resolved fluid centroid.");
                 double coefficient = dt * patch.FluidExposedAreaM2 * viscosity *
-                    profile.WallGradientPerVelocity(distance);
+                    (slip ? profile.WallGradientPerVelocity(distance) : 1 / distance);
                 var normal = patch.NormalLocal;
                 coefficients[group] += coefficient;
                 tensors[3 * group] += (normal * normal.X - new D3(1, 0, 0)) * coefficient;

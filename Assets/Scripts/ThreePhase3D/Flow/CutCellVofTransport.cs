@@ -170,7 +170,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                             EstimateNormal(cell, group, after.Fields.LiquidM3), advected.VelocityMPerS, contacts.Add);
                     }
                     var withTraction = momentum.ApplyContactTraction(advected, after.Fields, contacts, trackedWetting,
-                        rhoL, rhoG, liquidViscosityPaS, gasViscosityPaS, transportingFlow.Diagnostics.Dt, traction);
+                        rhoL, rhoG, liquidViscosityPaS, gasViscosityPaS, transportingFlow.Diagnostics.Dt, traction, planarNoSlip: planarBulkViscosity);
                     return planarBulkViscosity ? momentum.ApplyPlanarBulkViscosity(withTraction, after.Fields,
                         rhoL, rhoG, liquidViscosityPaS, gasViscosityPaS, transportingFlow.Diagnostics.Dt) : withTraction;
                 });
