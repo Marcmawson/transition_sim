@@ -19,7 +19,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
         private readonly ComputeBuffer velocity, predicted, corrected, pressureA, pressureB;
         private readonly List<ComputeBuffer> owned = new List<ComputeBuffer>();
         private readonly float[] predictedReadback, correctedReadback;
-        private readonly Vector2[] pressureReadback, pressureZero;
+        private readonly Vector2[] pressureReadback, pressureSeed;
         private readonly Vector4[] pressureRowData;
         private bool disposed;
 
@@ -33,11 +33,11 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         public static FlowStep Project(VariableCoefficientProjection plan, ComputeShader shader,
             float[] tentative, double dt, int maxIterations,
-            Func<float[], double> measureTransportCorrection = null)
+            Func<float[], double> measureTransportCorrection = null, double[] initialPressure = null)
         {
             if (plan == null) throw new ArgumentNullException(nameof(plan));
             using (var solver = new FlowGpuSolver(plan, null, shader))
-                return solver.Project(tentative, dt, maxIterations, measureTransportCorrection);
+                return solver.Project(tentative, dt, maxIterations, measureTransportCorrection, initialPressure);
         }
 
         private FlowGpuSolver(VariableCoefficientProjection plan, MomentumPredictor3D predictor, ComputeShader shader)
@@ -79,7 +79,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 pressureB = Allocate(plan.GroupCount + 1, 8);
 
                 pressureReadback = new Vector2[pressureA.count];
-                pressureZero = new Vector2[plan.GroupCount];
+                pressureSeed = new Vector2[plan.GroupCount];
                 predictedReadback = new float[predicted.count];
                 correctedReadback = new float[corrected.count];
                 var sentinel = new[] { Guard };
@@ -126,7 +126,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
         }
 
         private FlowStep Project(float[] tentative, double dt, int maxIterations,
-            Func<float[], double> measureTransportCorrection = null)
+            Func<float[], double> measureTransportCorrection = null, double[] initialPressure = null)
         {
             if (disposed) throw new ObjectDisposedException(nameof(FlowGpuSolver));
             if (maxIterations <= 0 || tentative.Length != plan.FaceCount || !SiUnits.IsFinite(dt) || dt <= 0)
@@ -138,13 +138,27 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 throw new ArgumentException("Nonfinite tentative velocity.");
             Array.Copy(tentative, predictedReadback, tentative.Length);
             predicted.SetData(tentative, 0, 0, tentative.Length);
-            return SolvePressure(dt, maxIterations, measureTransportCorrection);
+            return SolvePressure(dt, maxIterations, measureTransportCorrection, initialPressure);
         }
 
         private FlowStep SolvePressure(double dt, int maxIterations,
-            Func<float[], double> measureTransportCorrection = null)
+            Func<float[], double> measureTransportCorrection = null, double[] initialPressure = null)
         {
-            pressureA.SetData(pressureZero, 0, 0, pressureZero.Length);
+            if (initialPressure != null)
+            {
+                if (initialPressure.Length != plan.GroupCount)
+                    throw new ArgumentException("Initial pressure must match the projection groups.");
+                for (int group = 0; group < pressureSeed.Length; group++)
+                {
+                    double value = initialPressure[group];
+                    float high = (float)value;
+                    if (!SiUnits.IsFinite(high))
+                        throw new ArgumentException("Initial pressure is outside FP32 range.");
+                    pressureSeed[group] = new Vector2(high, (float)(value - high));
+                }
+            }
+            else Array.Clear(pressureSeed, 0, pressureSeed.Length);
+            pressureA.SetData(pressureSeed, 0, 0, pressureSeed.Length);
             var clock = new Stopwatch();
             shader.SetBuffer(pressureKernel, "Faces", faces);
             shader.SetBuffer(pressureKernel, "Rows", rows);

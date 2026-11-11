@@ -223,7 +223,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.Label(waterStatus);
                 GUILayout.Label(volumeStatus);
                 if (frameMs > 0)
-                    GUILayout.Label($"Game {1000f / frameMs:F1} FPS  |  Step {solverStepMs:F1} ms  |  Surface {surfaceBuildMs:F1} ms");
+                    GUILayout.Label($"Game {1000f / frameMs:F1} FPS  |  Step {solverStepMs:F1} ms ({release.Pressure.Diagnostics.Iterations} it)  |  Surface {surfaceBuildMs:F1} ms");
                 if (error == null)
                 {
                     GUILayout.BeginHorizontal();

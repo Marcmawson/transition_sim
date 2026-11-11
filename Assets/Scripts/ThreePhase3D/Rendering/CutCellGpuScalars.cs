@@ -81,7 +81,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 throw new ArgumentException("The coupled preview requires GPU momentum, pressure and clipping.");
             return transport.AdvanceCoupled(state, flow, liquidDensity, gasDensity, null, maxIterations,
                 (next, velocity, dt, cap) => FlowGpuSolver.Project(next, pressureShader, velocity, dt, cap,
-                    transport.MeasurePressureCorrection(dt)),
+                    transport.MeasurePressureCorrection(dt),
+                    worldAccelerationMPerS2.Length > 0 ? flow.GroupPressurePa : null),
                 Dispatch, clipping.Clip, momentum.Advance, worldAccelerationMPerS2);
         }
 

@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using PhysicsSim.ThreePhase3D.Flow;
 using UnityEngine;
@@ -53,14 +54,39 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         public void Rebuild(BeakerVofTimeIntegration release, Mesh mesh)
         {
             var cells = release.Geometry.Grid.Cells;
+            int x0 = cells.X, y0 = cells.Y, z0 = cells.Z;
+            int x1 = -1, y1 = -1, z1 = -1;
             for (int z = 0; z < cells.Z; z++)
             for (int y = 0; y < cells.Y; y++)
             for (int x = 0; x < cells.X; x++)
-                fractions[cells.Index(x, y, z)] = (float)release.LiquidFractionAt(x, y, z);
+            {
+                float fraction = (float)release.LiquidFractionAt(x, y, z);
+                fractions[cells.Index(x, y, z)] = fraction;
+                if (fraction < SurfaceFraction) continue;
+                x0 = Math.Min(x0, x);
+                y0 = Math.Min(y0, y);
+                z0 = Math.Min(z0, z);
+                x1 = Math.Max(x1, x);
+                y1 = Math.Max(y1, y);
+                z1 = Math.Max(z1, z);
+            }
+            if (x1 < 0)
+            {
+                mesh.Clear();
+                return;
+            }
 
-            for (int z = 0; z < nz; z++)
-            for (int y = 0; y < ny; y++)
-            for (int x = 0; x < nx; x++)
+            // A trilinear sample can exceed the threshold only within one
+            // cell spacing of a qualifying centre. Keep one extra sample for normals.
+            x0 *= Subdivisions;
+            y0 *= Subdivisions;
+            z0 *= Subdivisions;
+            x1 = (x1 + 2) * Subdivisions;
+            y1 = (y1 + 2) * Subdivisions;
+            z1 = (z1 + 2) * Subdivisions;
+            for (int z = Math.Max(0, z0 - 1); z <= Math.Min(nz - 1, z1 + 1); z++)
+            for (int y = Math.Max(0, y0 - 1); y <= Math.Min(ny - 1, y1 + 1); y++)
+            for (int x = Math.Max(0, x0 - 1); x <= Math.Min(nx - 1, x1 + 1); x++)
             {
                 int i = x / Subdivisions - 1, j = y / Subdivisions - 1, k = z / Subdivisions - 1;
                 float u = (float)(x % Subdivisions) / Subdivisions;
@@ -85,9 +111,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 samples[Index(x, y, z)] = denominator > 0 ? numerator / denominator : 0;
             }
 
-            for (int z = 1; z < nz - 1; z++)
-            for (int y = 1; y < ny - 1; y++)
-            for (int x = 1; x < nx - 1; x++)
+            for (int z = Math.Max(1, z0); z <= Math.Min(nz - 2, z1); z++)
+            for (int y = Math.Max(1, y0); y <= Math.Min(ny - 2, y1); y++)
+            for (int x = Math.Max(1, x0); x <= Math.Min(nx - 2, x1); x++)
                 gradients[Index(x, y, z)] = new Vector3(
                     (samples[Index(x - 1, y, z)] - samples[Index(x + 1, y, z)]) / spacing.x,
                     (samples[Index(x, y - 1, z)] - samples[Index(x, y + 1, z)]) / spacing.y,
@@ -96,9 +122,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             vertices.Clear();
             normals.Clear();
             triangles.Clear();
-            for (int z = 0; z < nz - 1; z++)
-            for (int y = 0; y < ny - 1; y++)
-            for (int x = 0; x < nx - 1; x++)
+            for (int z = z0; z < z1; z++)
+            for (int y = y0; y < y1; y++)
+            for (int x = x0; x < x1; x++)
             {
                 int liquidCorners = 0;
                 for (int c = 0; c < corners.Length; c++)
