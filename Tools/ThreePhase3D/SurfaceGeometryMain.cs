@@ -11,6 +11,7 @@ internal static class SurfaceGeometryMain
 {
     private static int Main(string[] args)
     {
+        if (args.Contains("--v11")) return RunV11();
         if (args.Contains("--wetting")) return BeakerVofMain.Main(args);
         if (args.Contains("--capillary-oscillation"))
         {
@@ -84,23 +85,8 @@ internal static class SurfaceGeometryMain
         const double h = .001, radius = .007, sigma = .072, dt = .0001;
         var grid = new Grid3D(n, n, n, new D3(h, h, h));
         var transport = new GeometricVof3D(grid, 997, 1.2);
-        var alpha = new double[transport.CellCount];
-        for (int k = 0; k < n; k++)
-        for (int j = 0; j < n; j++)
-        for (int i = 0; i < n; i++)
-        {
-            int inside = 0;
-            for (int z = 0; z < samples; z++)
-            for (int y = 0; y < samples; y++)
-            for (int x = 0; x < samples; x++)
-            {
-                double dx = (i + (x + .5) / samples - n / 2.0) * h;
-                double dy = (j + (y + .5) / samples - n / 2.0) * h;
-                double dz = (k + (z + .5) / samples - n / 2.0) * h;
-                if (dx * dx + dy * dy + dz * dz < radius * radius) inside++;
-            }
-            alpha[transport.CellIndex(i, j, k)] = inside / (double)(samples * samples * samples);
-        }
+        var centre = new D3(n * h / 2, n * h / 2, n * h / 2);
+        var alpha = SampleSphere(transport, centre, radius, samples);
 
         var flow = new PeriodicVofProjection(grid, 997, 1.2);
         var state = VofChecks.Fields(grid, alpha, VofChecks.Uniform(alpha.Length, 0, 0, 0));
@@ -126,6 +112,117 @@ internal static class SurfaceGeometryMain
                 throw new InvalidOperationException("Stationary sphere capillary check failed.");
             state = step.Fields;
         }
+    }
+
+    private static int RunV11()
+    {
+        bool passed = true;
+        Check("coarse", 20, .0014, .007, 0, 6);
+        Check("fine", 24, .001, .007, 0, 6);
+        Check("smaller", 22, .001, .006, 0, 6);
+        Check("translating", 24, .001, .007, .5, 20);
+        return passed ? 0 : 1;
+
+        void Check(string name, int n, double h, double radius, double translation, int steps)
+        {
+            try { CheckV11Drop(name, n, h, radius, translation, steps); }
+            catch (Exception failure)
+            {
+                passed = false;
+                Console.Error.WriteLine($"V11 {name}: {failure.Message}");
+            }
+        }
+    }
+
+    private static void CheckV11Drop(string name, int n, double h, double radius, double translation, int steps)
+    {
+        const double rhoL = 997, rhoG = 1.2, sigma = .072, dt = .0001;
+        var grid = new Grid3D(n, n, n, new D3(h, h, h));
+        var vof = new GeometricVof3D(grid, rhoL, rhoG);
+        var centre = new D3(n * h / 2, n * h / 2, n * h / 2);
+        var alpha = SampleSphere(vof, centre, radius, 12);
+        var state = VofChecks.Fields(grid, alpha, VofChecks.Uniform(alpha.Length, translation, 0, 0));
+        var flow = new PeriodicVofProjection(grid, rhoL, rhoG);
+        var control = state;
+        double expectedJump = 2 * sigma / radius;
+        double maxJumpError = 0, maxSpeed = 0, firstSpeed = 0, finalSpeed = 0, maxDrift = 0;
+        double initialVolume = alpha.Sum() * grid.CellVolume;
+        for (int iteration = 1; iteration <= steps; iteration++)
+        {
+            PeriodicVofStep step;
+            try { step = flow.AdvanceCapillary(state, dt, sigma, 16384); }
+            catch (Exception failure)
+            {
+                throw new InvalidOperationException($"Step {iteration} failed after t={(iteration - 1) * dt:G6} s. {failure.Message}", failure);
+            }
+            int x = (int)((centre.X + translation * dt * iteration) / h);
+            double jump = step.CellPressurePa[vof.CellIndex(x, n / 2, n / 2)] - step.CellPressurePa[0];
+            maxJumpError = Math.Max(maxJumpError, Math.Abs(jump / expectedJump - 1));
+            finalSpeed = 0;
+            for (int axis = 0; axis < 3; axis++)
+            {
+                double frameVelocity = axis == 0 ? translation : 0;
+                finalSpeed = Math.Max(finalSpeed, step.Fields.FaceVelocity[axis].Max(value => Math.Abs(value - frameVelocity)));
+            }
+            if (iteration == 1) firstSpeed = finalSpeed;
+            maxSpeed = Math.Max(maxSpeed, finalSpeed);
+            state = step.Fields;
+            if (translation != 0) control = flow.Advance(control, dt, 16384).Fields;
+            maxDrift = Math.Max(maxDrift, Math.Abs(state.LiquidFraction.Sum() * grid.CellVolume - initialVolume));
+        }
+
+        double displacement = translation * dt * steps;
+        var exact = translation == 0 ? alpha : SampleSphere(vof, centre + new D3(displacement, 0, 0), radius, 12);
+        double shapeError = state.LiquidFraction.Zip(exact, (actual, expected) => Math.Abs(actual - expected)).Sum() / alpha.Sum();
+        Console.WriteLine(FormattableString.Invariant(
+            $"V11 {name}: R={radius:G4} m h={h:G4} m t={steps * dt:G4} s displacement={displacement:G4} m pressure_error={maxJumpError:P3} first_speed={firstSpeed:E5} final_speed={finalSpeed:E5} max_speed={maxSpeed:E5} m/s volume_drift={maxDrift:E5} m^3 shape_L1={shapeError:P3}"));
+        if (translation != 0)
+        {
+            double controlSpeed = Math.Max(control.FaceVelocity[0].Max(value => Math.Abs(value - translation)),
+                Math.Max(control.FaceVelocity[1].Max(Math.Abs), control.FaceVelocity[2].Max(Math.Abs)));
+            double controlShape = control.LiquidFraction.Zip(exact, (actual, expected) => Math.Abs(actual - expected)).Sum() /
+                alpha.Sum();
+            Console.WriteLine(FormattableString.Invariant(
+                $"V11 translating zero-tension control: speed_error={controlSpeed:E5} m/s shape_L1={controlShape:P3}"));
+        }
+        double exploratorySpeedLimit = .005 * Math.Sqrt(sigma / (rhoL * radius));
+        if (!(maxJumpError <= .05 && maxSpeed <= exploratorySpeedLimit && maxDrift <= initialVolume * 1e-10 && shapeError <= .05))
+            throw new InvalidOperationException("One or more pressure, speed, volume or shape tolerances failed.");
+    }
+
+    private static double[] SampleSphere(GeometricVof3D transport, D3 centre, double radius, int samples)
+    {
+        var grid = transport.Grid;
+        var shape = grid.Cells;
+        double h = grid.Spacing.X;
+        double halfDiagonal = .5 * h * Math.Sqrt(3);
+        var alpha = new double[transport.CellCount];
+        for (int k = 0; k < shape.Z; k++)
+        for (int j = 0; j < shape.Y; j++)
+        for (int i = 0; i < shape.X; i++)
+        {
+            var offset = grid.Centre(i, j, k) - centre;
+            double distance = offset.Length;
+            int cell = transport.CellIndex(i, j, k);
+            if (distance >= radius + halfDiagonal) continue;
+            if (distance <= radius - halfDiagonal)
+            {
+                alpha[cell] = 1;
+                continue;
+            }
+            int inside = 0;
+            for (int z = 0; z < samples; z++)
+            for (int y = 0; y < samples; y++)
+            for (int x = 0; x < samples; x++)
+            {
+                double dx = offset.X + ((x + .5) / samples - .5) * h;
+                double dy = offset.Y + ((y + .5) / samples - .5) * h;
+                double dz = offset.Z + ((z + .5) / samples - .5) * h;
+                if (dx * dx + dy * dy + dz * dz < radius * radius) inside++;
+            }
+            alpha[cell] = inside / (double)(samples * samples * samples);
+        }
+        return alpha;
     }
 
     private static void CheckThermocapillarySlab()

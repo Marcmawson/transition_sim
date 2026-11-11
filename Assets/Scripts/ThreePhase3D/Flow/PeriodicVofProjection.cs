@@ -90,7 +90,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     int high = transport.CellIndex(i % shape.X, j % shape.Y, k % shape.Z);
                     double mobility = plan.Faces[face].Mobility;
                     double jump = moved.LiquidFraction[high] - moved.LiquidFraction[cell];
-                    if (jump != 0)
+                    if (Math.Abs(jump) > 1e-12)
                     {
                         double lowCurvature = curvature[cell].InverseMetres;
                         double highCurvature = curvature[high].InverseMetres;
@@ -124,25 +124,27 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         private double NearbyCurvature(SurfaceCurvature[] curvature, int axis, int i, int j, int k)
         {
-            // Symmetric one-cell extension around the two face-adjacent cells.
+            // Use the first supported neighbourhood, with a bounded reach.
             var shape = geometry.Grid.Cells;
-            int count = 0;
-            double sum = 0;
-            for (int dz = axis == 2 ? -2 : -1; dz <= 1; dz++)
-            for (int dy = axis == 1 ? -2 : -1; dy <= 1; dy++)
-            for (int dx = axis == 0 ? -2 : -1; dx <= 1; dx++)
+            for (int reach = 1; reach <= 3; reach++)
             {
-                int x = ((i + dx) % shape.X + shape.X) % shape.X;
-                int y = ((j + dy) % shape.Y + shape.Y) % shape.Y;
-                int z = ((k + dz) % shape.Z + shape.Z) % shape.Z;
-                double value = curvature[transport.CellIndex(x, y, z)].InverseMetres;
-                if (!SiUnits.IsFinite(value)) continue;
-                sum += value;
-                count++;
+                int count = 0;
+                double sum = 0;
+                for (int dz = -reach - (axis == 2 ? 1 : 0); dz <= reach; dz++)
+                for (int dy = -reach - (axis == 1 ? 1 : 0); dy <= reach; dy++)
+                for (int dx = -reach - (axis == 0 ? 1 : 0); dx <= reach; dx++)
+                {
+                    int x = ((i + dx) % shape.X + shape.X) % shape.X;
+                    int y = ((j + dy) % shape.Y + shape.Y) % shape.Y;
+                    int z = ((k + dz) % shape.Z + shape.Z) % shape.Z;
+                    double value = curvature[transport.CellIndex(x, y, z)].InverseMetres;
+                    if (!SiUnits.IsFinite(value)) continue;
+                    sum += value;
+                    count++;
+                }
+                if (count > 0) return sum / count;
             }
-            if (count == 0)
-                throw new InvalidOperationException($"No supported capillary curvature near axis {axis} face ({i}, {j}, {k}).");
-            return sum / count;
+            throw new InvalidOperationException($"No supported capillary curvature near axis {axis} face ({i}, {j}, {k}).");
         }
 
         private void ForEachFace(Action<int, int, int, int, int> visit)

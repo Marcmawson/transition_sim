@@ -10,7 +10,7 @@ The implementation applies to regular periodic cells. Embedded-wall geometry and
 
 `PeriodicVofProjection.AdvanceCapillary` transports the accepted S05 fields, evaluates curvature on the moved interface, and adds `dt * mobility * sigma * kappaFace * (alphaHigh - alphaLow)` to the tentative velocity. The pressure solve subtracts `dt * mobility * (pHigh - pLow)` on the same staggered face. For constant exact curvature, `p = sigma * kappa * alpha + constant` balances the force at the stencil level. See [M01](Sources.md#m01-balanced-capillary-vof).
 
-Face curvature uses the available adjacent estimate or their mean. If both adjacent estimates are missing, the solver averages the finite estimates in a one-cell extension around the face pair and reports the number of such faces. If that neighbourhood contains no supported estimate, the step fails. The explicit timestep limit is `sqrt((rhoLiquid + rhoGas) * hMin^3 / (4 * pi * sigma))`. The pressure output is gauge pressure in compact periodic cell order.
+Face curvature uses the available adjacent estimate or their mean. If both adjacent estimates are missing, the solver averages finite estimates in the first supported neighbourhood around the face pair, up to three cells, and reports the number of such faces. If that search contains no supported estimate, the step fails. Fraction jumps at or below 1e-12 contribute zero normal capillary forcing and retain their transported inventory. The explicit timestep limit is `sqrt((rhoLiquid + rhoGas) * hMin^3 / (4 * pi * sigma))`. The pressure output is gauge pressure in compact periodic cell order.
 
 The capillary API accepts a uniform surface tension in N/m. The CPU fixture uses an initially stationary 7 mm sphere at 1 mm grid spacing, with densities 997 and 1.2 kg/m³ and surface tension 0.072 N/m. The fixture checks the Young–Laplace pressure jump, maximum face speed, and liquid volume drift over three steps, plus parity with the S05 projection at zero surface tension. It covers one radius and resolution. Unity execution, GPU curvature, wall/contact-line coupling, and translating or oscillating droplets remain to be verified.
 
@@ -153,3 +153,22 @@ This probe starts a 5 mm sessile half-ellipsoid from rest, with reciprocal horiz
 The printed reference is the inviscid free-contact-line hemisphere's quadrupole period from the [Rayleigh–Lamb spectrum](https://www.cambridge.org/core/journals/journal-of-fluid-mechanics/article/effects-of-gravity-on-natural-oscillations-of-sessile-drops/9373ADEB7650B13ACA0BF3A057A9D071). The synthetic fixture includes viscosity, wall drag, slip and hysteresis. A frequency and damping comparison for V12 requires a matched reference and spatial and temporal refinement.
 
 The first local probe reached its first shape sign reversal at 22.2 ms and exceeded the initial 0.02 m/s synthetic calibration range. With the probe's synthetic range extended to 0.1 m/s, the run reached 41.4 ms, where the last accepted shape moment was −0.25594 versus an initial +0.09394. The following step hit the three-cell gas-buffer guard before a positive return peak. The existing solver limits remain in force. These results leave frequency and damping unverified.
+
+### V11 radius, grid, and translation checks
+
+Run the standalone CPU matrix with:
+
+```sh
+dotnet run -c Release --project Tools/ThreePhase3D/SurfaceGeometryChecks.csproj -- --v11
+```
+
+The matrix uses 997 kg/m³ liquid, 1.2 kg/m³ gas, and 0.072 N/m surface tension. The static cases use a 7 mm drop at 1.4 and 1.0 mm spacing and a 6 mm drop at 1.0 mm spacing. The translating case uses the 7 mm drop at 1.0 mm spacing, with a uniform 0.5 m/s initial velocity. It advances for twenty 0.1 ms steps so its analytical displacement is one fine-grid cell. The runner checks pressure jump, maximum face speed relative to the prescribed frame, liquid volume, and relative L1 error against the sampled sphere at its expected position. It reports first and last speeds to expose growth. The short-run speed limit of 0.5% of `sqrt(sigma / (rhoLiquid * radius))` is exploratory. The periodic capillary path currently omits physical viscosity, so this matrix does not establish viscous decay.
+
+| Case | Maximum pressure error | Maximum speed relative to frame | Final shape error |
+| --- | ---: | ---: | ---: |
+| 7 mm static, 1.4 mm cells | 1.998% | 0.0791 mm/s | <0.001% |
+| 7 mm static, 1.0 mm cells | 0.672% | 0.323 mm/s | 0.001% |
+| 6 mm static, 1.0 mm cells | 1.027% | 0.205 mm/s | 0.001% |
+| 7 mm translating, 1.0 mm cells | 6.809% | 20.85 mm/s | 1.371% |
+
+The three static cases pass the short-run limits, with speed increasing over the sampled interval. The translating case completes one cell of travel and conserves liquid volume to 1.23e-20 m³, but fails the pressure and speed limits. With surface tension disabled, the translating control preserves the prescribed velocity exactly and gives 1.408% shape error. That isolates the velocity error to the interaction of transported interface geometry and capillary forcing. V11 remains open for translating-drop accuracy and viscous decay.
