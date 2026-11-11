@@ -11,7 +11,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly GeometricVof3D vof;
         private readonly VofGpuTransportLayout layout;
         private readonly int groups, limit, flux, updateCells, updateMomentum;
-        private readonly double[] input, faces, cells, momentum;
+        private readonly VofFloatPair[] input, faces, cells, momentum;
         private readonly ComputeBuffer inputBuffer, budgetBuffer, faceBuffer, cellBuffer, momentumBuffer;
         private readonly List<ComputeBuffer> owned = new List<ComputeBuffer>();
 
@@ -30,10 +30,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             updateCells = Find("UpdateCells");
             updateMomentum = Find("UpdateMomentum");
             layout = new VofGpuTransportLayout(vof);
-            input = new double[checked(VofGpuTransportLayout.InputPlanes * count)];
-            faces = new double[checked(VofGpuTransportLayout.FacePlanes * count + 1)];
-            cells = new double[checked(VofGpuTransportLayout.CellPlanes * count + 1)];
-            momentum = new double[checked(VofGpuTransportLayout.MomentumPlanes * count + 1)];
+            input = new VofFloatPair[checked(VofGpuTransportLayout.InputPlanes * count)];
+            faces = new VofFloatPair[checked(VofGpuTransportLayout.FacePlanes * count + 1)];
+            cells = new VofFloatPair[checked(VofGpuTransportLayout.CellPlanes * count + 1)];
+            momentum = new VofFloatPair[checked(VofGpuTransportLayout.MomentumPlanes * count + 1)];
             try
             {
                 inputBuffer = Allocate(input.Length, false);
@@ -54,9 +54,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             shader.SetInt("Ny", vof.Grid.Cells.Y);
             shader.SetInt("Nz", vof.Grid.Cells.Z);
             shader.SetInt("Count", vof.CellCount);
-            SetDouble("Volume", vof.Grid.CellVolume);
-            SetDouble("LiquidDensity", vof.LiquidDensity);
-            SetDouble("GasDensity", vof.GasDensity);
+            SetPair("Volume", vof.Grid.CellVolume);
+            SetPair("LiquidDensity", vof.LiquidDensity);
+            SetPair("GasDensity", vof.GasDensity);
 
             Bind(limit, "InputFields", inputBuffer);
             Bind(limit, "CandidateFractions", candidates);
@@ -87,15 +87,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             int kernel = shader.FindKernel(name);
             if (!shader.IsSupported(kernel))
-                throw new NotSupportedException($"{name} requires FP64 compute on {SystemInfo.graphicsDeviceType}.");
+                throw new NotSupportedException($"{name} is unsupported on {SystemInfo.graphicsDeviceType}.");
             return kernel;
         }
 
-        private void SetDouble(string name, double value)
+        private void SetPair(string name, double value)
         {
-            long bits = BitConverter.DoubleToInt64Bits(value);
-            shader.SetInt(name + "Lo", unchecked((int)bits));
-            shader.SetInt(name + "Hi", unchecked((int)(bits >> 32)));
+            var pair = new VofFloatPair(value);
+            shader.SetInt(name + "High", BitConverter.ToInt32(BitConverter.GetBytes(pair.High), 0));
+            shader.SetInt(name + "Low", BitConverter.ToInt32(BitConverter.GetBytes(pair.Low), 0));
         }
 
         private void Bind(int kernel, string name, ComputeBuffer buffer) => shader.SetBuffer(kernel, name, buffer);
@@ -104,7 +104,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             var buffer = new ComputeBuffer(count, 8, ComputeBufferType.Structured);
             owned.Add(buffer);
-            if (guard) buffer.SetData(new[] { VofGpuTransportLayout.Guard }, 0, count - 1, 1);
+            if (guard) buffer.SetData(new[] { new VofFloatPair(VofGpuTransportLayout.Guard) }, 0, count - 1, 1);
             return buffer;
         }
 

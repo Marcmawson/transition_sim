@@ -10,7 +10,7 @@ An unsplit geometric candidate can count an overlapping corner twice when severa
 
 Cell mass flux is the sum of the two phase-volume fluxes weighted by their densities. For a staggered component, average the two neighbouring cell mass fluxes onto each face of its momentum control volume. Its updated mass is the same average of the two updated cell masses. Momentum uses this mass transfer multiplied by the upwind staggered velocity. The benchmark measures the difference between independently updated staggered mass and the mass inferred from phase transport. Each phase's energy and the gas vapour inventory use the same phase transfers with donor concentrations.
 
-The periodic GPU path reconstructs and sweeps in FP32, then runs the donor limiter, shared phase transfers, scalar updates and staggered momentum in FP64 compute kernels. The host validates input CFL and divergence and reduces the output evidence. FP64 shader support is required. The kernels use the basic double operations and compute division with a normalised reciprocal and two Newton refinements. [Direct3D 11 double support](https://learn.microsoft.com/en-us/windows/win32/api/d3d11/ns-d3d11-d3d11_feature_data_doubles) It shares the S03 grid definition. The periodic coupling uses S04's pressure iteration and velocity correction with one shared face at each periodic seam.
+The periodic GPU path reconstructs and sweeps in FP32. The donor limiter, shared phase transfers, scalar updates and staggered momentum store each scalar as a leading FP32 word plus a residual word. Compensated arithmetic preserves the small transfers, using the FP32 exponent range. The host validates input CFL and divergence, decodes GPU state and reduces the output evidence. Endpoint rounding during decoding is included in the vapour and energy reconciliation totals. This revision removes native FP64 shader operations after Unity Direct3D 11 rejected the earlier donor limiter. The periodic coupling uses S04's pressure iteration and velocity correction with one shared face at each periodic seam.
 
 ## Verification
 
@@ -42,6 +42,6 @@ The expanded suite passed 84 checks on the managed reference and on software Vul
 
 ## Open integration
 
-Unity Direct3D 11 execution of the new FP64 kernels remains to be checked. Cut-cell transport remains a CPU reference path. The curved beaker test uses prescribed circulation. The beaker scene still needs a coupled time integration and a grid that resolves its embedded viscous wall distances.
+The compensated GPU path passed 84 checks on both lavapipe and SwiftShader with shaderFloat64 disabled. Unity Direct3D 11 import and execution of this revision remain to be checked. [Compensated GPU verification](../../ValidationRuns/s05-compensated-gpu-20261111) Cut-cell transport remains a CPU reference path. The curved beaker test uses prescribed circulation. The beaker scene still needs a coupled time integration and a grid that resolves its embedded viscous wall distances.
 
 Method references are [M04 and M13](Sources.md). The capacity limiter and dual-volume averaging above are the discretisation used by this implementation.

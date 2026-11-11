@@ -1,0 +1,5 @@
+Base GitHub commit: 946c636f87e093ba9901c5a8773dc180530972c5.
+Reported Unity failure: LimitDonors was unsupported on Direct3D 11 before dispatch.
+Revised periodic shaders use compensated pairs of FP32 values. DXC cs_6_0 compiled all four updated kernels for DXIL and SPIR-V with warnings as errors.
+Software Vulkan used the revised kernels with shaderFloat64 disabled. Mesa lavapipe and Chromium SwiftShader each passed 84/84 S05 checks. Cut-cell cases remain CPU references.
+The runtime and editor sources compiled as separate assemblies against Unity API stubs. Unity Direct3D 11 import and hardware execution remain pending.
