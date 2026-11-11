@@ -1,0 +1,45 @@
+#pragma kernel RecoverLiquidTemperature
+
+// CutCellScalarGpuLayout state planes 0 (liquid m3) and 2 (liquid J).
+StructuredBuffer<float2> UpdatedState;
+StructuredBuffer<float> SpecificEnthalpy;
+RWStructuredBuffer<float2> LiquidState;
+RWStructuredBuffer<uint> RecoveryStatus;
+int GroupCount, TableCount;
+float TransportDensity, MinimumK, StepK;
+
+[numthreads(64, 1, 1)]
+void RecoverLiquidTemperature(uint3 id : SV_DispatchThreadID)
+{
+    uint cell = id.x;
+    if (cell >= (uint)GroupCount) return;
+    float2 volumePair = UpdatedState[cell];
+    float2 energyPair = UpdatedState[2 * GroupCount + cell];
+    float volume = volumePair.x + volumePair.y;
+    float energy = energyPair.x + energyPair.y;
+    LiquidState[cell] = 0;
+    RecoveryStatus[cell] = 2;
+    if (isnan(volume) || isinf(volume) || isnan(energy) || isinf(energy) || volume < 0) return;
+    if (volume == 0)
+    {
+        if (energy == 0) RecoveryStatus[cell] = 1;
+        return;
+    }
+
+    float h = (energy / volume) / TransportDensity;
+    float minimum = SpecificEnthalpy[0], maximum = SpecificEnthalpy[TableCount - 1];
+    if (isnan(h) || isinf(h) || h < minimum - abs(minimum) * 4e-7 ||
+        h > maximum + abs(maximum) * 4e-7) return;
+    h = clamp(h, minimum, maximum);
+    int lo = 0, hi = TableCount - 1;
+    while (hi - lo > 1)
+    {
+        int mid = (lo + hi) / 2;
+        if (SpecificEnthalpy[mid] <= h) lo = mid;
+        else hi = mid;
+    }
+
+    float fraction = (h - SpecificEnthalpy[lo]) / (SpecificEnthalpy[hi] - SpecificEnthalpy[lo]);
+    LiquidState[cell] = float2(MinimumK + (lo + fraction) * StepK, h);
+    RecoveryStatus[cell] = 0;
+}

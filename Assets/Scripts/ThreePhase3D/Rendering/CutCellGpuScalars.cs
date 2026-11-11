@@ -72,6 +72,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             return transport.Advance(state, velocity, dt, inflow, 0, Dispatch, batch);
         }
 
+        public CutCellTransportResult AdvanceWithTemperature(CutCellInventories state, double[] velocity, double dt,
+            LiquidEnthalpyGpuRecovery recovery, Func<int, CutCellInflow> inflow = null)
+        {
+            if (recovery == null) throw new ArgumentNullException(nameof(recovery));
+            var result = Advance(state, velocity, dt, inflow);
+            recovery.Recover(updated);
+            return result;
+        }
+
         public CutCellCoupledStep AdvanceCoupled(CutCellInventories state, FlowStep flow,
             double liquidDensity, double gasDensity, CutCellGpuMomentum momentum, ComputeShader pressureShader, int maxIterations,
             D3 worldAccelerationMPerS2 = default, double? adaptiveMaxStepS = null)
