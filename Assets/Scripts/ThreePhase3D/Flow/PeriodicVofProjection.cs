@@ -125,29 +125,48 @@ namespace PhysicsSim.ThreePhase3D.Flow
         private SurfaceCurvature[] FilterCurvature(SurfaceCurvature[] raw, double[] fraction)
         {
             var shape = geometry.Grid.Cells;
+            var spacing = geometry.Grid.Spacing;
             var result = (SurfaceCurvature[])raw.Clone();
+            var normals = new D3[raw.Length];
             for (int k = 0; k < shape.Z; k++)
             for (int j = 0; j < shape.Y; j++)
             for (int i = 0; i < shape.X; i++)
             {
-                int cell = transport.CellIndex(i, j, k);
+                int cell = Index(i, j, k);
+                if (!SiUnits.IsFinite(raw[cell].InverseMetres)) continue;
+                var gradient = new D3(
+                    (fraction[Index(i + 1, j, k)] - fraction[Index(i - 1, j, k)]) / spacing.X,
+                    (fraction[Index(i, j + 1, k)] - fraction[Index(i, j - 1, k)]) / spacing.Y,
+                    (fraction[Index(i, j, k + 1)] - fraction[Index(i, j, k - 1)]) / spacing.Z);
+                if (gradient.Length > 0) normals[cell] = gradient.Unit();
+            }
+
+            for (int k = 0; k < shape.Z; k++)
+            for (int j = 0; j < shape.Y; j++)
+            for (int i = 0; i < shape.X; i++)
+            {
+                int cell = Index(i, j, k);
                 if (!SiUnits.IsFinite(raw[cell].InverseMetres)) continue;
                 double weighted = 0, weights = 0;
-                for (int z = -1; z <= 1; z++)
-                for (int y = -1; y <= 1; y++)
-                for (int x = -1; x <= 1; x++)
+                for (int z = -Math.Min(2, shape.Z / 2); z <= Math.Min(2, (shape.Z - 1) / 2); z++)
+                for (int y = -Math.Min(2, shape.Y / 2); y <= Math.Min(2, (shape.Y - 1) / 2); y++)
+                for (int x = -Math.Min(2, shape.X / 2); x <= Math.Min(2, (shape.X - 1) / 2); x++)
                 {
-                    int sample = transport.CellIndex((i + x + shape.X) % shape.X,
-                        (j + y + shape.Y) % shape.Y, (k + z + shape.Z) % shape.Z);
+                    int sample = Index(i + x, j + y, k + z);
                     double curvature = raw[sample].InverseMetres;
                     if (!SiUnits.IsFinite(curvature)) continue;
+                    double alignment = D3.Dot(normals[cell], normals[sample]);
+                    if (alignment < .5) continue;
                     double alpha = fraction[sample];
-                    double weight = alpha * (1 - alpha) / (1 + x * x + y * y + z * z);
+                    double weight = alignment * alpha * (1 - alpha) / (1 + x * x + y * y + z * z);
                     weighted += weight * curvature;
                     weights += weight;
                 }
                 if (weights > 0) result[cell] = new SurfaceCurvature(raw[cell].Support, weighted / weights);
             }
+
+            int Index(int i, int j, int k) => transport.CellIndex(
+                (i + shape.X) % shape.X, (j + shape.Y) % shape.Y, (k + shape.Z) % shape.Z);
             return result;
         }
 

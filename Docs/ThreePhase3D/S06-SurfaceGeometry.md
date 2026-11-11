@@ -184,3 +184,9 @@ With the same V11 limits, maximum translating speed error fell from 20.85 to 6.2
 The periodic capillary predictor first tries its original seven-cell height column. If any of the nine columns fails the pure-endpoint or monotonicity checks, it can extend each axial end independently by up to two cells. All nine columns share the same bounds for each attempt. This can recover a local estimate without extending unnecessarily across the opposite side of a drop. The estimator still tries other axes and the existing neighbouring-curvature fallback when local support is unavailable. The planar wall and standalone geometry checks retain their original column lengths.
 
 In the V11 translating case the maximum pressure error fell from 6.767% to 4.856%, meeting the 5% pressure limit. The moving-frame speed error fell from 6.24 to 5.88 mm/s and still exceeds the speed limit. All three static cases remained within their short-run limits. The smaller static drop's maximum speed rose from 0.0596 to 0.0689 mm/s.
+
+### Orientation-weighted curvature filtering
+
+The periodic filter now considers supported curvature up to two cells away. It weights samples by the alignment of centred volume-fraction normals and excludes samples whose normal dot product is below 0.5. The mixed-cell and distance weights still apply. The orientation test reduces averaging across oppositely facing interfaces. Nearby interfaces with similar orientation can still contribute to the same stencil.
+
+In the unchanged V11 matrix, translating speed error fell from 5.88 to 3.00 mm/s, maximum pressure error fell from 4.856% to 4.748%, and shape error moved from 1.393% to 1.397%. Static speed errors fell in all three short runs. The translating speed still exceeds the approximately 0.51 mm/s exploratory limit.
