@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using PhysicsSim.ThreePhase3D.Core;
+using PhysicsSim.ThreePhase3D.Materials;
 
 namespace PhysicsSim.ThreePhase3D.Thermal
 {
@@ -13,6 +14,7 @@ namespace PhysicsSim.ThreePhase3D.Thermal
         private const int WallHeightCells = 32, LegCells = 12, LegCount = 3;
         private const double GlassK = 1.2, GlassVolumetricCp = 1.8e6;
         private const double SteelK = 16, SteelVolumetricCp = 3.9e6;
+        private const int WaterHeightCells = 8;
         private const double ContactAreaM2 = 1e-4, ContactResistanceM2KW = .001;
 
         public readonly double[] CapacityJPerK;
@@ -24,13 +26,24 @@ namespace PhysicsSim.ThreePhase3D.Thermal
         public int LegTop => Ring + 1;
         public int Foot => Ring + LegCells;
 
-        public BeakerSolidMesh(GeometryInputs geometry)
+        public int WaterStart { get; }
+        public double WaterDepthM { get; }
+        public double WaterVolumeM3 { get; }
+
+        public BeakerSolidMesh(GeometryInputs geometry, double waterVolumeM3 = 0)
         {
             int wallStart = BaseRadialCells * BaseDepthCells;
             Ring = wallStart + WallHeightCells * WallRadialCells;
             LowerWall = wallStart;
             Rim = Ring - WallRadialCells;
-            CapacityJPerK = new double[Ring + 1 + LegCount * LegCells];
+            if (!SiUnits.IsFinite(waterVolumeM3) || waterVolumeM3 < 0 ||
+                waterVolumeM3 >= geometry.CavityVolumeM3)
+                throw new ArgumentOutOfRangeException(nameof(waterVolumeM3), "Water must fit below the rim.");
+            WaterVolumeM3 = waterVolumeM3;
+            WaterDepthM = waterVolumeM3 / (Math.PI * geometry.innerRadiusM * geometry.innerRadiusM);
+            WaterStart = Ring + 1 + LegCount * LegCells;
+            int waterCount = waterVolumeM3 > 0 ? InnerRadialCells * WaterHeightCells : 0;
+            CapacityJPerK = new double[WaterStart + waterCount];
             BurnerWeights = new double[CapacityJPerK.Length];
             var faces = new List<SolidConduction.Face>();
             double drWall = geometry.wallThicknessM / WallRadialCells;
@@ -111,7 +124,51 @@ namespace PhysicsSim.ThreePhase3D.Thermal
                         faces.Add(new SolidConduction.Face(cell, cell + 1, SteelK * section / legSpacing));
                 }
             }
+            if (waterCount > 0)
+                AddWater(geometry, edges, wallStart, dzBase, dzWall, drWall, faces);
             Faces = faces.ToArray();
+        }
+
+        private void AddWater(GeometryInputs geometry, double[] edges, int wallStart, double dzBase,
+            double dzWall, double drWall, List<SolidConduction.Face> faces)
+        {
+            double dz = WaterDepthM / WaterHeightCells;
+            double dr = geometry.innerRadiusM / InnerRadialCells;
+            var water = new Water95();
+            var state = water.Evaluate(293.15, 101325, WaterBranch.Liquid);
+            double volumetricCapacity = state.DensityKgM3 * state.CpJkgK;
+            double waterK = water.ConductivityWmK(state);
+            for (int r = 0; r < InnerRadialCells; r++)
+            {
+                double area = Annulus(edges[r], edges[r + 1]);
+                int bottom = WaterStart + r * WaterHeightCells;
+                double floorG = CoupledHeatFaces.HeatRateW(area, 2, 1, dzBase / 2, GlassK, 0, dz / 2, waterK);
+                faces.Add(new SolidConduction.Face(r * BaseDepthCells + BaseDepthCells - 1, bottom, floorG));
+                for (int z = 0; z < WaterHeightCells; z++)
+                {
+                    int cell = bottom + z;
+                    CapacityJPerK[cell] = volumetricCapacity * area * dz;
+                    if (z + 1 < WaterHeightCells)
+                        faces.Add(new SolidConduction.Face(cell, cell + 1, waterK * area / dz));
+                    if (r + 1 < InnerRadialCells)
+                        faces.Add(new SolidConduction.Face(cell, cell + WaterHeightCells,
+                            waterK * 2 * Math.PI * edges[r + 1] * dz / dr));
+                }
+            }
+
+            for (int z = 0; z < WaterHeightCells; z++)
+            {
+                int waterCell = WaterStart + (InnerRadialCells - 1) * WaterHeightCells + z;
+                for (int wallZ = 0; wallZ < WallHeightCells; wallZ++)
+                {
+                    double low = Math.Max(z * dz, wallZ * dzWall);
+                    double high = Math.Min((z + 1) * dz, (wallZ + 1) * dzWall);
+                    if (high <= low) continue;
+                    double area = 2 * Math.PI * geometry.innerRadiusM * (high - low);
+                    double conductance = CoupledHeatFaces.HeatRateW(area, 2, 1, drWall / 2, GlassK, 0, dr / 2, waterK);
+                    faces.Add(new SolidConduction.Face(wallStart + wallZ * WallRadialCells, waterCell, conductance));
+                }
+            }
         }
 
         private static double Annulus(double inner, double outer) => Math.PI * (outer - inner) * (outer + inner);

@@ -14,6 +14,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const double InitialK = 293.15;
 
         [SerializeField] private bool largerBeaker = false;
+        [SerializeField] private bool includeWater = true;
         [SerializeField, Range(0f, 100f)] private float absorbedBurnerPowerW = 10f;
 
         [StructLayout(LayoutKind.Sequential)]
@@ -26,10 +27,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private ComputeShader shader;
         private ComputeBuffer read, write, capacity, burner, faceStart, links;
         private Texture2D map;
+        private GameObject waterDisplay;
+        private Material waterMaterial;
         private BeakerSolidMesh mesh;
         private float[] snapshot;
         private readonly Color32[] pixels = new Color32[RadialCells * DepthCells];
-        private double absorbedJ, sampledAbsorbedJ, storedJ;
+        private double absorbedJ, sampledAbsorbedJ, storedJ, waterJ, waterCapacity;
         private int kernel;
         private double stepSeconds, pendingSeconds, simulatedSeconds, nextSnapshot;
         private bool burnerOn, running, ready;
@@ -63,7 +66,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             setup.scenario.display.showSetupReport = false;
             setup.Refresh();
 
-            mesh = new BeakerSolidMesh(geometry);
+            double waterMl = includeWater ? (largerBeaker ? 250 : 9) : 0;
+            mesh = new BeakerSolidMesh(geometry, waterMl * 1e-6);
+            for (int i = mesh.WaterStart; i < mesh.CapacityJPerK.Length; i++)
+                waterCapacity += mesh.CapacityJPerK[i];
             int cellCount = mesh.CapacityJPerK.Length;
             snapshot = new float[cellCount];
             var initial = new double[cellCount];
@@ -128,6 +134,20 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             status = $"GPU check passed · max error {maxError:G3} K";
             Debug.Log($"S08 {status}", this);
             ResetTemperatures();
+            if (includeWater)
+                SpawnWaterDisplay(geometry.innerRadiusM, geometry.externalBaseHeightM + geometry.baseThicknessM);
+        }
+
+        private void SpawnWaterDisplay(double radiusM, double floorM)
+        {
+            waterDisplay = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            waterDisplay.name = "Stationary water fill";
+            waterDisplay.transform.SetParent(transform, false);
+            waterDisplay.transform.localPosition = Vector3.up * (float)(floorM + mesh.WaterDepthM / 2);
+            waterDisplay.transform.localScale = new Vector3((float)(2 * radiusM), (float)(mesh.WaterDepthM / 2), (float)(2 * radiusM));
+            Destroy(waterDisplay.GetComponent<Collider>());
+            waterMaterial = new Material(Shader.Find("Standard")) { color = new Color(.12f, .48f, .73f) };
+            waterDisplay.GetComponent<Renderer>().sharedMaterial = waterMaterial;
         }
 
         private void Update()
@@ -145,8 +165,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (simulatedSeconds >= nextSnapshot)
             {
                 read.GetData(snapshot);
-                storedJ = 0;
-                for (int i = 0; i < snapshot.Length; i++) storedJ += snapshot[i] * mesh.CapacityJPerK[i];
+                storedJ = waterJ = 0;
+                for (int i = 0; i < snapshot.Length; i++)
+                {
+                    double cellJ = snapshot[i] * mesh.CapacityJPerK[i];
+                    storedJ += cellJ;
+                    if (i >= mesh.WaterStart) waterJ += cellJ;
+                }
                 sampledAbsorbedJ = absorbedJ;
                 RefreshMap();
                 nextSnapshot = simulatedSeconds + .25;
@@ -165,7 +190,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void ResetTemperatures()
         {
             Array.Clear(snapshot, 0, snapshot.Length);
-            absorbedJ = sampledAbsorbedJ = storedJ = 0;
+            absorbedJ = sampledAbsorbedJ = storedJ = waterJ = 0;
             read.SetData(snapshot);
             simulatedSeconds = pendingSeconds = nextSnapshot = 0;
             running = burnerOn = false;
@@ -186,7 +211,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(12, 12, Mathf.Max(1, Mathf.Min(430, Screen.width - 24)), 300), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(12, 12, Mathf.Max(1, Mathf.Min(430, Screen.width - 24)), 330), GUI.skin.box);
             GUILayout.Label(largerBeaker ? "S08 · 120 mm beaker" : "S08 · 66 mm beaker");
             GUILayout.Label(status ?? "Initialising GPU conduction");
             if (ready)
@@ -209,7 +234,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.Label("Glass base cross-section · centre to rim · 20–45 °C");
                 Rect rect = GUILayoutUtility.GetRect(1, 70, GUILayout.ExpandWidth(true));
                 GUI.DrawTexture(rect, map, ScaleMode.StretchToFill);
-                GUILayout.Label("Synthetic dry apparatus · no water or ambient exchange");
+                if (waterCapacity > 0)
+                {
+                    GUILayout.Label($"Water {mesh.WaterVolumeM3 * 1e6:F0} mL · depth {mesh.WaterDepthM * 1000:F2} mm");
+                    GUILayout.Label($"Water mean {20 + waterJ / waterCapacity:F3} °C · stored {waterJ:F2} J");
+                }
             }
             GUILayout.EndArea();
         }
@@ -222,6 +251,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             burner?.Release();
             faceStart?.Release();
             links?.Release();
+            if (waterDisplay != null) Destroy(waterDisplay);
+            if (waterMaterial != null) Destroy(waterMaterial);
             if (map != null) Destroy(map);
             if (shader != null) Destroy(shader);
         }

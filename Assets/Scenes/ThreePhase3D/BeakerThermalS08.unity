@@ -278,6 +278,7 @@ MonoBehaviour:
   m_Name:
   m_EditorClassIdentifier:
   largerBeaker: 0
+  includeWater: 1
   absorbedBurnerPowerW: 10
 --- !u!1 &3000
 GameObject:

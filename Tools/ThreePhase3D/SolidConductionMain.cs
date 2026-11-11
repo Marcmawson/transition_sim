@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using PhysicsSim.ThreePhase3D.Thermal;
 using PhysicsSim.ThreePhase3D.Core;
+using PhysicsSim.ThreePhase3D.Materials;
 
 internal static class SolidConductionMain
 {
@@ -18,6 +19,8 @@ internal static class SolidConductionMain
         HeatedBase(.063, 250);
         HeatedApparatus(.033, .06);
         HeatedApparatus(.06, .16);
+        HeatedWater(.033, .06, 9);
+        HeatedWater(.06, .16, 250);
     }
 
     private static double SlabError(int count)
@@ -128,6 +131,33 @@ internal static class SolidConductionMain
         for (int leg = 1; leg < 3; leg++)
             Near(t[mesh.Foot], t[mesh.Foot + leg * legCells], 1e-10);
         Console.WriteLine($"PASS {radius * 2000:F0} mm apparatus: {stored:F6} J, wall and all three legs conduct");
+    }
+
+    private static void HeatedWater(double radius, double height, int waterMl)
+    {
+        const double initial = 293.15, duration = 30, watts = 10;
+        var geometry = new GeometryInputs { innerRadiusM = radius, cavityHeightM = height };
+        geometry.tripodRingRadiusM = geometry.OuterRadiusM * .75;
+        double volume = waterMl * 1e-6;
+        var mesh = new BeakerSolidMesh(geometry, volume);
+        Near(mesh.WaterDepthM * Math.PI * radius * radius, volume, 1e-14);
+        double waterCapacity = mesh.CapacityJPerK.Skip(mesh.WaterStart).Sum();
+        var water = new Water95().Evaluate(initial, 101325, WaterBranch.Liquid);
+        Near(waterCapacity, volume * water.DensityKgM3 * water.CpJkgK, 1e-9);
+        Near(mesh.BurnerWeights.Skip(mesh.WaterStart).Sum(), 0, 1e-14);
+        var solver = new SolidConduction(mesh.CapacityJPerK,
+            Enumerable.Repeat(initial, mesh.CapacityJPerK.Length).ToArray(), mesh.Faces);
+        var power = mesh.BurnerWeights.Select(value => value * watts).ToArray();
+        int steps = (int)Math.Ceiling(duration / Math.Min(.01, solver.MaximumStepSeconds * .5));
+        double dt = duration / steps;
+        solver.Step(dt, power);
+        Near(solver.TemperatureK[mesh.WaterStart], initial, 1e-12);
+        for (int i = 1; i < steps; i++) solver.Step(dt, power);
+        Near(StoredJ(solver, mesh.CapacityJPerK, initial), watts * duration, 1e-7);
+        double waterJ = mesh.CapacityJPerK.Select((capacity, i) =>
+            i >= mesh.WaterStart ? capacity * (solver.TemperatureK[i] - initial) : 0).Sum();
+        if (!(waterJ > 0 && waterJ < watts * duration)) throw new Exception("Expected heat transfer into water.");
+        Console.WriteLine($"PASS {waterMl} mL water, {mesh.WaterDepthM * 1000:F3} mm deep: {waterJ:F3} J in water, {waterJ / waterCapacity:F4} K mean rise");
     }
 
     private static double StoredJ(SolidConduction solver, double[] capacity, double referenceK)
