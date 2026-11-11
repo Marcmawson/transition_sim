@@ -12,6 +12,8 @@ internal static class SurfaceGeometryMain
     private static int Main(string[] args)
     {
         if (args.Contains("--v11-diagnostics")) return RunV11(diagnostics: true);
+        if (args.Contains("--v11-residual-refined-time")) return RunV11Residual(refinedTime: true);
+        if (args.Contains("--v11-residual")) return RunV11Residual();
         if (args.Contains("--v11-decay"))
         {
             CheckV11ViscousDecay(24);
@@ -273,6 +275,92 @@ internal static class SurfaceGeometryMain
             throw new InvalidOperationException("V11 viscous perturbation failed its decay or balance limits.");
 
         double Mode(int j) => Math.Sin(2 * Math.PI * waves * (j + .5) / n);
+    }
+
+    private static int RunV11Residual(bool refinedTime = false)
+    {
+        bool passed = true;
+        if (!refinedTime) Check(20, .0014, .0008);
+        Check(24, .001, refinedTime ? .0004 : .0008);
+        return passed ? 0 : 1;
+
+        void Check(int n, double h, double dt)
+        {
+            try { CheckV11Residual(n, h, dt); }
+            catch (Exception failure)
+            {
+                passed = false;
+                Console.Error.WriteLine(FormattableString.Invariant($"V11 residual h={h:G5} m: {failure.Message}"));
+            }
+        }
+    }
+
+    private static void CheckV11Residual(int n, double h, double dt)
+    {
+        const double rhoL = 997, rhoG = 1.2, muL = .001, muG = .000018;
+        const double radius = .007, sigma = .072;
+        int steps = (int)Math.Round(.048 / dt), window = (int)Math.Round(.012 / dt);
+        var grid = new Grid3D(n, n, n, new D3(h, h, h));
+        var vof = new GeometricVof3D(grid, rhoL, rhoG);
+        var centre = new D3(n * h / 2, n * h / 2, n * h / 2);
+        var alpha = SampleSphere(vof, centre, radius, 12);
+        var fields = VofChecks.Fields(grid, alpha, VofChecks.Uniform(alpha.Length, 0, 0, 0));
+        var flow = new PeriodicVofProjection(grid, rhoL, rhoG);
+        double initialVolume = alpha.Sum() * grid.CellVolume;
+        double speedLimit = .005 * Math.Sqrt(sigma / (rhoL * radius));
+        double expectedJump = 2 * sigma / radius;
+        double earlierRms = 0, laterRms = 0, maxSpeed = 0;
+        for (int step = 1; step <= steps; step++)
+        {
+            PeriodicVofStep result;
+            try { result = flow.AdvanceViscousCapillary(fields, dt, sigma, muL, muG, 16384); }
+            catch (Exception failure)
+            {
+                throw new InvalidOperationException($"Step {step} failed after t={(step - 1) * dt:G6} s. {failure.Message}", failure);
+            }
+            fields = result.Fields;
+            double speed = fields.FaceVelocity.Max(axis => axis.Max(Math.Abs));
+            double rms = InterfaceRms(fields);
+            double jump = result.CellPressurePa[vof.CellIndex(n / 2, n / 2, n / 2)] - result.CellPressurePa[0];
+            double drift = Math.Abs(fields.LiquidFraction.Sum() * grid.CellVolume - initialVolume);
+            maxSpeed = Math.Max(maxSpeed, speed);
+            if (step > steps - window) laterRms += rms / window;
+            else if (step > steps - 2 * window) earlierRms += rms / window;
+            bool withinLimits = speed <= speedLimit && Math.Abs(jump / expectedJump - 1) <= .05 &&
+                drift <= initialVolume * 1e-10 && result.Pressure.Converged;
+            if (step == 1 || step % 5 == 0 || !withinLimits)
+                Console.WriteLine(FormattableString.Invariant(
+                    $"V11 residual: h={h:G5} m t={step * dt:G6} s interface_rms={rms:E5} m/s max_speed={speed:E5} m/s pressure_error={Math.Abs(jump / expectedJump - 1):P3} volume_drift={drift:E5} m^3"));
+            if (!withinLimits)
+                throw new InvalidOperationException($"The existing speed, pressure or volume limit failed at t={step * dt:G6} s.");
+        }
+        Console.WriteLine(FormattableString.Invariant(
+            $"V11 residual windows: h={h:G5} m earlier_rms={earlierRms:E5} m/s later_rms={laterRms:E5} m/s peak={maxSpeed:E5} m/s"));
+        if (!(laterRms <= 1.1 * earlierRms))
+            throw new InvalidOperationException("Near-interface RMS increased by more than 10% between the final two windows.");
+
+        double InterfaceRms(VofFields state)
+        {
+            double squares = 0;
+            int count = 0;
+            for (int k = 0; k < n; k++)
+            for (int j = 0; j < n; j++)
+            for (int i = 0; i < n; i++)
+            {
+                int c = vof.CellIndex(i, j, k);
+                for (int axis = 0; axis < 3; axis++)
+                {
+                    int neighbour = vof.CellIndex((i + (axis == 0 ? 1 : 0)) % n,
+                        (j + (axis == 1 ? 1 : 0)) % n, (k + (axis == 2 ? 1 : 0)) % n);
+                    if (Math.Abs(state.LiquidFraction[c] - state.LiquidFraction[neighbour]) < .05) continue;
+                    double value = state.FaceVelocity[axis][c];
+                    squares += value * value;
+                    count++;
+                }
+            }
+            if (count == 0) throw new InvalidOperationException("No interface faces remain in the residual probe.");
+            return Math.Sqrt(squares / count);
+        }
     }
 
     private static double[] SampleSphere(GeometricVof3D transport, D3 centre, double radius, int samples)
