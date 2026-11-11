@@ -386,6 +386,7 @@ internal static class SurfaceGeometryMain
         var liquid = SampleSessileCap(plan, wallY, new D3(.012, wallY - radius * Math.Cos(angle * Math.PI / 180), .012), radius);
         var gas = plan.Volumes.Zip(liquid, (volume, water) => volume - water).ToArray();
         var state = new CutCellInventories(liquid, gas, new double[gas.Length], new double[gas.Length], new double[gas.Length]);
+        if (bulkViscosity) CheckRigidRotation(plan, state, rhoL, rhoG, dt);
         var seed = new float[plan.FaceCount];
         if (dynamicWetting)
         {
@@ -447,6 +448,31 @@ internal static class SurfaceGeometryMain
                 !(speed <= speedLimit) || !(Math.Abs(drift) <= 1e-15))
                 throw new InvalidOperationException("Wall-compatible capillary pressure check failed.");
         }
+    }
+
+    private static void CheckRigidRotation(VariableCoefficientProjection plan, CutCellInventories state,
+        double rhoL, double rhoG, double dt)
+    {
+        var velocity = new double[plan.FaceCount];
+        for (int f = 0; f < velocity.Length; f++)
+        {
+            var face = plan.Faces[f];
+            if (face.Active == 0 || face.Axis == 2) continue;
+            plan.Grid.Shape((GridLocation)(face.Axis + 1)).Coordinates(f - plan.FaceOffsets[face.Axis],
+                out int i, out int j, out _);
+            // A rigid rotation has nonzero cross derivatives that cancel in shear.
+            velocity[f] = face.Axis == 0 ? -(j + .5) * plan.Grid.Spacing.Y :
+                (i + .5) * plan.Grid.Spacing.X;
+        }
+        var transport = new CutCellVofTransport(plan);
+        var stationary = transport.Advance(state, new double[plan.FaceCount], dt);
+        var momentum = new CutCellMomentum(plan);
+        var initial = momentum.Advance(state, stationary, velocity, rhoL, rhoG);
+        var stressed = momentum.ApplyPlanarBulkViscosity(initial, state, rhoL, rhoG, .001, .000018, dt);
+        double impulse = stressed.MomentumKgMPerS.Zip(initial.MomentumKgMPerS, (a, b) => Math.Abs(a - b)).Max();
+        if (!(impulse <= 1e-23))
+            throw new InvalidOperationException("Symmetric viscous stress must vanish under rigid rotation.");
+        Console.WriteLine($"Rigid rotation maximum bulk impulse={impulse:E5} kg m/s");
     }
 
     private static void CheckAlternateAxis()

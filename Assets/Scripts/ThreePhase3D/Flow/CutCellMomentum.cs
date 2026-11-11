@@ -28,52 +28,80 @@ namespace PhysicsSim.ThreePhase3D.Flow
             }
         }
 
-        // Componentwise finite-volume diffusion on the full Cartesian fluid
-        // rows of the planar reference. Each link exchanges one paired impulse.
+        // Interior MAC stresses on the full Cartesian fluid rows of the
+        // planar reference. Cell normals and edge shears share a symmetric
+        // strain/force pair, so the bulk impulse is dissipative and conservative.
         internal CutCellMomentumResult ApplyPlanarBulkViscosity(CutCellMomentumResult input,
             CutCellInventories state, double rhoL, double rhoG, double muL, double muG, double dt)
         {
             var grid = plan.Grid;
+            var cells = grid.Cells;
             var mass = new double[plan.FaceCount];
-            var viscosity = new double[plan.FaceCount];
+            var viscosity = new double[plan.GroupCount];
             var impulse = new double[plan.FaceCount];
             var weights = new double[plan.FaceCount];
-            for (int f = 0; f < mass.Length; f++)
+            for (int group = 0; group < viscosity.Length; group++)
             {
-                var face = plan.Faces[f];
-                if (face.Active == 0) continue;
-                mass[f] = FaceMass(state, face, rhoL, rhoG);
-                double alpha = .5 * (state.LiquidM3[face.Low] / plan.Volumes[face.Low] +
-                    state.LiquidM3[face.High] / plan.Volumes[face.High]);
-                viscosity[f] = alpha * muL + (1 - alpha) * muG;
+                double alpha = state.LiquidM3[group] / plan.Volumes[group];
+                viscosity[group] = alpha * muL + (1 - alpha) * muG;
+            }
+            for (int f = 0; f < mass.Length; f++)
+                if (plan.Faces[f].Active != 0)
+                    mass[f] = FaceMass(state, plan.Faces[f], rhoL, rhoG);
+
+            double scale = dt * grid.CellVolume;
+            for (int k = 0; k < cells.Z; k++)
+            for (int j = 0; j < cells.Y; j++)
+            for (int i = 0; i < cells.X; i++)
+            {
+                int group = plan.GroupByCell[cells.Index(i, j, k)];
+                if (group < 0) continue;
+                for (int a = 0; a < 3; a++)
+                {
+                    int ai = i + (a == 0 ? 1 : 0), aj = j + (a == 1 ? 1 : 0), ak = k + (a == 2 ? 1 : 0);
+                    double inverseA = 1 / grid.Spacing[a];
+                    Scatter(2 * scale * viscosity[group], plan.FaceIndex(a, i, j, k),
+                        plan.FaceIndex(a, ai, aj, ak), inverseA);
+
+                    for (int b = a + 1; b < 3; b++)
+                    {
+                        int bi = b == 0 ? 1 : 0, bj = b == 1 ? 1 : 0, bk = b == 2 ? 1 : 0;
+                        if (!cells.Interior(ai + bi, aj + bj, ak + bk)) continue;
+                        int groupA = plan.GroupByCell[cells.Index(ai, aj, ak)];
+                        int groupB = plan.GroupByCell[cells.Index(i + bi, j + bj, k + bk)];
+                        int groupAB = plan.GroupByCell[cells.Index(ai + bi, aj + bj, ak + bk)];
+                        if (groupA < 0 || groupB < 0 || groupAB < 0) continue;
+
+                        double edgeViscosity = 4 / (1 / viscosity[group] + 1 / viscosity[groupA] +
+                            1 / viscosity[groupB] + 1 / viscosity[groupAB]);
+                        Scatter(scale * edgeViscosity, plan.FaceIndex(a, ai, aj, ak),
+                            plan.FaceIndex(a, ai + bi, aj + bj, ak + bk), 1 / grid.Spacing[b],
+                            plan.FaceIndex(b, i + bi, j + bj, k + bk),
+                            plan.FaceIndex(b, ai + bi, aj + bj, ak + bk), inverseA);
+                    }
+                }
             }
 
-            for (int axis = 0; axis < 3; axis++)
+            void Scatter(double factor, int low, int high, double inverse, int otherLow = -1,
+                int otherHigh = -1, double otherInverse = 0)
             {
-                var shape = grid.Shape((GridLocation)(axis + 1));
-                for (int local = 0; local < shape.Count; local++)
+                if (mass[low] == 0 || mass[high] == 0 ||
+                    (otherLow >= 0 && (mass[otherLow] == 0 || mass[otherHigh] == 0))) return;
+                double strain = (input.VelocityMPerS[high] - input.VelocityMPerS[low]) * inverse;
+                if (otherLow >= 0)
+                    strain += (input.VelocityMPerS[otherHigh] - input.VelocityMPerS[otherLow]) * otherInverse;
+                double stressImpulse = factor * strain;
+                double rowScale = 2 * factor * (inverse + otherInverse);
+                AddPair(low, high, inverse);
+                if (otherLow >= 0) AddPair(otherLow, otherHigh, otherInverse);
+
+                void AddPair(int minus, int plus, double derivative)
                 {
-                    int f = plan.FaceOffsets[axis] + local;
-                    if (mass[f] == 0) continue;
-                    shape.Coordinates(local, out int i, out int j, out int k);
-                    for (int direction = 0; direction < 3; direction++)
-                    {
-                        int x = i + (direction == 0 ? 1 : 0);
-                        int y = j + (direction == 1 ? 1 : 0);
-                        int z = k + (direction == 2 ? 1 : 0);
-                        if (!shape.Interior(x, y, z)) continue;
-                        int other = plan.FaceIndex(axis, x, y, z);
-                        if (mass[other] == 0) continue;
-                        double a = viscosity[f], b = viscosity[other];
-                        double conductance = (2 / (1 / a + 1 / b)) * grid.FaceArea(direction) /
-                            grid.Spacing[direction];
-                        double weight = dt * conductance;
-                        double exchanged = weight * (input.VelocityMPerS[other] - input.VelocityMPerS[f]);
-                        impulse[f] += exchanged;
-                        impulse[other] -= exchanged;
-                        weights[f] += weight;
-                        weights[other] += weight;
-                    }
+                    double delta = stressImpulse * derivative;
+                    impulse[minus] += delta;
+                    impulse[plus] -= delta;
+                    weights[minus] += rowScale * derivative;
+                    weights[plus] += rowScale * derivative;
                 }
             }
 
@@ -83,7 +111,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             for (int f = 0; f < mass.Length; f++)
             {
                 if (weights[f] == 0) continue;
-                // This bound makes the explicit update a convex average.
+                // Absolute row sums bound the mass-normalised stress operator.
                 if (!(weights[f] <= mass[f]) || !SiUnits.IsFinite(impulse[f]))
                     throw new InvalidOperationException("Timestep exceeds the explicit bulk viscosity bound.");
                 momentum[f] += impulse[f];
