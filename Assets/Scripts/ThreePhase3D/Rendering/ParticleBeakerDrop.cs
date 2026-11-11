@@ -15,10 +15,31 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const int TargetFrameRate = 60;
         private const int BenchmarkMicroseconds = 400000;
         private const double MaxPendingSeconds = 0.032;
-        private const int DefaultTimestepIndex = 3;
-        private static readonly int[] TimestepMicroseconds = { 100, 200, 250, 400, 500, 800, 1000 };
+        private enum SolverTimestep
+        {
+            [InspectorName("0.10 ms")] Ms010 = 100,
+            [InspectorName("0.20 ms")] Ms020 = 200,
+            [InspectorName("0.25 ms")] Ms025 = 250,
+            [InspectorName("0.40 ms")] Ms040 = 400,
+            [InspectorName("0.50 ms")] Ms050 = 500,
+            [InspectorName("0.80 ms")] Ms080 = 800,
+            [InspectorName("1.00 ms")] Ms100 = 1000
+        }
+
+        private static readonly SolverTimestep[] Timesteps =
+            (SolverTimestep[])Enum.GetValues(typeof(SolverTimestep));
         [SerializeField] private ComputeShader fluidCompute;
         [SerializeField] private Shader particleShader;
+
+        [Header("Simulation Settings")]
+        [SerializeField] private SolverTimestep solverTimestep = SolverTimestep.Ms040;
+        [SerializeField, Range(5f, 100f)] private float playbackPercent = 25f;
+        [SerializeField, Range(0f, 20f), Tooltip("Downward acceleration in m/s².")]
+        private float gravity = 9.81f;
+        [SerializeField, Range(0f, 6f)] private float pressureMultiplier = 2.88f;
+        [SerializeField, Range(0f, .1f)] private float nearPressureMultiplier = .0216f;
+        [SerializeField, Range(0f, 1f)] private float viscosityStrength;
+        [SerializeField, Range(0f, 1f)] private float wallBounce = .2f;
 
         private FluidSim fluid;
         private ComputeShader computeInstance;
@@ -36,7 +57,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private int benchmarkSteps;
         private Vector2 panelScroll;
 
-        private int StepMicroseconds => TimestepMicroseconds[timestepIndex];
+        private int StepMicroseconds => (int)Timesteps[timestepIndex];
         private double StepSeconds => StepMicroseconds / 1_000_000.0;
 
         private void OnEnable()
@@ -98,7 +119,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             // Start from the demo's liquid parameters scaled to metre-sized particles.
             fluid.smoothingRadius = .002f;
             fluid.targetDensity = 630e6f;
-            RestoreDefaults();
+            ApplySceneSettings();
             fluid.maxFoamParticleCount = 1;
             const float particleRadiusM = .0004f;
             fluid.beakerCollision = new Vector4(0, 0,
@@ -254,7 +275,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
                 GUI.enabled = !measuring && !readbackPending && !finishOnNextFrame;
                 int nextTimestep = Mathf.RoundToInt(Slider($"Solver step  {StepMicroseconds / 1000.0:0.##} ms",
-                    timestepIndex, 0, TimestepMicroseconds.Length - 1));
+                    timestepIndex, 0, Timesteps.Length - 1));
                 if (nextTimestep != timestepIndex)
                 {
                     timestepIndex = nextTimestep;
@@ -268,9 +289,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 fluid.nearPressureMultiplier = Slider($"Near pressure  {fluid.nearPressureMultiplier:F4}", fluid.nearPressureMultiplier, 0, .1f);
                 fluid.viscosityStrength = Slider($"Viscosity strength  {fluid.viscosityStrength:F2}", fluid.viscosityStrength, 0, 1);
                 fluid.collisionDamping = Slider($"Wall bounce  {fluid.collisionDamping:P0}", fluid.collisionDamping, 0, 1);
-                if (GUILayout.Button("Restore default settings"))
+                if (GUILayout.Button("Restore scene settings"))
                 {
-                    RestoreDefaults();
+                    ApplySceneSettings();
                     SetRunning(running);
                 }
 
@@ -291,15 +312,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             return selected;
         }
 
-        private void RestoreDefaults()
+        private void ApplySceneSettings()
         {
-            timestepIndex = DefaultTimestepIndex;
-            playbackSpeed = .25f;
-            fluid.gravity = -9.81f;
-            fluid.pressureMultiplier = 2.88f;
-            fluid.nearPressureMultiplier = .0216f;
-            fluid.viscosityStrength = 0;
-            fluid.collisionDamping = .2f;
+            timestepIndex = Array.IndexOf(Timesteps, solverTimestep);
+            if (timestepIndex < 0) timestepIndex = Array.IndexOf(Timesteps, SolverTimestep.Ms040);
+
+            playbackSpeed = playbackPercent / 100f;
+            fluid.gravity = -gravity;
+            fluid.pressureMultiplier = pressureMultiplier;
+            fluid.nearPressureMultiplier = nearPressureMultiplier;
+            fluid.viscosityStrength = viscosityStrength;
+            fluid.collisionDamping = wallBounce;
         }
 
         private void OnDestroy()
