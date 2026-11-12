@@ -94,6 +94,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         }
 
         public static void RunMovingMelt(Func<string, float, bool> cancel)
+            => CheckMovingMelt(cancel, false, "moving melt", 0.0041447627, 1.2430813e-8, 2.6424854e-6);
+
+        public static void RunTransientMelt(Func<string, float, bool> cancel)
+            => CheckMovingMelt(cancel, true, "transient moving melt", 0.28237338, 8.468834e-7, 4.2222345e-6);
+
+        private static void CheckMovingMelt(Func<string, float, bool> cancel, bool transient, string label,
+            double referenceHeat, double referenceMassLoss, double referenceDisplacement)
         {
             var shader = Resources.Load<ComputeShader>("ThreePhase3D/SinglePhaseFlow");
             if (!SystemInfo.supportsComputeShaders || shader == null)
@@ -123,12 +130,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     var flow = solver.Project(velocity, dt, 32768, initialPressure: pressureSeed, boundaryFlux: flux);
                     pressureSeed = flow.GroupPressurePa;
                     return flow;
-                });
-                if (Math.Abs(result.HeatJ / 0.0041447627 - 1) > 0.01 ||
-                    Math.Abs(result.MassLossKg / 1.2430813e-8 - 1) > 0.01 ||
-                    Math.Abs(result.DisplacementM - 2.6424854e-6) > 1e-6)
-                    throw new InvalidOperationException($"S11 GPU moving melt differs from the CPU baseline: heat {result.HeatJ:G8} J, ice loss {result.MassLossKg:G8} kg, centre displacement {result.DisplacementM:G8} m.");
-                Debug.Log($"S11 GPU moving melt passed: heat {result.HeatJ:G8} J, ice loss {result.MassLossKg:G8} kg, centre displacement {result.DisplacementM:G8} m.");
+                }, transient: transient);
+                if (Math.Abs(result.HeatJ / referenceHeat - 1) > 0.01 ||
+                    Math.Abs(result.MassLossKg / referenceMassLoss - 1) > 0.01 ||
+                    Math.Abs(result.DisplacementM - referenceDisplacement) > 1e-6)
+                    throw new InvalidOperationException($"S11 GPU {label} differs from the CPU baseline: heat {result.HeatJ:G8} J, ice loss {result.MassLossKg:G8} kg, centre displacement {result.DisplacementM:G8} m.");
+                Debug.Log($"S11 GPU {label} passed: heat {result.HeatJ:G8} J, ice loss {result.MassLossKg:G8} kg, centre displacement {result.DisplacementM:G8} m.");
             }
             finally
             {

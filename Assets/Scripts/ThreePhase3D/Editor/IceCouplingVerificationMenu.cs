@@ -27,6 +27,13 @@ namespace PhysicsSim.ThreePhase3D.Editor
             else RunWithProgress("S11 GPU moving melt", IceCouplingGpuCheck.RunMovingMelt);
         }
 
+        [MenuItem("Physics Sim/Three Phase 3D/Run S11 GPU transient moving melt check")]
+        public static void RunTransientMelt()
+        {
+            if (Application.isBatchMode) IceCouplingGpuCheck.RunTransientMelt(null);
+            else RunWithProgress("S11 GPU transient moving melt", IceCouplingGpuCheck.RunTransientMelt);
+        }
+
         private static void RunWithProgress(string title, Action<Func<string, float, bool>> check)
         {
             try
