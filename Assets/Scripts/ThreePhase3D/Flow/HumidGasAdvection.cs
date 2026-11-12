@@ -6,19 +6,19 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // First-order donor transport for gas-only groups. The outlet ledger is signed.
     internal static class HumidGasAdvection
     {
-        internal static ((double DryAirKg, double VapourKg, double EnthalpyJ)[] Gas,
-            (double DryAirKg, double VapourKg, double EnthalpyJ) Outflow) Advance(
+        internal static ((double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[] Gas,
+            (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS) Outflow) Advance(
             VariableCoefficientProjection plan, FlowStep flow, double[] gasVolumes,
-            (double DryAirKg, double VapourKg, double EnthalpyJ)[] gas,
-            (double DryAirKg, double VapourKg, double EnthalpyJ)? reservoirPerM3 = null)
+            (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[] gas,
+            (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)? reservoirPerM3 = null)
         {
             if (!flow.Diagnostics.Converged || flow.VelocityMPerS.Length != plan.FaceCount ||
                 gas.Length != plan.GroupCount || gasVolumes.Length != plan.GroupCount)
                 throw new ArgumentException("Gas advection requires a compatible converged projection and gas inventories.");
 
-            var incoming = new (double DryAirKg, double VapourKg, double EnthalpyJ)[gas.Length];
+            var incoming = new (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[gas.Length];
             var fractions = new double[gas.Length];
-            (double DryAirKg, double VapourKg, double EnthalpyJ) outlet = default;
+            (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS) outlet = default;
             for (int index = 0; index < plan.FaceCount; index++)
             {
                 var face = plan.Faces[index];
@@ -61,11 +61,11 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return (incoming, outlet);
         }
 
-        private static (double, double, double) Scale((double Air, double Vapour, double Enthalpy) gas, double fraction) =>
-            (gas.Air * fraction, gas.Vapour * fraction, gas.Enthalpy * fraction);
+        private static (double, double, double, D3) Scale((double Air, double Vapour, double Enthalpy, D3 Momentum) gas, double fraction) =>
+            (gas.Air * fraction, gas.Vapour * fraction, gas.Enthalpy * fraction, gas.Momentum * fraction);
 
-        private static (double, double, double) Add((double Air, double Vapour, double Enthalpy) a,
-            (double Air, double Vapour, double Enthalpy) b) =>
-            (a.Air + b.Air, a.Vapour + b.Vapour, a.Enthalpy + b.Enthalpy);
+        private static (double, double, double, D3) Add((double Air, double Vapour, double Enthalpy, D3 Momentum) a,
+            (double Air, double Vapour, double Enthalpy, D3 Momentum) b) =>
+            (a.Air + b.Air, a.Vapour + b.Vapour, a.Enthalpy + b.Enthalpy, a.Momentum + b.Momentum);
     }
 }

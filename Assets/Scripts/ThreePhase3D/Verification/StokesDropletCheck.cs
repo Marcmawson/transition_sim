@@ -27,7 +27,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                             radius, liquidDensity, gasDensity, viscosity, duration / steps);
                         position = result.Position;
                         velocity = result.Velocity;
-                        gasImpulse += result.GasDragImpulse;
+                        gasImpulse += result.GasMomentumGain;
                     }
                     double volume = (4 * Math.PI / 3) * Math.Pow(radius, 3);
                     double momentumResidual = velocity.Y * liquidDensity * volume + gasImpulse.Y +

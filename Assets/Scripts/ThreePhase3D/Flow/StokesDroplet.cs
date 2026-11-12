@@ -6,15 +6,17 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // Constant-radius sphere in locally uniform, continuum gas at small slip Reynolds number.
     internal static class StokesDroplet
     {
-        internal static (D3 Position, D3 Velocity, D3 GasDragImpulse) Advance(
+        internal static (D3 Position, D3 Velocity, D3 GasMomentumGain) Advance(
             D3 position, D3 velocity, D3 gasVelocity, D3 gravity, double radius,
-            double liquidDensity, double gasDensity, double gasViscosity, double dt)
+            double liquidDensity, double gasDensity, double gasViscosity, double dt, double evaporatedMassKg = 0)
         {
             if (!Positive(radius) || !Positive(liquidDensity) || !Positive(gasDensity) ||
                 !Positive(gasViscosity) || !Positive(dt))
                 throw new ArgumentOutOfRangeException(nameof(radius), "Radius, densities, viscosity and timestep must be positive and finite.");
 
             double mass = liquidDensity * (4 * Math.PI / 3) * radius * radius * radius;
+            if (!(evaporatedMassKg >= 0 && evaporatedMassKg <= mass))
+                throw new ArgumentOutOfRangeException(nameof(evaporatedMassKg));
             double relaxation = mass / (6 * Math.PI * gasViscosity * radius);
             D3 acceleration = gravity * (1 - gasDensity / liquidDensity);
             D3 initialSlip = velocity - gasVelocity;
@@ -29,8 +31,10 @@ namespace PhysicsSim.ThreePhase3D.Flow
             if (!(reynolds <= 0.1))
                 throw new InvalidOperationException("Stokes droplet drag requires a slip Reynolds number at or below 0.1.");
 
+            // Split the step: apply drag at the initial radius, then transfer
+            // evaporated mass at the resulting liquid velocity.
             return (position + (velocity + updated) * (0.5 * dt), updated,
-                (acceleration * dt - change) * mass);
+                (acceleration * dt - change) * mass + updated * evaporatedMassKg);
         }
 
         private static bool Positive(double value) => SiUnits.IsFinite(value) && value > 0;

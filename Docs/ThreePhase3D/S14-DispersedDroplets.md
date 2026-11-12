@@ -32,4 +32,10 @@ The two-cell check also uses the projected face fluxes for first-order upwind tr
 
 The multi-step run repeats exchange, pressure projection and upwind transport for 4 ms at 10, 20 and 40 steps. Each projection uses the difference between geometric cell volume and the post-exchange ideal-mixture volume, so the next step also corrects volume drift introduced by mixing. When the pressure outlet reverses, it supplies prescribed ambient dry air, vapour and enthalpy concentrations. The same signed boundary ledger accounts for incoming and outgoing inventories.
 
-The 40-step CPU result ended at a 9.895136 µm droplet radius with 1.84217e-15 kg of net vapour entering through the boundary. Radius and net boundary vapour both refined toward this result, and dry air, water and enthalpy closed at every step. This gas-only fixture prescribes thermodynamic pressure and neglects displaced droplet volume. Momentum deposition, coupled extinction and condensation remain open.
+The 40-step CPU result ended at a 9.895136 µm droplet radius with 1.84217e-15 kg of net vapour entering through the boundary. Radius and net boundary vapour both refined toward this result, and dry air, water and enthalpy closed at every step. This gas-only fixture prescribes thermodynamic pressure and neglects displaced droplet volume.
+
+## V37 droplet-to-gas momentum
+
+The one-step fixture applies Stokes drag at the initial droplet radius and assigns evaporated mass the resulting droplet velocity. The gas receives the drag reaction plus the evaporated mass momentum. Gas advection carries that momentum using the same donor fractions as vapour and enthalpy, including the signed boundary ledger. The droplet transferred -1.4323637e-14 N·s vertically, and the combined momentum residual after accounting for gravity, buoyancy and the outlet was 1.2622e-29 N·s.
+
+Gas momentum is carried as a cell inventory in this fixture. Feeding it back into the staggered face velocity predictor and verifying multi-step momentum coupling remain open, along with coupled extinction and condensation.

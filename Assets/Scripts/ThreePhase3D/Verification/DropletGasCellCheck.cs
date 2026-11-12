@@ -51,8 +51,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 var seed = new VariableCoefficientProjection(geometry, boundaries,
                     _ => (dryAir + initialVapour) / cellVolume, _ => 0);
                 int dropletGroup = seed.GroupByCell[grid.Cells.Index(0, 0, 0)];
-                var gas = new (double DryAirKg, double VapourKg, double EnthalpyJ)[seed.GroupCount];
-                for (int group = 0; group < gas.Length; group++) gas[group] = (dryAir, initialVapour, initialGasEnergy);
+                var gas = new (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[seed.GroupCount];
+                for (int group = 0; group < gas.Length; group++) gas[group] = (dryAir, initialVapour, initialGasEnergy, default);
                 double radius = initialRadius, liquidK = initialK, airOut = 0, vapourOut = 0, energyOut = 0;
                 for (int step = 0; step < steps; step++)
                 {
@@ -61,7 +61,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         local.EnthalpyJ, pressure, 0.026, 2.5e-5, dt);
                     radius = exchanged.RadiusM;
                     liquidK = exchanged.LiquidK;
-                    gas[dropletGroup] = (local.DryAirKg, exchanged.VapourKg, exchanged.GasEnthalpyJ);
+                    gas[dropletGroup] = (local.DryAirKg, exchanged.VapourKg, exchanged.GasEnthalpyJ, local.MomentumKgMPerS);
                     var volumes = new double[gas.Length];
                     var source = new double[gas.Length];
                     for (int group = 0; group < gas.Length; group++)
@@ -77,7 +77,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     }, _ => 0);
                     var flow = FlowCpuReference.Project(plan, new float[plan.FaceCount], dt, 4096, null, source);
                     var moved = HumidGasAdvection.Advance(plan, flow, volumes, gas,
-                        (dryAir / cellVolume, initialVapour / cellVolume, initialGasEnergy / cellVolume));
+                        (dryAir / cellVolume, initialVapour / cellVolume, initialGasEnergy / cellVolume, default));
                     gas = moved.Gas;
                     airOut += moved.Outflow.DryAirKg;
                     vapourOut += moved.Outflow.VapourKg;
@@ -126,10 +126,17 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 log(FormattableString.Invariant(
                     $"S14 V37 gas-cell pressure projection passed: source {source[donor]:G8} m3/s, outlet flux {netFlux:G8} m3/s."));
 
-                var gas = new (double DryAirKg, double VapourKg, double EnthalpyJ)[plan.GroupCount];
+                var gas = new (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[plan.GroupCount];
                 var gasVolumes = new double[plan.GroupCount];
-                gas[donor] = (dryAir, trial.VapourKg, trial.GasEnthalpyJ);
-                gas[downstream] = (dryAir, initialVapour, initialGasEnergy);
+                var dropletVelocity = new D3(0, -0.01, 0);
+                var gravity = new D3(0, -9.81, 0);
+                double gasDensity = (dryAir + initialVapour) / volume;
+                var motion = StokesDroplet.Advance(default, dropletVelocity, default, gravity,
+                    initialRadius, DropletGasCellExchange.LiquidDensity, gasDensity, 1.81e-5, dt,
+                    trial.VapourKg - initialVapour);
+                var downstreamMomentum = new D3(0, 0.001, 0) * (dryAir + initialVapour);
+                gas[donor] = (dryAir, trial.VapourKg, trial.GasEnthalpyJ, motion.GasMomentumGain);
+                gas[downstream] = (dryAir, initialVapour, initialGasEnergy, downstreamMomentum);
                 gasVolumes[donor] = DropletGasCellExchange.GasVolumeM3(dryAir, trial.VapourKg, trial.GasEnthalpyJ, pressure);
                 gasVolumes[downstream] = volume;
                 var moved = HumidGasAdvection.Advance(plan, projected, gasVolumes, gas);
@@ -149,6 +156,17 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     throw new InvalidOperationException("S14 projected gas advection failed transport or conservation.");
                 log(FormattableString.Invariant(
                     $"S14 V37 gas transport passed: downstream vapour gain {second.VapourKg - initialVapour:G8} kg, outlet vapour {outlet.VapourKg:G8} kg, outlet enthalpy {outlet.EnthalpyJ:G8} J."));
+                double remainingMass = DropletGasCellExchange.Mass(trial.RadiusM);
+                D3 external = gravity * (1 - gasDensity / DropletGasCellExchange.LiquidDensity) * (initialMass * dt);
+                D3 residual = first.MomentumKgMPerS + second.MomentumKgMPerS + outlet.MomentumKgMPerS +
+                    motion.Velocity * remainingMass - dropletVelocity * initialMass - downstreamMomentum - external;
+                D3 internalTransfer = motion.GasMomentumGain * (internalFlux * dt / gasVolumes[donor]);
+                if (!(motion.GasMomentumGain.Y < 0 && internalTransfer.Y < 0 && outlet.MomentumKgMPerS.Y > 0) ||
+                    residual.Length > 1e-24 ||
+                    (second.MomentumKgMPerS - downstreamMomentum + outlet.MomentumKgMPerS - internalTransfer).Length > 1e-24)
+                    throw new InvalidOperationException("S14 droplet drag and vapour momentum did not balance across the grid and outlet.");
+                log(FormattableString.Invariant(
+                    $"S14 V37 gas momentum passed: droplet-to-gas impulse Y {motion.GasMomentumGain.Y:G8} N s, outlet Y {outlet.MomentumKgMPerS.Y:G8} N s, residual {residual.Length:G5} N s."));
             }
 
             (double RadiusM, double LiquidK, double VapourKg, double GasEnthalpyJ) Simulate(int steps)
