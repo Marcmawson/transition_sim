@@ -13,8 +13,10 @@ namespace PhysicsSim.ThreePhase3D.Geometry
         public readonly double AreaM2,ContactAreaM2,CellCentreNormalDistanceM;
         public double FluidExposedAreaM2=>AreaM2-ContactAreaM2;
         internal readonly IReadOnlyList<D3> Polygon;
-        internal InterfacePatch(int cell,SolidRole role,D3 centroid,D3 normal,double area,double contact,D3 centre,IReadOnlyList<D3> polygon)
-        {Polygon=polygon;Cell=cell;Role=role;CentroidLocalM=centroid;NormalLocal=normal;AreaM2=area;ContactAreaM2=contact;CellCentreNormalDistanceM=Math.Abs(D3.Dot(centre-centroid,normal));}
+        internal readonly IReadOnlyList<(List<D3> Polygon, double Sign)> CoveredPieces;
+        internal InterfacePatch(int cell,SolidRole role,D3 centroid,D3 normal,double area,double contact,D3 centre,IReadOnlyList<D3> polygon,
+            IReadOnlyList<(List<D3> Polygon, double Sign)> coveredPieces)
+        {Polygon=polygon;CoveredPieces=coveredPieces;Cell=cell;Role=role;CentroidLocalM=centroid;NormalLocal=normal;AreaM2=area;ContactAreaM2=contact;CellCentreNormalDistanceM=Math.Abs(D3.Dot(centre-centroid,normal));}
     }
     internal sealed class ClosedSurface
     {
@@ -43,14 +45,21 @@ namespace PhysicsSim.ThreePhase3D.Geometry
             }
             if(edges.Values.Any(v=>v!=0)||multiplicity.Values.Any(v=>v!=2)||signedVolume<=0)throw new ArgumentException("Surface must be closed, consistently outward oriented and manifold.");
         }
-        internal double ContactArea(IList<D3> polygon,D3 normal,double delta)
+        internal double ContactArea(IList<D3> polygon,D3 normal,double delta,
+            List<(List<D3> Polygon, double Sign)> coveredPieces)
         {
             var shifted=polygon.Select(p=>p+normal*delta).ToArray();
             for(int axis=0;axis<3;axis++)if(shifted.Max(p=>p[axis])<Min[axis]||shifted.Min(p=>p[axis])>Max[axis])return 0;
             double area=0;foreach(var tetra in Tetrahedra)
             {
                 bool outside=false;for(int axis=0;axis<3;axis++)if(shifted.Max(p=>p[axis])<tetra.Min[axis]||shifted.Min(p=>p[axis])>tetra.Max[axis])outside=true;if(outside)continue;
-                var clipped=new List<D3>(shifted);foreach(var plane in tetra.Planes){clipped=PolyhedronClip.Polygon(clipped,plane);if(clipped.Count<3)break;}area+=tetra.Sign*PolyhedronClip.Area(clipped);
+                var clipped=new List<D3>(shifted);foreach(var plane in tetra.Planes){clipped=PolyhedronClip.Polygon(clipped,plane);if(clipped.Count<3)break;}
+                double clippedArea = PolyhedronClip.Area(clipped);
+                area += tetra.Sign * clippedArea;
+                if (coveredPieces == null || clippedArea <= 0) continue;
+                // The offset classifies contact. Evaluate traction on the ice surface itself.
+                for (int i = 0; i < clipped.Count; i++) clipped[i] -= normal * delta;
+                coveredPieces.Add((clipped, tetra.Sign));
             }
             return area;
         }
@@ -203,14 +212,18 @@ namespace PhysicsSim.ThreePhase3D.Geometry
                     D3 lower=grid.Lower(i,j,k),upper=lower+grid.Spacing;bool exclude=false;
                     for(int a=0;a<3;a++){if(tri.All(p=>Math.Abs(p[a]-upper[a])<grid.Spacing[a]*1e-11)&&normal[a]>0)exclude=true;if(tri.All(p=>Math.Abs(p[a]-lower[a])<grid.Spacing[a]*1e-11)&&normal[a]<0)exclude=true;}if(exclude)continue;
                     var polygon=new List<D3>(tri);foreach(var plane in PolyhedronClip.Bounds(lower,upper))polygon=PolyhedronClip.Polygon(polygon,plane);double area=PolyhedronClip.Area(polygon);if(area<=0)continue;
-                    int cell=grid.Cells.Index(i,j,k);D3 centroid=PolyhedronClip.Centroid(polygon);double contact=other==null?0:other.ContactArea(polygon,normal,Math.Min(grid.Spacing.X,Math.Min(grid.Spacing.Y,grid.Spacing.Z))*1e-9);
+                    int cell=grid.Cells.Index(i,j,k);D3 centroid=PolyhedronClip.Centroid(polygon);
+                    var coveredPieces = other != null && role == SolidRole.Ice
+                        ? new List<(List<D3> Polygon, double Sign)>() : null;
+                    double contact=other==null?0:other.ContactArea(polygon,normal,Math.Min(grid.Spacing.X,Math.Min(grid.Spacing.Y,grid.Spacing.Z))*1e-9,coveredPieces);
                     double contactTolerance=Math.Max(area*1e-7,Math.Max(grid.FaceArea(0),Math.Max(grid.FaceArea(1),grid.FaceArea(2)))*1e-10);
                     if(contact< -contactTolerance||contact>area+contactTolerance)throw new InvalidOperationException("Invalid solid contact area.");
                     double boundedContact = Math.Max(0, Math.Min(area, contact));
                     // Signed clipping can leave a roundoff-sized sliver on a fully covered patch.
                     if (area - boundedContact <= area * 1e-14) boundedContact = area;
                     RoundoffFaceAreaAdjustmentM2 += Math.Abs(contact - boundedContact);
-                    var patch=new InterfacePatch(cell,role,centroid,normal,area,boundedContact,lower+grid.Spacing*.5,polygon);patches.Add(patch);(role==SolidRole.Fixed?fixedHasBoundary:iceHasBoundary)[cell]=true;
+                    var patch=new InterfacePatch(cell,role,centroid,normal,area,boundedContact,lower+grid.Spacing*.5,polygon,
+                        boundedContact > 0 && boundedContact < area ? coveredPieces : null);patches.Add(patch);(role==SolidRole.Fixed?fixedHasBoundary:iceHasBoundary)[cell]=true;
                     var areaArray=role==SolidRole.Fixed?_FixedAreaM2:_IceAreaM2;var normals=role==SolidRole.Fixed?_FixedNormalArea:_IceNormalArea;var distance=role==SolidRole.Fixed?_FixedDistanceM:_IceDistanceM;
                     areaArray[cell]+=patch.FluidExposedAreaM2;normals[cell]+=normal*patch.FluidExposedAreaM2;distance[cell]=distance[cell]<0?patch.CellCentreNormalDistanceM:Math.Min(distance[cell],patch.CellCentreNormalDistanceM);
                 }

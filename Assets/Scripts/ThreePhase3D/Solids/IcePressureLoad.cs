@@ -47,27 +47,32 @@ namespace PhysicsSim.ThreePhase3D.Solids
             foreach (var patch in geometry.Patches)
             {
                 if (patch.Role != SolidRole.Ice || patch.FluidExposedAreaM2 <= 0) continue;
-                if (patch.ContactAreaM2 > 0)
-                    throw new NotSupportedException("Pressure torque on a partially blocked patch requires its exposed polygon.");
                 var n = patch.NormalLocal;
                 D3 normal = frame.U * n.X + frame.V * n.Y + frame.W * n.Z;
-                IReadOnlyList<D3> polygon = clip != null
-                    ? PolyhedronClip.Polygon(new List<D3>(patch.Polygon), clip(patch))
-                    : patch.Polygon;
-                if (polygon.Count < 3) continue;
-                D3 a = polygon[0];
-                for (int i = 1; i + 1 < polygon.Count; i++)
-                {
-                    D3 b = polygon[i], c = polygon[i + 1];
-                    double weight = D3.Cross(b - a, c - a).Length / 6;
-                    if (weight == 0) continue;
-                    // Degree-two triangle quadrature integrates the moment
-                    // of an affine pressure exactly on a planar polygon.
-                    Accumulate((a * 4 + b + c) / 6);
-                    Accumulate((a + b * 4 + c) / 6);
-                    Accumulate((a + b + c * 4) / 6);
+                ClipPlane waterline = clip != null ? clip(patch) : default;
+                IntegratePolygon(patch.Polygon, 1);
+                if (patch.CoveredPieces != null)
+                    foreach (var piece in patch.CoveredPieces)
+                        IntegratePolygon(piece.Polygon, -piece.Sign);
 
-                    void Accumulate(D3 localPoint)
+                void IntegratePolygon(IReadOnlyList<D3> polygon, double sign)
+                {
+                    if (clip != null)
+                        polygon = PolyhedronClip.Polygon(new List<D3>(polygon), waterline);
+                    if (polygon.Count < 3) return;
+                    D3 a = polygon[0];
+                    for (int i = 1; i + 1 < polygon.Count; i++)
+                    {
+                        D3 b = polygon[i], c = polygon[i + 1];
+                        double weight = sign * D3.Cross(b - a, c - a).Length / 6;
+                        if (weight == 0) continue;
+                        // Degree-two quadrature also integrates the moment of affine pressure.
+                        Accumulate((a * 4 + b + c) / 6, weight);
+                        Accumulate((a + b * 4 + c) / 6, weight);
+                        Accumulate((a + b + c * 4) / 6, weight);
+                    }
+
+                    void Accumulate(D3 localPoint, double weight)
                     {
                         D3 point = frame.ToWorld(localPoint);
                         double pressure = pressurePa(patch, point);
@@ -115,14 +120,17 @@ namespace PhysicsSim.ThreePhase3D.Solids
             foreach (var patch in plan.Geometry.Patches)
             {
                 if (patch.Role != SolidRole.Ice || patch.FluidExposedAreaM2 <= 0) continue;
-                if (patch.ContactAreaM2 > 0)
-                    throw new NotSupportedException("Moving ice requires an exposed polygon at partial contact.");
                 int group = plan.GroupByCell[patch.Cell];
                 if (group < 0) throw new InvalidOperationException("An exposed ice patch has no fluid pressure group.");
                 var n = patch.NormalLocal;
                 D3 normal = frame.U * n.X + frame.V * n.Y + frame.W * n.Z;
-                D3 point = frame.ToWorld(patch.CentroidLocalM);
-                flux[group] -= D3.Dot(normal, body.VelocityAt(point)) * patch.AreaM2;
+                flux[group] -= NormalVelocity(patch.CentroidLocalM) * patch.AreaM2;
+                if (patch.CoveredPieces != null)
+                    foreach (var piece in patch.CoveredPieces)
+                        flux[group] += piece.Sign * PolyhedronClip.Area(piece.Polygon) *
+                            NormalVelocity(PolyhedronClip.Centroid(piece.Polygon));
+
+                double NormalVelocity(D3 point) => D3.Dot(normal, body.VelocityAt(frame.ToWorld(point)));
             }
             return flux;
         }

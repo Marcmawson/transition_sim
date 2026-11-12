@@ -7,6 +7,41 @@ using PhysicsSim.ThreePhase3D.Verification;
 
 internal static class IcePressureMain
 {
+    private static void CheckPartialWallPressure()
+    {
+        const double edge = 0.003, pressure = 25, gradient = 500, speed = 0.02, spin = 2;
+        var half = new D3(0.009, 0.0085, 0.008);
+        var centre = new D3(0.038, 0.02 + half.Y, 0.039);
+        var frame = RigidFrame.Euler(centre, 0, 0, 0);
+        var box = SurfacePrimitives.Box(-half, half);
+        var slab = SurfacePrimitives.Box(default, new D3(centre.X + edge, 0.02, 0.08));
+        var grid = new Grid3D(8, 8, 8, new D3(0.01, 0.01, 0.01), RigidFrame.Euler(default, 0, 0, 0));
+        var geometry = CutCellGeometry.Build(grid, slab, SurfacePrimitives.Transform(box, frame));
+        if (!System.Linq.Enumerable.Any(geometry.Patches,
+            patch => patch.Role == SolidRole.Ice && patch.ContactAreaM2 > 0 && patch.FluidExposedAreaM2 > 0))
+            throw new InvalidOperationException("The slab must partially cover an ice patch.");
+
+        var body = IceBody.Box(917, half * 2, frame);
+        var load = IcePressureLoad.Integrate(body, geometry, (patch, point) =>
+            patch.NormalLocal.Y < -0.99 ? pressure + gradient * (point.X - centre.X) : 0);
+        double width = 2 * half.Z;
+        double exposedArea = width * (half.X - edge);
+        double exposedMoment = width * (half.X * half.X - edge * edge) / 2;
+        double exposedSecondMoment = width * (Math.Pow(half.X, 3) - Math.Pow(edge, 3)) / 3;
+        Near((load.ForceN - new D3(0, pressure * exposedArea + gradient * exposedMoment, 0)).Length, 1e-10);
+        Near((load.TorqueNm - new D3(0, 0, pressure * exposedMoment + gradient * exposedSecondMoment)).Length, 1e-11);
+
+        var moving = new IceBody(body.MassKg, body.PrincipalInertiaKgM2, frame,
+            new D3(0, body.MassKg * speed, 0), new D3(0, 0, body.PrincipalInertiaKgM2.Z * spin));
+        var plan = new VariableCoefficientProjection(geometry, BoundaryConditions3D.Closed, _ => 1000, _ => 0);
+        var flux = IcePressureLoad.OutwardFluidFlux(moving, plan);
+        double totalFlux = System.Linq.Enumerable.Sum(flux);
+        double expectedFlux = -width * (speed * (edge + half.X) + spin * (edge * edge - half.X * half.X) / 2);
+        Near(Math.Abs(totalFlux - expectedFlux), 1e-12);
+        Console.WriteLine(FormattableString.Invariant(
+            $"S11 partial wall pressure passed: force {load.ForceN.Y:G8} N, torque {load.TorqueNm.Z:G8} N m, flux {totalFlux:G8} m3/s."));
+    }
+
     private static void CheckCoupledSupport()
     {
         const double dt = 0.001, pressurePa = 25;
@@ -44,6 +79,7 @@ internal static class IcePressureMain
     private static void Main()
     {
         CheckCoupledSupport();
+        CheckPartialWallPressure();
         CheckRemap();
         CheckWaterline();
         CheckFlotationTorque();

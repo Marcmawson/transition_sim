@@ -150,3 +150,9 @@ The CPU fixture held a level box under a 0.21589848 N weight for 1000 consecutiv
 The supported pressure step applies the plane constraint to each pressure and gravity correction. The next projection uses the corrected rigid velocity on the original cut-cell geometry. The accepted result reports the equal and opposite wall impulse alongside the body and projected fluid. Cut-cell geometry records roundoff-sized corrections to fully covered interface patches in its existing area ledger.
 
 The CPU fixture rests an ice box on a fixed slab in a closed cut-cell grid. With gravity and 25 Pa applied on the fluid-exposed surface, the downward wall impulse was 5.124329e-5 N s over 1 ms, matching the weight and pressure load. The projected fluid remained still and the boundary velocity mismatch was 2.2676e-14 m/s. Pressure on genuinely partially covered patches, curved beaker contact and Unity GPU verification remain open.
+
+## V25 pressure and flux at partial wall coverage
+
+The cut-cell builder retains the signed clipped pieces of a partially covered ice patch. Pressure integration subtracts their force and moment from the full patch. The moving boundary uses the same covered pieces to subtract their rigid-body flux. Hydrostatic integration clips both terms at the waterline before applying the pressure quadrature. The force, torque and flux integrals are exact for affine pressure and rigid velocity on the clipped polygons up to clipping and arithmetic tolerances.
+
+The CPU fixture places a slab edge across an ice face. The exposed strip produced 0.002688 N of force and 1.6272e-5 N m of torque under affine pressure. Translation and spin gave a net fluid boundary flux of -2.688e-6 m3/s. All three matched analytic integrals. The full resting-floor and both waterline fixtures also passed. Curved beaker contact and Unity GPU verification remain open.
