@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
 
@@ -11,6 +12,21 @@ namespace PhysicsSim.ThreePhase3D.Solids
         public static Result Advance(IceBody body, VariableCoefficientProjection plan, double dt,
             D3 gravityMPerS2, Func<double[], FlowStep> project, Func<D3, double> backgroundPressurePa = null,
             ColumnHydrostaticPressure columnPressure = null)
+            => AdvanceCore(body, plan, dt, gravityMPerS2, project, backgroundPressurePa, columnPressure, null);
+
+        public static Result AdvanceSupported(IceBody body, VariableCoefficientProjection plan, double dt,
+            D3 gravityMPerS2, Func<double[], FlowStep> project, IReadOnlyList<D3> verticesLocalM,
+            D3 planePointM, D3 planeNormal, Func<D3, double> backgroundPressurePa = null,
+            ColumnHydrostaticPressure columnPressure = null)
+            => AdvanceCore(body, plan, dt, gravityMPerS2, project, backgroundPressurePa, columnPressure,
+                (D3 force, D3 torque, out D3 reaction) => IceWallContact.AdvanceSupported(
+                    body, verticesLocalM, planePointM, planeNormal, dt, force, torque, out reaction));
+
+        private delegate IceBody SupportedStep(D3 force, D3 torque, out D3 wallReactionNs);
+
+        private static Result AdvanceCore(IceBody body, VariableCoefficientProjection plan, double dt,
+            D3 gravityMPerS2, Func<double[], FlowStep> project, Func<D3, double> backgroundPressurePa,
+            ColumnHydrostaticPressure columnPressure, SupportedStep support)
         {
             if (body == null) throw new ArgumentNullException(nameof(body));
             if (plan == null) throw new ArgumentNullException(nameof(plan));
@@ -30,13 +46,23 @@ namespace PhysicsSim.ThreePhase3D.Solids
                     throw new InvalidOperationException("Ice coupling requires a converged pressure step on the same grid and timestep.");
 
                 var load = IcePressureLoad.FromProjection(body, plan, fluid.GroupPressurePa, backgroundPressurePa, columnPressure);
-                D3 momentum = body.MomentumKgMPerS + (load.ForceN + gravityMPerS2 * body.MassKg) * dt;
+                D3 force = load.ForceN + gravityMPerS2 * body.MassKg;
+                D3 momentum = body.MomentumKgMPerS + force * dt;
                 D3 angular = body.AngularMomentumKgM2PerS + load.TorqueNm * dt;
+                D3 wallReaction = default;
+                var supported = support?.Invoke(force, load.TorqueNm, out wallReaction);
+                if (supported != null)
+                {
+                    momentum = supported.MomentumKgMPerS;
+                    angular = supported.AngularMomentumKgM2PerS;
+                }
+                // Compare velocities in the frame used to build the cut cells.
                 var corrected = new IceBody(body.MassKg, body.PrincipalInertiaKgM2, body.Frame, momentum, angular);
                 mismatch = Math.Max((corrected.VelocityMPerS - trial.VelocityMPerS).Length,
                     radius * (corrected.AngularVelocityRadPerS - trial.AngularVelocityRadPerS).Length);
                 if (mismatch <= velocityTolerance)
-                    return new Result(load.Advance(body, dt, gravityMPerS2), fluid, iteration, mismatch);
+                    return new Result(supported ?? load.Advance(body, dt, gravityMPerS2),
+                        fluid, iteration, mismatch, wallReaction);
 
                 trial = new IceBody(body.MassKg, body.PrincipalInertiaKgM2, body.Frame,
                     trial.MomentumKgMPerS + (momentum - trial.MomentumKgMPerS) * relaxation,
@@ -51,13 +77,15 @@ namespace PhysicsSim.ThreePhase3D.Solids
             public readonly FlowStep Fluid;
             public readonly int Iterations;
             public readonly double BoundaryVelocityMismatchMPerS;
+            public readonly D3 WallReactionNs;
 
-            internal Result(IceBody body, FlowStep fluid, int iterations, double mismatch)
+            internal Result(IceBody body, FlowStep fluid, int iterations, double mismatch, D3 wallReactionNs)
             {
                 Body = body;
                 Fluid = fluid;
                 Iterations = iterations;
                 BoundaryVelocityMismatchMPerS = mismatch;
+                WallReactionNs = wallReactionNs;
             }
         }
     }

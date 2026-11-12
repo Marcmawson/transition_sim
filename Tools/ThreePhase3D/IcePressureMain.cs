@@ -7,8 +7,43 @@ using PhysicsSim.ThreePhase3D.Verification;
 
 internal static class IcePressureMain
 {
+    private static void CheckCoupledSupport()
+    {
+        const double dt = 0.001, pressurePa = 25;
+        var size = new D3(0.018, 0.017, 0.016);
+        var floor = new D3(0, 0.02, 0);
+        var up = new D3(0, 1, 0);
+        var gravity = up * -9.81;
+        var centre = new D3(0.038, floor.Y + size.Y / 2, 0.039);
+        var body = IceBody.Box(917, size, RigidFrame.Euler(centre, 0, 0, 0));
+        var box = SurfacePrimitives.Box(size * -0.5, size * 0.5);
+        var slab = SurfacePrimitives.Box(default, new D3(0.08, floor.Y, 0.08));
+        var grid = new Grid3D(8, 8, 8, new D3(0.01, 0.01, 0.01), RigidFrame.Euler(default, 0, 0, 0));
+        var geometry = CutCellGeometry.Build(grid, slab, SurfacePrimitives.Transform(box, body.Frame));
+        var plan = new VariableCoefficientProjection(geometry, BoundaryConditions3D.Closed, _ => 1000, _ => 0);
+        var still = new float[plan.FaceCount];
+        var hull = new D3[box.positionsM.Length / 3];
+        for (int i = 0; i < hull.Length; i++)
+            hull[i] = new D3(box.positionsM[3 * i], box.positionsM[3 * i + 1], box.positionsM[3 * i + 2]);
+        var accepted = IcePressureCoupling.AdvanceSupported(body, plan, dt, gravity, flux =>
+        {
+            foreach (double groupFlux in flux) Near(Math.Abs(groupFlux), 1e-12);
+            return FlowCpuReference.Project(plan, still, dt, 16384, null, flux);
+        }, hull, floor, up, _ => pressurePa);
+
+        double expectedImpulse = (body.MassKg * -gravity.Y + pressurePa * size.X * size.Z) * dt;
+        Near((accepted.WallReactionNs + up * expectedImpulse).Length, 1e-10);
+        Near((accepted.Body.Frame.Origin - centre).Length, 1e-10);
+        Near(accepted.Body.VelocityMPerS.Length, 1e-8);
+        Near(accepted.Body.AngularVelocityRadPerS.Length, 1e-6);
+        foreach (float velocity in accepted.Fluid.VelocityMPerS) Near(Math.Abs(velocity), 1e-8);
+        Console.WriteLine(FormattableString.Invariant(
+            $"S11 coupled resting ice passed: wall impulse {accepted.WallReactionNs.Y:G8} N s, mismatch {accepted.BoundaryVelocityMismatchMPerS:G6} m/s."));
+    }
+
     private static void Main()
     {
+        CheckCoupledSupport();
         CheckRemap();
         CheckWaterline();
         CheckFlotationTorque();

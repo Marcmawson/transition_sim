@@ -144,3 +144,9 @@ The CPU fixture drove a level box into a wall at 20 m/s. It detected contact aft
 The supported step starts with a touching hull. It applies the external force and torque impulse, solves simultaneous zero-restitution normal contact, then advances the pose with the constrained momentum. The fixed wall applies no tangential impulse. An inward drift beyond the wall tolerance rejects the step.
 
 The CPU fixture held a level box under a 0.21589848 N weight for 1000 consecutive 1 ms steps. The wall reaction matched that weight, and the hull stayed within 1e-10 m of the support plane without penetration beyond tolerance. A second run preserved a 0.1 m/s tangential slide and its kinetic energy. A lift-off test returned zero wall reaction under an outward load. Integration with the coupled fluid step and the curved beaker wall remains open.
+
+## V25 resting contact in the pressure solve
+
+The supported pressure step applies the plane constraint to each pressure and gravity correction. The next projection uses the corrected rigid velocity on the original cut-cell geometry. The accepted result reports the equal and opposite wall impulse alongside the body and projected fluid. Cut-cell geometry records roundoff-sized corrections to fully covered interface patches in its existing area ledger.
+
+The CPU fixture rests an ice box on a fixed slab in a closed cut-cell grid. With gravity and 25 Pa applied on the fluid-exposed surface, the downward wall impulse was 5.124329e-5 N s over 1 ms, matching the weight and pressure load. The projected fluid remained still and the boundary velocity mismatch was 2.2676e-14 m/s. Pressure on genuinely partially covered patches, curved beaker contact and Unity GPU verification remain open.
