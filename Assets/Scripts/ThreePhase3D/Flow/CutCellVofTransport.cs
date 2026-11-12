@@ -253,6 +253,41 @@ namespace PhysicsSim.ThreePhase3D.Flow
         public CutCellTransportResult AdvanceProjected(CutCellInventories state, FlowStep pressure,
             Func<int, CutCellInflow> inflow = null) => AdvanceProjected(state, pressure, inflow, null, null, null, out _);
 
+        public (FlowStep Pressure, CutCellTransportResult Transport) AdvanceWithPhaseExchange(
+            CutCellInventories state, CutCellInventories increments, double dt,
+            Func<double[], FlowStep> project, Func<int, CutCellInflow> inflow = null)
+        {
+            if (state == null || increments == null || project == null) throw new ArgumentNullException();
+            if (!SiUnits.IsFinite(dt) || dt <= 0) throw new ArgumentOutOfRangeException(nameof(dt));
+            foreach (var field in increments.Planes)
+                if (field == null || field.Length != plan.GroupCount || !Array.TrueForAll(field, SiUnits.IsFinite))
+                    throw new ArgumentException("Phase exchange increments must match the pressure groups.");
+            Validate(state.Planes);
+            var volume = new double[plan.GroupCount];
+            var source = new double[plan.GroupCount];
+            for (int group = 0; group < volume.Length; group++)
+            {
+                volume[group] = increments.LiquidM3[group] + increments.GasM3[group];
+                source[group] = -volume[group] / dt;
+                if (!SiUnits.IsFinite(source[group]) ||
+                    state.LiquidM3[group] + increments.LiquidM3[group] < 0 ||
+                    state.GasM3[group] + increments.GasM3[group] < 0 ||
+                    state.VapourKg[group] + increments.VapourKg[group] < 0)
+                    throw new ArgumentException("Phase exchange would overdraw its donor.");
+            }
+            plan.ValidateBoundaryFlux(source);
+            var pressure = project(source);
+            if (pressure == null || !pressure.Diagnostics.Converged || pressure.Diagnostics.Dt != dt ||
+                pressure.VelocityMPerS.Length != plan.FaceCount || pressure.GroupPressurePa.Length != plan.GroupCount)
+                throw new InvalidOperationException("Phase exchange requires a converged pressure projection on the same step.");
+            var velocity = new double[plan.FaceCount];
+            double maximum = ReconcilePressureFlux(pressure.VelocityMPerS, dt, velocity,
+                out double absolute, targetVolume: volume);
+            if (maximum > PressureCorrectionLimit)
+                throw new InvalidOperationException("Phase exchange pressure flux exceeds the transport correction budget.");
+            return (pressure, Advance(state, velocity, dt, inflow, absolute, null, increments: increments));
+        }
+
         internal CutCellTransportResult AdvanceProjected(CutCellInventories state, FlowStep pressure,
             Func<int, CutCellInflow> inflow, Func<CutCellScalarWork, CutCellScalarOutput> apply, CutCellGeometryBatch clip,
             double? adaptiveMaxStepS, out double dt)
@@ -318,12 +353,14 @@ namespace PhysicsSim.ThreePhase3D.Flow
         }
 
         private double ReconcilePressureFlux(float[] accepted, double dt, double[] velocity,
-            out double absolute, double[] divergence = null)
+            out double absolute, double[] divergence = null, double[] targetVolume = null)
         {
             double maximum = 0;
             absolute = 0;
             if (divergence == null) divergence = new double[plan.GroupCount];
             else Array.Clear(divergence, 0, divergence.Length);
+            if (targetVolume != null)
+                for (int group = 0; group < divergence.Length; group++) divergence[group] = -targetVolume[group];
             for (int f = 0; f < velocity.Length; f++)
             {
                 velocity[f] = accepted[f];
@@ -353,7 +390,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
             Func<int, CutCellInflow> inflow = null) => Advance(state, faceVelocity, dt, inflow, 0, null);
 
         internal CutCellTransportResult Advance(CutCellInventories state, double[] faceVelocity, double dt,
-            Func<int, CutCellInflow> inflow, double pressureCorrection, Func<CutCellScalarWork, CutCellScalarOutput> apply, CutCellGeometryBatch clip = null)
+            Func<int, CutCellInflow> inflow, double pressureCorrection, Func<CutCellScalarWork, CutCellScalarOutput> apply,
+            CutCellGeometryBatch clip = null, CutCellInventories increments = null)
         {
             if (state == null || faceVelocity == null || faceVelocity.Length != plan.FaceCount ||
                 !SiUnits.IsFinite(dt) || dt <= 0) throw new ArgumentException("Invalid cut-cell transport inputs.");
@@ -395,6 +433,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             for (int c = 0; c < groups; c++)
             {
                 double volume = plan.Volumes[c];
+                if (increments != null) divergence[c] -= increments.LiquidM3[c] + increments.GasM3[c];
                 if (Math.Abs(divergence[c]) > Tolerance * volume)
                     throw new ArgumentException($"Cut-cell group {c} has relative volume imbalance {Math.Abs(divergence[c]) / volume:E3} (limit {Tolerance:E3}).");
                 if (outgoing[c] > .5 * volume)
@@ -449,6 +488,10 @@ namespace PhysicsSim.ThreePhase3D.Flow
             var work = new CutCellScalarWork(plan, fields, swept, correction, outgoing, reservoir);
             var output = apply == null ? ApplyReference(work) : apply(work);
             var next = output.Fields;
+            if (increments != null)
+                for (int field = 0; field < next.Length; field++)
+                for (int group = 0; group < groups; group++)
+                    next[field][group] += increments.Planes[field][group];
             roundoff += output.RoundoffM3;
             for (int c = 0; c < groups; c++)
             {

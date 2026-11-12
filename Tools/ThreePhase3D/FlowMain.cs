@@ -15,7 +15,8 @@ internal static class FlowMain
             CheckReconstructedGasDiffusion();
             CheckOpenGasDiffusion();
             CheckHumidLowMach();
-            CheckHumidInterface();
+            HumidPhaseExchangeCheck.Run((plan, tentative, dt, source) =>
+                FlowCpuReference.Project(plan, tentative, dt, 4096, null, source), Console.WriteLine);
             return 0;
         }
         var suite = new FlowChecks(FlowCpuReference.Advance);
@@ -120,46 +121,6 @@ internal static class FlowMain
         }
     }
 
-    private static void CheckHumidInterface()
-    {
-        const double pressure = 101325, film = 0.01;
-        var model = new HumidGas();
-        var warm = model.EquilibriumWithLiquid(293.15, pressure);
-        var cool = model.EquilibriumWithLiquid(283.15, pressure);
-        double bulk = (warm.WaterMassFraction + cool.WaterMassFraction) * 0.5;
-        double warmD = HumidGas.ReferenceDiffusivity(warm.TemperatureK, pressure);
-        double coolD = HumidGas.ReferenceDiffusivity(cool.TemperatureK, pressure);
-        double evaporation = HumidInterfaceFlux.WaterFluxKgM2PerS(warm, bulk, film, warmD);
-        double condensation = HumidInterfaceFlux.WaterFluxKgM2PerS(cool, bulk, film, coolD);
-        double equilibrium = HumidInterfaceFlux.WaterFluxKgM2PerS(warm, warm.WaterMassFraction, film, warmD);
-        double velocityJump = HumidInterfaceFlux.NormalVelocityJumpMPerS(warm, evaporation);
-        if (!(evaporation > 0 && condensation < 0 && velocityJump > 0) || equilibrium != 0 ||
-            Math.Abs(2 * HumidInterfaceFlux.WaterFluxKgM2PerS(warm, bulk, 2 * film, warmD) - evaporation) > 1e-15)
-            throw new InvalidOperationException("Humid interface failed equilibrium, flux direction or film thickness scaling.");
-        var cooling = HumidInterfaceFlux.SolveTemperature(pressure, bulk, film,
-            warm.TemperatureK, warm.TemperatureK, 100, 10, 283.15, 298.15);
-        var heating = HumidInterfaceFlux.SolveTemperature(pressure, bulk, film,
-            cool.TemperatureK, cool.TemperatureK, 100, 10, 278.15, 293.15);
-        if (!(cooling.Surface.TemperatureK < warm.TemperatureK && cooling.MassFluxKgM2PerS > 0 &&
-            heating.Surface.TemperatureK > cool.TemperatureK && heating.MassFluxKgM2PerS < 0) ||
-            Math.Abs(cooling.LiquidHeatWm2 + cooling.GasHeatWm2 - cooling.MassFluxKgM2PerS * cooling.LatentHeatJkg) > 1e-7 ||
-            Math.Abs(heating.LiquidHeatWm2 + heating.GasHeatWm2 - heating.MassFluxKgM2PerS * heating.LatentHeatJkg) > 1e-7)
-            throw new InvalidOperationException("Latent heat failed to cool evaporation or warm condensation.");
-        foreach (var solved in new[] { cooling, heating })
-        {
-            const double area = 0.001, dt = 0.1;
-            var transfer = HumidInterfaceFlux.InventoryTransfer(solved, area, dt, 0.001, 0.001);
-            if (Math.Abs(transfer.LiquidEnthalpyJ + transfer.GasEnthalpyJ) > 1e-11 ||
-                Math.Abs(transfer.LiquidVolumeM3 * solved.Surface.Liquid.DensityKgM3 + transfer.WaterKg) > 1e-18 ||
-                Math.Abs(transfer.GasVolumeM3 + transfer.LiquidVolumeM3 -
-                    HumidInterfaceFlux.NormalVelocityJumpMPerS(solved.Surface, solved.MassFluxKgM2PerS) * area * dt) > 1e-18)
-                throw new InvalidOperationException("Humid interface inventory transfer did not close.");
-        }
-        Console.WriteLine(FormattableString.Invariant(
-            $"S12 humid interface passed: evaporation {evaporation:G8}, condensation {condensation:G8} kg/m2/s, Stefan jump {velocityJump:G8} m/s."));
-        Console.WriteLine(FormattableString.Invariant(
-            $"S12 humid heat balance passed: evaporating interface {cooling.Surface.TemperatureK:G9} K, condensing interface {heating.Surface.TemperatureK:G9} K."));
-    }
 
     private static void CheckHumidDiffusion()
     {

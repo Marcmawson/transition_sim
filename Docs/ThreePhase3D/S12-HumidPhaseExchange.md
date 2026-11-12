@@ -10,4 +10,6 @@ The VOF transport reconstructs the gas side of mixed cells and clips both phase 
 
 Open gas faces accept a prescribed reservoir state and use the cell-to-boundary distance for the diffusion gradient. The boundary ledger records signed vapour and enthalpy exchange. CPU fixtures passed for both inward and outward vapour flux, with equal dry-air counterflow. This is diffusive exchange at fixed gas mass. Advective backflow remains part of the flow transport.
 
-The reference executable entry point is `FlowMain --humid-diffusion`. Integration of interfacial volume sources into pressure and phase transport, and V27–V28 benchmark comparisons, remain open.
+The phase-exchange transport step supplies the negative net phase volume rate to the pressure projection and reconciles the accepted face flux against the same volume increment. It advects the original inventory and then applies the signed liquid, gas, enthalpy and vapour increments. Open CPU fixtures checked both evaporation outflow and condensation inflow, reconciling every transported inventory with the boundary ledger. This path takes group sources as inputs. Reconstructing the source on a moving interface and V27–V28 benchmark comparisons remain open.
+
+Run the reference executable with `FlowMain --humid-diffusion`. In Unity, **Physics Sim → Three Phase 3D → Run S12 GPU phase exchange check** uses the shared fixture with GPU pressure projection and CPU phase transport. GPU execution is pending.
