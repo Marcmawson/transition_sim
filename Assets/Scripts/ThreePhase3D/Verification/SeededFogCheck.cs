@@ -215,6 +215,32 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 }
                 if (staggered.Momentum.VelocityMPerS[face] <= 0)
                     throw new InvalidOperationException("S14 reinserted momentum did not drive the destination face.");
+                var projectedPlan = new VariableCoefficientProjection(plan.Geometry, BoundaryConditions3D.Closed, cell =>
+                {
+                    int group = plan.GroupByCell[cell];
+                    return (staggered.Fields.LiquidM3[group] * DropletGasCellExchange.LiquidDensity +
+                        staggered.Fields.GasM3[group] * gasDensity) / plan.Volumes[group];
+                }, _ => 0);
+                var transport = new CutCellVofTransport(projectedPlan);
+                var correction = transport.MeasurePressureCorrection(dt);
+                var projected = FlowCpuReference.Project(projectedPlan,
+                    Array.ConvertAll(staggered.Momentum.VelocityMPerS, value => (float)value), dt, 4096,
+                    velocity => correction(velocity) <= CutCellVofTransport.PressureCorrectionLimit);
+                var next = transport.AdvanceProjected(staggered.Fields, projected);
+                double pressureJump = projected.GroupPressurePa[destination] - projected.GroupPressurePa[detached];
+                if (!(pressureJump > 0) || Math.Abs(projected.VelocityMPerS[face]) > 1e-7)
+                    throw new InvalidOperationException("S14 reinsertion pressure did not arrest flow toward the closed end.");
+                for (int field = 0; field < next.Fields.Planes.Length; field++)
+                for (int group = 0; group < plan.GroupCount; group++)
+                {
+                    double prior = staggered.Fields.Planes[field][group];
+                    double scale = 0;
+                    foreach (double value in staggered.Fields.Planes[field]) scale += Math.Abs(value);
+                    if (Math.Abs(next.Fields.Planes[field][group] - prior) > 1e-10 * scale)
+                        throw new InvalidOperationException("S14 projected reinsertion changed a stationary phase inventory.");
+                }
+                log(FormattableString.Invariant(
+                    $"S14 projected reinsertion passed: pressure jump {pressureJump:G8} Pa, destination face {projected.VelocityMPerS[face]:G8} m/s."));
                 log(FormattableString.Invariant(
                     $"S14 staggered reinsertion passed: destination face {staggered.Momentum.VelocityMPerS[face]:G8} m/s."));
                 log(FormattableString.Invariant(
