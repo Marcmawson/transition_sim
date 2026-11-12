@@ -30,4 +30,10 @@ The CPU fixture started a rotated submerged box and fluid at rest. On both grid 
 
 MovingCutCellRemap takes two cut-cell projection plans on the same grid and signed swept fluid volumes on geometric faces. It transfers liquid and gas volumes, phase energies and vapour from the original donor composition, then gathers retained and incoming inventory into the new pressure groups. It rejects incompatible volume closure, an overdrawn donor, exterior transfers and transfers with no fluid group. The operator uses first-order donor composition.
 
-The CPU fixture rebuilds the geometry after translating a box 4 mm across one face. The exact swept transfer for that fixture is 0.054 mL. All five inventories and the new group volume closure pass. This verifies the remap given a known face transfer. Generating swept fluxes from arbitrary coupled motion, remapping staggered momentum, and verifying GPU free-surface flotation remain open.
+The CPU fixture rebuilds the geometry after translating a box 4 mm across one face. The exact swept transfer for that fixture is 0.054 mL. All five inventories and the new group volume closure pass. This verifies the remap given a known face transfer. The coupled transfer check follows below.
+
+## Swept volumes from a coupled step
+
+The reconciliation starts from the projected face velocity times old aperture and timestep. It computes each cell's residual against the exact old-to-new fluid capacity change. A weighted graph Laplacian distributes the correction across interior faces open at both poses. The solve rejects an unclosed residual or a face correction larger than the supplied budget. The scalar remap separately checks available donor volume and final cell closure.
+
+The CPU fixture advances the submerged box using the coupled pressure step, rebuilds the geometry at its accepted pose, and uses the projected velocities to remap water and enthalpy. The check passed at both grid offsets, preserving uniform energy density and total water volume. The correction budget was 0.5% of one cell volume per face. The current path requires a closed domain and rejects projected flow through faces that close or lose a fluid endpoint. Staggered momentum remap and free-surface flotation remain open.

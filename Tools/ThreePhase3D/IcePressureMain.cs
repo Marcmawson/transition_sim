@@ -65,6 +65,23 @@ internal static class IcePressureMain
             if (!(coupled.Body.VelocityMPerS.Y > 0 && coupled.Body.VelocityMPerS.Y < moved.VelocityMPerS.Y) ||
                 coupled.Iterations < 2 || coupled.BoundaryVelocityMismatchMPerS > 1e-8)
                 throw new InvalidOperationException("The implicit fluid reaction did not reduce the ice rise speed.");
+            var nextGeometry = CutCellGeometry.Build(grid,
+                iceSurface: SurfacePrimitives.Transform(box, coupled.Body.Frame));
+            var nextPlan = new VariableCoefficientProjection(nextGeometry, BoundaryConditions3D.Closed, _ => rho, _ => 0);
+            var volumes = (double[])plan.Volumes.Clone();
+            var zero = new double[plan.GroupCount];
+            var thermal = new double[plan.GroupCount];
+            for (int group = 0; group < plan.GroupCount; group++) thermal[group] = 42 * volumes[group];
+            var reconciled = MovingCutCellRemap.Reconcile(plan, nextPlan, coupled.Fluid, 0.005 * grid.CellVolume);
+            var remapped = MovingCutCellRemap.Apply(plan, nextPlan,
+                new CutCellInventories(volumes, zero, thermal, zero, zero), reconciled);
+            for (int group = 0; group < nextPlan.GroupCount; group++)
+            {
+                Near(Math.Abs(remapped.LiquidM3[group] - nextPlan.Volumes[group]), 1e-15);
+                Near(Math.Abs(remapped.LiquidEnergyJ[group] - 42 * nextPlan.Volumes[group]), 1e-13);
+            }
+            Near(Math.Abs(System.Linq.Enumerable.Sum(remapped.LiquidM3) - System.Linq.Enumerable.Sum(volumes)), 1e-15);
+            Console.WriteLine($"S11 coupled swept-volume remap passed at offset {offset:G} m.");
             var acceptedLoad = IcePressureLoad.FromProjection(body, plan, coupled.Fluid.GroupPressurePa,
                 point => rho * g * (0.10 - point.Y));
             Near((coupled.Body.MomentumKgMPerS - (acceptedLoad.ForceN + new D3(0, -g * body.MassKg, 0)) * dt).Length, 1e-12);
