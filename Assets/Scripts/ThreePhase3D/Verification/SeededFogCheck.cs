@@ -112,8 +112,10 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 CheckGasFeedback(20, moving: true);
                 CheckGasFeedback(10, moving: true, exitParcels: true);
                 CheckGasFeedback(20, moving: true, exitParcels: true);
+                CheckGasFeedback(10, moving: true, deposit: true);
+                CheckGasFeedback(20, moving: true, deposit: true);
 
-                void CheckGasFeedback(int steps, bool moving = false, bool exitParcels = false)
+                void CheckGasFeedback(int steps, bool moving = false, bool exitParcels = false, bool deposit = false)
                 {
                     const double pressure = 101325;
                     double dt = duration / steps;
@@ -134,11 +136,12 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     var reservoir = gas[untouched];
                     var initialTotals = Totals(initialParcels, gas);
                     var parcels = initialParcels;
-                    if (exitParcels)
+                    if (exitParcels || deposit)
                     {
                         parcels = ((D3, double, double, int)[])initialParcels.Clone();
                         for (int index = 0; index < parcels.Length; index++)
-                            parcels[index].Item1 = new D3(3 * dx - (index + 1) * 2e-6,
+                            parcels[index].Item1 = new D3(deposit ? parcels[index].Item2 + (index + 1) * 2e-6 :
+                                3 * dx - (index + 1) * 2e-6,
                                 transverse * 0.5, transverse * 0.5);
                     }
                     var momentum = new D3[gas.Length];
@@ -148,8 +151,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     {
                         for (int index = 0; index < parcels.Length; index++)
                         {
-                            parcelVelocity[index] = carrier;
-                            startingMomentum += carrier * (DropletGasCellExchange.Mass(parcels[index].Item2) * parcels[index].Item4);
+                            parcelVelocity[index] = deposit ? -carrier : carrier;
+                            startingMomentum += parcelVelocity[index] * (DropletGasCellExchange.Mass(parcels[index].Item2) * parcels[index].Item4);
                         }
                     }
                     D3 reaction = default, momentumOut = default;
@@ -157,6 +160,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     long dropletsOut = 0;
                     double liquidOut = 0, liquidEnthalpyOut = 0;
                     D3 liquidMomentumOut = default;
+                    (long Count, double Liquid, double Enthalpy, D3 Impulse) wall = default;
                     double upstreamExchange = 0, downstreamExchange = 0, boundaryThroughput = 0;
                     for (int step = 0; step < steps; step++)
                     {
@@ -164,13 +168,18 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         if (moving)
                         {
                             var exchange = SeededFogCell.AdvanceMovingGrid(transportPlan,
-                                parcels, gas, parcelVelocity, momentum, pressure, 0.026, 2.5e-5, 1.81e-5, dt);
+                                parcels, gas, parcelVelocity, momentum, pressure, 0.026, 2.5e-5, 1.81e-5, dt,
+                                stickingWall: deposit ? (0, false) : ((int, bool)?)null);
                             (parcels, gas, parcelVelocity, momentum) =
                                 (exchange.Parcels, exchange.Gas, exchange.ParcelVelocity, exchange.GasMomentum);
                             dropletsOut += exchange.Outlet.Droplets;
                             liquidOut += exchange.Outlet.LiquidKg;
                             liquidEnthalpyOut += exchange.Outlet.EnthalpyJ;
                             liquidMomentumOut += exchange.Outlet.Momentum;
+                            wall.Count += exchange.Wall.Droplets;
+                            wall.Liquid += exchange.Wall.LiquidKg;
+                            wall.Enthalpy += exchange.Wall.EnthalpyJ;
+                            wall.Impulse += exchange.Wall.Momentum;
                         }
                         else
                             (parcels, gas) = SeededFogCell.AdvanceGrid(plan, parcels, gas, carrier,
@@ -205,7 +214,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         momentumOut += moved.Outflow.MomentumKgMPerS;
                         boundaryThroughput += Math.Abs(moved.Outflow.DryAirKg);
                         double air = airOut;
-                        D3 totalMomentum = momentumOut + reaction + liquidMomentumOut;
+                        D3 totalMomentum = momentumOut + reaction + liquidMomentumOut + wall.Impulse;
                         for (int group = 0; group < gas.Length; group++)
                         {
                             var cell = moved.Gas[group];
@@ -215,7 +224,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                             totalMomentum += momentum[group];
                         }
                         var total = Totals(parcels, gas);
-                        long dropletCount = dropletsOut;
+                        long dropletCount = dropletsOut + wall.Count;
                         for (int index = 0; index < parcels.Length; index++)
                         {
                             dropletCount += parcels[index].Item4;
@@ -223,10 +232,19 @@ namespace PhysicsSim.ThreePhase3D.Verification
                                 (DropletGasCellExchange.Mass(parcels[index].Item2) * parcels[index].Item4);
                         }
                         if (dropletCount != 32 || Math.Abs(air - startingAir) > 1e-12 * startingAir ||
-                            Math.Abs(total.Water + vapourOut + liquidOut - initialTotals.Water) > 1e-12 * initialTotals.Water ||
-                            Math.Abs(total.Energy + energyOut + liquidEnthalpyOut - initialTotals.Energy) > 1e-12 * initialTotals.Energy ||
+                            Math.Abs(total.Water + vapourOut + liquidOut + wall.Liquid - initialTotals.Water) > 1e-12 * initialTotals.Water ||
+                            Math.Abs(total.Energy + energyOut + liquidEnthalpyOut + wall.Enthalpy - initialTotals.Energy) > 1e-12 * initialTotals.Energy ||
                             (totalMomentum - startingMomentum).Length > 1e-24)
                             throw new InvalidOperationException("V38 fog gas feedback failed conservation.");
+                    }
+                    if (deposit)
+                    {
+                        if (!(wall.Count == 32 && dropletsOut == 0 && parcels.Length == 0 &&
+                            wall.Liquid > 0 && wall.Enthalpy > 0 && wall.Impulse.X < 0 && upstreamExchange > 0))
+                            throw new InvalidOperationException("V38 sticking wall did not receive the parcel inventories.");
+                        log(FormattableString.Invariant(
+                            $"S14 V38 fog deposition passed: {steps} steps, droplets {wall.Count}, liquid {wall.Liquid:G8} kg, enthalpy {wall.Enthalpy:G8} J, wall impulse X {wall.Impulse.X:G8} N s."));
+                        return;
                     }
                     if (exitParcels)
                     {

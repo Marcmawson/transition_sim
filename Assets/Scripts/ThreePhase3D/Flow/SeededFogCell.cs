@@ -9,11 +9,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
     {
         internal static ((D3 Position, double RadiusM, double TemperatureK, int Multiplicity)[] Parcels,
             (double DryAirKg, double VapourKg, double EnthalpyJ)[] Gas, D3[] ParcelVelocity, D3[] GasMomentum,
-            (long Droplets, double LiquidKg, double EnthalpyJ, D3 Momentum) Outlet)
+            (long Droplets, double LiquidKg, double EnthalpyJ, D3 Momentum) Outlet,
+            (long Droplets, double LiquidKg, double EnthalpyJ, D3 Momentum) Wall)
             AdvanceMovingGrid(VariableCoefficientProjection plan,
                 (D3 Position, double RadiusM, double TemperatureK, int Multiplicity)[] parcels,
                 (double DryAirKg, double VapourKg, double EnthalpyJ)[] gas, D3[] parcelVelocity, D3[] gasMomentum,
-                double pressurePa, double conductivity, double diffusivity, double viscosity, double dt)
+                double pressurePa, double conductivity, double diffusivity, double viscosity, double dt,
+                (int Axis, bool Positive)? stickingWall = null)
         {
             if (parcelVelocity.Length != parcels.Length || gasMomentum.Length != gas.Length)
                 throw new ArgumentException("Fog velocity and gas momentum must match their inventories.");
@@ -22,6 +24,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             var velocity = new List<D3>(parcels.Length);
             var momentum = (D3[])gasMomentum.Clone();
             (long Droplets, double LiquidKg, double EnthalpyJ, D3 Momentum) outlet = default;
+            (long Droplets, double LiquidKg, double EnthalpyJ, D3 Momentum) wall = default;
             for (int index = 0; index < parcels.Length; index++)
             {
                 var parcel = parcels[index];
@@ -35,14 +38,20 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     default, parcel.RadiusM, DropletGasCellExchange.LiquidDensity, mass / volume, viscosity, dt, vapourGain);
                 momentum[group] += motion.GasMomentumGain * parcel.Multiplicity;
                 var updated = exchange.Parcels[index];
-                if (DropletGasCellExchange.ExitsOpenBoundary(plan, parcel.Position, motion.Position))
+                bool sticks = stickingWall.HasValue && DropletGasCellExchange.ContactsBoxWall(plan,
+                    stickingWall.Value.Axis, stickingWall.Value.Positive, parcel.Position, motion.Position, updated.RadiusM);
+                bool exits = DropletGasCellExchange.ExitsOpenBoundary(plan, parcel.Position, motion.Position);
+                if (sticks && exits)
+                    throw new InvalidOperationException("A parcel reached a sticking wall and an outlet in the same step. Reduce the timestep.");
+                if (exits || sticks)
                 {
+                    ref var ledger = ref (sticks ? ref wall : ref outlet);
                     double liquid = DropletGasCellExchange.Mass(updated.RadiusM) * updated.Multiplicity;
-                    outlet.Droplets += updated.Multiplicity;
-                    outlet.LiquidKg += liquid;
-                    outlet.EnthalpyJ += liquid * DropletGasCellExchange.LiquidCp *
+                    ledger.Droplets += updated.Multiplicity;
+                    ledger.LiquidKg += liquid;
+                    ledger.EnthalpyJ += liquid * DropletGasCellExchange.LiquidCp *
                         (updated.TemperatureK - DropletGasCellExchange.ReferenceK);
-                    outlet.Momentum += motion.Velocity * liquid;
+                    ledger.Momentum += motion.Velocity * liquid;
                 }
                 else
                 {
@@ -52,7 +61,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     velocity.Add(motion.Velocity);
                 }
             }
-            return (retained.ToArray(), exchange.Gas, velocity.ToArray(), momentum, outlet);
+            return (retained.ToArray(), exchange.Gas, velocity.ToArray(), momentum, outlet, wall);
         }
 
         internal static ((D3 Position, double RadiusM, double TemperatureK, int Multiplicity)[] Parcels,
