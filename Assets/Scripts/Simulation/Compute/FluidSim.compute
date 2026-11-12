@@ -367,10 +367,10 @@ float3 FloorPressureForce(float3 pos, float3 neighbour, float2 neighbourDensity,
     // Extend the neighbour pressure below the floor with the hydrostatic gradient.
     float ghostPressure = PressureFromDensity(neighbourDensity.x) +
         neighbourDensity.x * abs(gravity) * 2 * (neighbour.y - beakerGlassFloorY);
-    float shared = max(0, .5 * (pressure + ghostPressure));
+    float sharedWallPressure = max(0, .5 * (pressure + ghostPressure));
     float sharedNear = .5 * (nearPressure + NearPressureFromDensity(neighbourDensity.y));
     return (offset / d) * (
-        DensityDerivative(d, smoothingRadius) * shared / neighbourDensity.x +
+        DensityDerivative(d, smoothingRadius) * sharedWallPressure / neighbourDensity.x +
         NearDensityDerivative(d, smoothingRadius) * sharedNear / neighbourDensity.y);
 }
 
