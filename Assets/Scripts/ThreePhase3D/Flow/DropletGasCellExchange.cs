@@ -20,7 +20,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 throw new ArgumentException("Invalid dilute droplet-cell inventory, pressure or timestep.");
 
             double gasCapacity = dryAirKg * AirCp + vapourKg * VapourCp;
-            double gasK = ReferenceK + (gasEnthalpyJ - vapourKg * VapourReferenceEnthalpy) / gasCapacity;
+            double gasK = GasTemperature(dryAirKg, vapourKg, gasEnthalpyJ);
             CheckTemperature(gasK);
             if (radiusM == 0) return (0, liquidK, vapourKg, gasEnthalpyJ);
             CheckTemperature(liquidK);
@@ -45,12 +45,31 @@ namespace PhysicsSim.ThreePhase3D.Flow
             CheckTemperature(cooledK);
             double updatedVapour = vapourKg + transfer.VapourKg;
             double updatedEnthalpy = gasEnthalpyJ - sensible + transfer.VapourEnthalpyJ;
-            CheckTemperature(ReferenceK + (updatedEnthalpy - updatedVapour * VapourReferenceEnthalpy) /
-                (dryAirKg * AirCp + updatedVapour * VapourCp));
+            CheckTemperature(GasTemperature(dryAirKg, updatedVapour, updatedEnthalpy));
             return (transfer.RadiusM, cooledK, updatedVapour, updatedEnthalpy);
         }
 
         internal static double Mass(double radius) => (4 * Math.PI / 3) * LiquidDensity * radius * radius * radius;
+
+        internal static double GasVolumeM3(double dryAirKg, double vapourKg, double gasEnthalpyJ, double pressurePa)
+        {
+            double temperature = GasTemperature(dryAirKg, vapourKg, gasEnthalpyJ);
+            CheckTemperature(temperature);
+            return 8.31451 * temperature / pressurePa * (dryAirKg / HumidGas.Ma + vapourKg / HumidGas.Mw);
+        }
+
+        internal static double ProjectionSourceM3PerS(double dryAirKg, double beforeVapourKg, double beforeEnthalpyJ,
+            double afterVapourKg, double afterEnthalpyJ, double pressurePa, double dt)
+        {
+            if (!SiUnits.IsFinite(dt) || dt <= 0)
+                throw new ArgumentOutOfRangeException(nameof(dt));
+            // Projection enforces outward flux + source = 0.
+            return (GasVolumeM3(dryAirKg, beforeVapourKg, beforeEnthalpyJ, pressurePa) -
+                GasVolumeM3(dryAirKg, afterVapourKg, afterEnthalpyJ, pressurePa)) / dt;
+        }
+
+        private static double GasTemperature(double dryAirKg, double vapourKg, double gasEnthalpyJ) =>
+            ReferenceK + (gasEnthalpyJ - vapourKg * VapourReferenceEnthalpy) / (dryAirKg * AirCp + vapourKg * VapourCp);
 
         // IAPWS SR1-86 (1992), equation 1.
         private static double SaturationPressurePa(double kelvin)
