@@ -38,7 +38,60 @@ internal static class IceBodyMain
         CheckSimultaneousImpact(body);
         CheckSweptManifold(body);
         CheckRestingSupport(body);
+        CheckBeakerImpact();
         Console.WriteLine("S11 rigid ice body passed: box inertia, force, torque, off-centre impulse, point velocity and free motion.");
+    }
+
+    private static void CheckBeakerImpact()
+    {
+        const int segments = 24;
+        const double half = 0.005, impactTime = 0.005, restitution = 0.5;
+        var glass = new GeometryInputs();
+        double angle = Math.PI / segments;
+        var outward = new D3(Math.Cos(angle), 0, Math.Sin(angle));
+        var up = new D3(0, 1, 0);
+        double floorY = glass.externalBaseHeightM + glass.baseThicknessM;
+        double apothem = glass.innerRadiusM * Math.Cos(angle);
+        var hull = new D3[8];
+        for (int i = 0; i < hull.Length; i++)
+            hull[i] = new D3((i & 1) == 0 ? -half : half,
+                (i & 2) == 0 ? -half : half, (i & 4) == 0 ? -half : half);
+
+        foreach (double downwardSpeed in new[] { 0.0, 0.4 })
+        {
+            double floorGap = downwardSpeed > 0 ? downwardSpeed * impactTime : half;
+            var centre = outward * (apothem - half - 0.4 * impactTime) + up * (floorY + half + floorGap);
+            var frame = RigidFrame.Euler(centre, -angle, 0, 0);
+            Near((frame.U - outward).Length, 0, 1e-12);
+            var box = IceBody.Box(917, new D3(2 * half, 2 * half, 2 * half), frame);
+            var velocity = outward * 0.4 - up * downwardSpeed;
+            var body = new IceBody(box.MassKg, box.PrincipalInertiaKgM2, frame, velocity * box.MassKg, default);
+            var clear = IceWallContact.AdvanceAndResolveBeakerTranslation(body, hull, glass, segments,
+                RigidFrame.Identity, impactTime / 2, restitution, out D3 clearReaction);
+            if (clear.Hit) throw new InvalidOperationException("The short beaker sweep should stay clear.");
+            Near(clearReaction.Length, 0, 0);
+
+            var hit = IceWallContact.AdvanceAndResolveBeakerTranslation(body, hull, glass, segments,
+                RigidFrame.Identity, 2 * impactTime, restitution, out D3 reaction);
+            if (!hit.Hit) throw new InvalidOperationException("The beaker sweep missed the wall.");
+            Near(hit.ElapsedSeconds, impactTime, 1e-12);
+            Near((hit.Body.VelocityMPerS + velocity * restitution).Length, 0, 1e-10);
+            Near(hit.Body.AngularVelocityRadPerS.Length, 0, 1e-8);
+            Near((reaction + hit.Body.MomentumKgMPerS - body.MomentumKgMPerS).Length, 0, 1e-12);
+            Near(hit.Body.KineticEnergyJ, body.KineticEnergyJ * restitution * restitution, 1e-12);
+            foreach (D3 vertex in hull)
+            {
+                D3 point = hit.Body.Frame.ToWorld(vertex);
+                if (point.Y < floorY - 1e-12) throw new InvalidOperationException("The ice crossed the beaker floor.");
+                for (int i = 0; i < segments; i++)
+                {
+                    double facet = (2 * i + 1) * Math.PI / segments;
+                    if (point.X * Math.Cos(facet) + point.Z * Math.Sin(facet) > apothem + 1e-12)
+                        throw new InvalidOperationException("The ice crossed a beaker facet.");
+                }
+            }
+        }
+        Console.WriteLine("S11 V25 beaker impact passed: side-only and simultaneous side/floor at 5 ms.");
     }
 
     private static void CheckRestingSupport(IceBody box)

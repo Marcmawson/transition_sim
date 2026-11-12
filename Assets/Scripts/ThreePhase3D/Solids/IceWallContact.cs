@@ -137,6 +137,69 @@ namespace PhysicsSim.ThreePhase3D.Solids
             return new Sweep(rebound, sweep.ElapsedSeconds, true, sweep.ContactPointM);
         }
 
+        // First impact for a non-spinning hull wholly inside the beaker below its rim.
+        // The side planes coincide with the facets of ApparatusSurface.Beaker.
+        public static Sweep AdvanceAndResolveBeakerTranslation(IceBody body, IReadOnlyList<D3> verticesLocalM,
+            GeometryInputs glass, int segments, RigidFrame beakerFrame, double seconds, double restitution,
+            out D3 wallReactionNs)
+        {
+            if (body == null) throw new ArgumentNullException(nameof(body));
+            if (verticesLocalM == null || verticesLocalM.Count == 0)
+                throw new ArgumentException("A contact hull requires vertices.", nameof(verticesLocalM));
+            if (glass == null || segments < 3 || !SiUnits.IsFinite(glass.innerRadiusM) ||
+                glass.innerRadiusM <= 0 || !SiUnits.IsFinite(glass.RimHeightM) ||
+                !SiUnits.IsFinite(glass.externalBaseHeightM + glass.baseThicknessM) ||
+                glass.cavityHeightM <= 0)
+                throw new ArgumentException("A beaker requires a finite cavity and at least three facets.", nameof(glass));
+            if (!SiUnits.IsFinite(seconds) || seconds <= 0)
+                throw new ArgumentOutOfRangeException(nameof(seconds));
+            if (!SiUnits.IsFinite(restitution) || restitution < 0 || restitution > 1)
+                throw new ArgumentOutOfRangeException(nameof(restitution));
+            if (body.AngularMomentumKgM2PerS.Length != 0)
+                throw new NotSupportedException("The beaker translation sweep requires constant orientation.");
+
+            double floorY = glass.externalBaseHeightM + glass.baseThicknessM;
+            double apothem = glass.innerRadiusM * Math.Cos(Math.PI / segments);
+            var planes = new (D3 Point, D3 Normal)[segments + 1];
+            planes[0] = (beakerFrame.ToWorld(new D3(0, floorY, 0)), beakerFrame.V);
+            for (int i = 0; i < segments; i++)
+            {
+                double angle = (2 * i + 1) * Math.PI / segments;
+                D3 outward = beakerFrame.U * Math.Cos(angle) + beakerFrame.W * Math.Sin(angle);
+                planes[i + 1] = (beakerFrame.Origin + outward * apothem, -outward);
+            }
+
+            var earliest = new Sweep(body, seconds, false, default);
+            foreach (var plane in planes)
+            {
+                var candidate = AdvanceTranslationToPlane(body, verticesLocalM, plane.Point, plane.Normal, seconds);
+                if (candidate.Hit && (!earliest.Hit || candidate.ElapsedSeconds < earliest.ElapsedSeconds))
+                    earliest = candidate;
+            }
+
+            var atEnd = earliest.Hit ? earliest.Body : body.Advance(seconds, default, default);
+            var points = new List<D3>();
+            var normals = new List<D3>();
+            foreach (D3 vertex in verticesLocalM)
+            {
+                D3 point = atEnd.Frame.ToWorld(vertex);
+                if (beakerFrame.ToLocal(body.Frame.ToWorld(vertex)).Y > glass.RimHeightM ||
+                    beakerFrame.ToLocal(point).Y > glass.RimHeightM)
+                    throw new NotSupportedException("The beaker sweep requires the hull to stay below the rim.");
+                if (!earliest.Hit) continue;
+                foreach (var plane in planes)
+                {
+                    if (D3.Dot(point - plane.Point, plane.Normal) > RotatingSweepToleranceM) continue;
+                    points.Add(point);
+                    normals.Add(plane.Normal);
+                }
+            }
+            wallReactionNs = default;
+            if (!earliest.Hit) return new Sweep(atEnd, seconds, false, default);
+            var rebound = ResolveContactManifold(atEnd, points, i => normals[i], restitution, out wallReactionNs);
+            return new Sweep(rebound, earliest.ElapsedSeconds, true, earliest.ContactPointM);
+        }
+
         // Apply the external impulse, resolve resting normal contact at
         // zero restitution, then drift with the constrained momentum.
         public static IceBody AdvanceSupported(IceBody body, IReadOnlyList<D3> verticesLocalM,
@@ -186,12 +249,19 @@ namespace PhysicsSim.ThreePhase3D.Solids
                 throw new ArgumentOutOfRangeException(nameof(restitution));
 
             D3 normal = wallNormal.Unit();
+            return ResolveContactManifold(body, pointsM, _ => normal, restitution, out wallReactionNs);
+        }
+
+        private static IceBody ResolveContactManifold(IceBody body, IReadOnlyList<D3> pointsM,
+            Func<int, D3> normalAt, double restitution, out D3 wallReactionNs)
+        {
             int count = pointsM.Count;
             var targets = new double[count];
             var inverseMass = new double[count];
             var impulses = new double[count];
             for (int i = 0; i < count; i++)
             {
+                D3 normal = normalAt(i);
                 targets[i] = -restitution * Math.Min(0, D3.Dot(body.VelocityAt(pointsM[i]), normal));
                 inverseMass[i] = NormalInverseMass(body, pointsM[i], normal);
             }
@@ -202,6 +272,7 @@ namespace PhysicsSim.ThreePhase3D.Solids
             {
                 for (int i = 0; i < count; i++)
                 {
+                    D3 normal = normalAt(i);
                     double speed = D3.Dot(trial.VelocityAt(pointsM[i]), normal);
                     double next = Math.Max(0, impulses[i] + (targets[i] - speed) / inverseMass[i]);
                     double delta = next - impulses[i];
@@ -212,7 +283,7 @@ namespace PhysicsSim.ThreePhase3D.Solids
                 double residual = 0;
                 for (int i = 0; i < count; i++)
                 {
-                    double speedError = D3.Dot(trial.VelocityAt(pointsM[i]), normal) - targets[i];
+                    double speedError = D3.Dot(trial.VelocityAt(pointsM[i]), normalAt(i)) - targets[i];
                     residual = Math.Max(residual, impulses[i] > 0 ? Math.Abs(speedError) : Math.Max(0, -speedError));
                 }
                 if (residual > tolerance) continue;
@@ -220,9 +291,8 @@ namespace PhysicsSim.ThreePhase3D.Solids
                 double energyTolerance = 1e-10 * body.KineticEnergyJ + 1e-15;
                 if (trial.KineticEnergyJ - body.KineticEnergyJ > energyTolerance)
                     throw new InvalidOperationException("The simultaneous restitution solve increased kinetic energy.");
-                double total = 0;
-                foreach (double impulse in impulses) total += impulse;
-                wallReactionNs = normal * -total;
+                wallReactionNs = default;
+                for (int i = 0; i < count; i++) wallReactionNs -= normalAt(i) * impulses[i];
                 return trial;
             }
             throw new InvalidOperationException("Simultaneous wall impact did not converge.");

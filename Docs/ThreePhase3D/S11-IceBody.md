@@ -156,3 +156,9 @@ The CPU fixture rests an ice box on a fixed slab in a closed cut-cell grid. With
 The cut-cell builder retains the signed clipped pieces of a partially covered ice patch. Pressure integration subtracts their force and moment from the full patch. The moving boundary uses the same covered pieces to subtract their rigid-body flux. Hydrostatic integration clips both terms at the waterline before applying the pressure quadrature. The force, torque and flux integrals are exact for affine pressure and rigid velocity on the clipped polygons up to clipping and arithmetic tolerances.
 
 The CPU fixture places a slab edge across an ice face. The exposed strip produced 0.002688 N of force and 1.6272e-5 N m of torque under affine pressure. Translation and spin gave a net fluid boundary flux of -2.688e-6 m3/s. All three matched analytic integrals. The full resting-floor and both waterline fixtures also passed. Curved beaker contact and Unity GPU verification remain open.
+
+## V25 first impact inside the beaker
+
+The translation sweep uses the glass floor and the inner side planes at the same angular resolution as the polygonal beaker mesh. At the first hit it collects touching hull vertices across all active planes and resolves their normal impulses together. It returns the impact pose, elapsed time and total wall reaction. This step assumes a non-spinning hull below the rim and leaves the rest of the timestep to the caller.
+
+The CPU fixture used a 24-facet beaker and a 0.4 m/s side approach, both with and without a simultaneous 0.4 m/s floor approach. Both impacts arrived at 5 ms. At restitution 0.5, the normal velocities rebounded at 0.2 m/s, the wall impulse balanced the ice momentum change, and all vertices stayed inside the vessel within 1e-12 m. The shorter clear sweep and existing plane impact and support checks passed. Rotating beaker sweeps, coupled pressure and impact stepping, and Unity GPU verification remain open.
