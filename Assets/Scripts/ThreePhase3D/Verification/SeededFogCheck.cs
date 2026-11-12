@@ -1,5 +1,7 @@
 using System;
+using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
+using PhysicsSim.ThreePhase3D.Geometry;
 
 namespace PhysicsSim.ThreePhase3D.Verification
 {
@@ -51,6 +53,78 @@ namespace PhysicsSim.ThreePhase3D.Verification
             }
 
             CheckSampling();
+            CheckSpatialTransport();
+
+            void CheckSpatialTransport()
+            {
+                const double dx = 1e-4, transverse = 1e-3;
+                var grid = new Grid3D(3, 1, 1, new D3(dx, transverse, transverse), RigidFrame.Identity);
+                var plan = new VariableCoefficientProjection(CutCellGeometry.Build(grid),
+                    BoundaryConditions3D.Closed, _ => 1.2, _ => 0);
+                int upstream = plan.PressureGroup(0, 0, 0), downstream = plan.PressureGroup(1, 0, 0);
+                int untouched = plan.PressureGroup(2, 0, 0);
+                var carrier = new D3(0.02, 0, 0);
+                var initialParcels = new[]
+                {
+                    (new D3(dx - 7.5e-6, transverse * 0.5, transverse * 0.5), 8e-6, temperature, 12),
+                    (new D3(dx - 13.5e-6, transverse * 0.5, transverse * 0.5), 10e-6, temperature, 20)
+                };
+                double cellAir = 1.2 * grid.CellVolume;
+                var initialGas = new (double DryAirKg, double VapourKg, double EnthalpyJ)[plan.GroupCount];
+                for (int group = 0; group < initialGas.Length; group++)
+                {
+                    double vapour = cellAir * (group == upstream ? 0.005 : 0.018);
+                    double energy = (cellAir * DropletGasCellExchange.AirCp + vapour * DropletGasCellExchange.VapourCp) *
+                        (temperature - referenceK) + vapour * DropletGasCellExchange.VapourReferenceEnthalpy;
+                    initialGas[group] = (cellAir, vapour, energy);
+                }
+                var initial = Totals(initialParcels, initialGas);
+                foreach (int steps in new[] { 10, 20 })
+                {
+                    var state = (Parcels: initialParcels, Gas: initialGas);
+                    for (int step = 0; step < steps; step++)
+                    {
+                        state = SeededFogCell.AdvanceGrid(plan, state.Parcels, state.Gas, carrier,
+                            101325, 0.026, 2.5e-5, duration / steps);
+                        var total = Totals(state.Parcels, state.Gas);
+                        if (Math.Abs(total.Water - initial.Water) > 1e-12 * initial.Water ||
+                            Math.Abs(total.Energy - initial.Energy) > 1e-12 * initial.Energy)
+                            throw new InvalidOperationException("V38 spatial fog transport failed water or enthalpy conservation.");
+                    }
+                    double evaporated = state.Gas[upstream].VapourKg - initialGas[upstream].VapourKg;
+                    double condensed = initialGas[downstream].VapourKg - state.Gas[downstream].VapourKg;
+                    if (!(evaporated > 0 && condensed > 0) || state.Gas[untouched] != initialGas[untouched])
+                        throw new InvalidOperationException("V38 spatial fog did not exchange with the expected cells.");
+                    for (int index = 0; index < state.Parcels.Length; index++)
+                    {
+                        var parcel = state.Parcels[index];
+                        if (DropletGasCellExchange.PressureGroupAt(plan, parcel.Item1) != downstream ||
+                            (parcel.Item1 - initialParcels[index].Item1 - carrier * duration).Length > 1e-16 ||
+                            parcel.Item4 != initialParcels[index].Item4)
+                            throw new InvalidOperationException("V38 spatial fog position or multiplicity did not match the reference.");
+                    }
+                    log(FormattableString.Invariant(
+                        $"S14 V38 spatial fog passed: {steps} steps, upstream evaporation {evaporated:G8} kg, downstream condensation {condensed:G8} kg."));
+                }
+            }
+
+            (double Water, double Energy) Totals((D3, double, double, int)[] parcels,
+                (double DryAirKg, double VapourKg, double EnthalpyJ)[] gas)
+            {
+                double water = 0, energy = 0;
+                foreach (var parcel in parcels)
+                {
+                    double mass = DropletGasCellExchange.Mass(parcel.Item2) * parcel.Item4;
+                    water += mass;
+                    energy += mass * DropletGasCellExchange.LiquidCp * (parcel.Item3 - referenceK);
+                }
+                foreach (var cell in gas)
+                {
+                    water += cell.VapourKg;
+                    energy += cell.EnthalpyJ;
+                }
+                return (water, energy);
+            }
 
             void CheckSampling()
             {
