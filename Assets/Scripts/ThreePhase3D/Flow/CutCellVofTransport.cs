@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Geometry;
+using PhysicsSim.ThreePhase3D.Materials;
 using PhysicsSim.ThreePhase3D.PhaseChange;
 
 namespace PhysicsSim.ThreePhase3D.Flow
@@ -252,6 +253,34 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         public CutCellTransportResult AdvanceProjected(CutCellInventories state, FlowStep pressure,
             Func<int, CutCellInflow> inflow = null) => AdvanceProjected(state, pressure, inflow, null, null, null, out _);
+
+        public (FlowStep Pressure, CutCellTransportResult Transport) AdvanceReconstructedPhaseExchange(
+            CutCellInventories state, double dt, double liquidDensityKgM3,
+            Func<int, (GasLiquidEquilibrium Surface, double MassFluxKgM2PerS, double LiquidHeatWm2,
+                double GasHeatWm2, double LatentHeatJkg)> solve,
+            Func<double[], FlowStep> project, Func<int, CutCellInflow> inflow = null)
+        {
+            if (solve == null) throw new ArgumentNullException(nameof(solve));
+            if (!SiUnits.IsFinite(liquidDensityKgM3) || liquidDensityKgM3 <= 0 ||
+                !SiUnits.IsFinite(dt) || dt <= 0)
+                throw new ArgumentException("Phase exchange requires positive density and timestep.");
+            var areas = ReconstructLiquidGasInterfaceAreas(state);
+            int count = plan.GroupCount;
+            var increments = new CutCellInventories(new double[count], new double[count],
+                new double[count], new double[count], new double[count]);
+            for (int group = 0; group < count; group++)
+            {
+                if (areas[group] == 0) continue;
+                var transfer = HumidInterfaceFlux.InventoryTransfer(solve(group), areas[group], dt,
+                    state.LiquidM3[group] * liquidDensityKgM3, state.VapourKg[group]);
+                increments.LiquidM3[group] = transfer.LiquidVolumeM3;
+                increments.GasM3[group] = transfer.GasVolumeM3;
+                increments.LiquidEnergyJ[group] = transfer.LiquidEnthalpyJ;
+                increments.GasEnergyJ[group] = transfer.GasEnthalpyJ;
+                increments.VapourKg[group] = transfer.WaterKg;
+            }
+            return AdvanceWithPhaseExchange(state, increments, dt, project, inflow);
+        }
 
         public (FlowStep Pressure, CutCellTransportResult Transport) AdvanceWithPhaseExchange(
             CutCellInventories state, CutCellInventories increments, double dt,
@@ -640,6 +669,22 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 double a = plan.Faces[lower].Area, b = plan.Faces[upper].Area;
                 return a + b == 0 ? 0 : (a * velocity[lower] + b * velocity[upper]) / (a + b);
             }
+        }
+
+        public double[] ReconstructLiquidGasInterfaceAreas(CutCellInventories fields)
+        {
+            if (fields == null) throw new ArgumentNullException(nameof(fields));
+            Validate(fields.Planes);
+            var areas = new double[plan.GroupCount];
+            for (int cell = 0; cell < plan.GroupByCell.Length; cell++)
+            {
+                int group = plan.GroupByCell[cell];
+                if (group < 0 || fields.LiquidM3[group] == 0 || fields.GasM3[group] == 0) continue;
+                var plane = geometry.Reconstruct(cell, EstimateNormal(cell, group, fields.LiquidM3),
+                    fields.LiquidM3[group] / plan.Volumes[group] * plan.Geometry.FluidVolumeM3[cell]);
+                areas[group] += geometry.LiquidGasInterfaceArea(cell, plane);
+            }
+            return areas;
         }
 
         public double[] ReconstructGasFaceAreas(CutCellInventories fields)

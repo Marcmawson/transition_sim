@@ -43,7 +43,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     Math.Abs(transfer.GasVolumeM3 + transfer.LiquidVolumeM3 -
                         HumidInterfaceFlux.NormalVelocityJumpMPerS(solved.Surface, solved.MassFluxKgM2PerS) * area * dt) > 1e-18)
                     throw new InvalidOperationException("Humid interface inventory transfer did not close.");
-                CheckProjectedPhaseExchange(transfer, dt, project, log);
+                CheckProjectedPhaseExchange(solved, dt, project, log);
             }
             log(FormattableString.Invariant(
                 $"S12 humid interface passed: evaporation {evaporation:G8}, condensation {condensation:G8} kg/m2/s, Stefan jump {velocityJump:G8} m/s."));
@@ -52,8 +52,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
         }
 
         private static void CheckProjectedPhaseExchange(
-            (double WaterKg, double LiquidVolumeM3, double GasVolumeM3,
-                double LiquidEnthalpyJ, double GasEnthalpyJ) transfer, double dt,
+            (GasLiquidEquilibrium Surface, double MassFluxKgM2PerS, double LiquidHeatWm2,
+                double GasHeatWm2, double LatentHeatJkg) solved, double dt,
             Func<VariableCoefficientProjection, float[], double, double[], FlowStep> project, Action<string> log)
         {
             var grid = new Grid3D(1, 1, 1, new D3(0.01, 0.01, 0.01), RigidFrame.Identity);
@@ -63,9 +63,13 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 new BoundaryConditions3D(sides), _ => 1.2, _ => 0);
             var state = new CutCellInventories(new[] { grid.CellVolume * 0.5 }, new[] { grid.CellVolume * 0.5 },
                 new[] { 0.1 }, new[] { 0.2 }, new[] { 5e-9 });
+            double density = solved.Surface.Liquid.DensityKgM3;
+            var transfer = HumidInterfaceFlux.InventoryTransfer(solved, grid.FaceArea(1), dt,
+                state.LiquidM3[0] * density, state.VapourKg[0]);
             var increments = new CutCellInventories(new[] { transfer.LiquidVolumeM3 }, new[] { transfer.GasVolumeM3 },
                 new[] { transfer.LiquidEnthalpyJ }, new[] { transfer.GasEnthalpyJ }, new[] { transfer.WaterKg });
-            var result = new CutCellVofTransport(plan).AdvanceWithPhaseExchange(state, increments, dt,
+            var result = new CutCellVofTransport(plan).AdvanceReconstructedPhaseExchange(state, dt, density,
+                _ => solved,
                 source => project(plan, new float[plan.FaceCount], dt, source),
                 _ => new CutCellInflow(0, 0, 3e5, 0.01));
             var advected = result.Transport;

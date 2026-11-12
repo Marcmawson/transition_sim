@@ -76,6 +76,9 @@ internal static class FlowMain
         fields.VapourKg[left] = gasMass[left] * 0.02;
         fields.VapourKg[right] = gasMass[right] * 0.01;
         var areas = new CutCellVofTransport(plan).ReconstructGasFaceAreas(fields);
+        var interfaceAreas = new CutCellVofTransport(plan).ReconstructLiquidGasInterfaceAreas(fields);
+        if (Math.Abs(interfaceAreas[left] + interfaceAreas[right] - 2 * dx * openWidth) > 1e-12)
+            throw new InvalidOperationException("The reconstructed interface area does not match the planar section.");
         double area = areas[plan.FaceIndex(0, 1, 1, 0)];
         if (Math.Abs(area - 0.5 * dx * openWidth) > 1e-12 || areas[plan.FaceIndex(0, 1, 0, 0)] != 0)
             throw new InvalidOperationException("The reconstructed aperture does not match the half-wetted face.");

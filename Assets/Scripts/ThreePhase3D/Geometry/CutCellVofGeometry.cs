@@ -109,6 +109,30 @@ namespace PhysicsSim.ThreePhase3D.Geometry
             return FluidVolume(cell, lo, hi, plane);
         }
 
+        internal double LiquidGasInterfaceArea(int cell, ClipPlane plane)
+        {
+            Bounds(cell, out D3 lo, out D3 hi);
+            double area = PolyhedronClip.SectionArea(Box(lo, hi), plane);
+            if (area == 0 || solids[cell] == null) return area;
+            var bounds = PolyhedronClip.Bounds(lo, hi);
+            double blocked = 0;
+            foreach (var tetra in solids[cell])
+            {
+                var faces = tetra.Faces;
+                foreach (var bound in bounds)
+                {
+                    faces = PolyhedronClip.Clip(faces, bound);
+                    if (faces.Count == 0) break;
+                }
+                if (faces.Count > 0) blocked += tetra.Sign * PolyhedronClip.SectionArea(faces, plane);
+            }
+            double open = area - blocked;
+            double tolerance = 1e-10 * (grid.FaceArea(0) + grid.FaceArea(1) + grid.FaceArea(2));
+            if (open < -tolerance || open > area + tolerance)
+                throw new InvalidOperationException("Solid clipping produced an invalid liquid–gas interface area.");
+            return Math.Max(0, Math.Min(area, open));
+        }
+
         internal double GasFaceSection(int cell, int axis, bool upper, ClipPlane? gasA, ClipPlane? gasB)
         {
             Bounds(cell, out D3 lo, out D3 hi);

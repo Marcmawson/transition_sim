@@ -25,16 +25,24 @@ namespace PhysicsSim.ThreePhase3D.Geometry
             }
             return result;
         }
-        internal static List<List<D3>> Clip(List<List<D3>> faces,ClipPlane plane)
+        internal static List<List<D3>> Clip(List<List<D3>> faces,ClipPlane plane) => Clip(faces, plane, false, out _);
+        internal static double SectionArea(List<List<D3>> faces, ClipPlane plane)
+        {
+            Clip(faces, plane, true, out double area);
+            return area;
+        }
+        private static List<List<D3>> Clip(List<List<D3>> faces,ClipPlane plane,bool measureSection,out double sectionArea)
         {
             var result=new List<List<D3>>();var cuts=new List<D3>();
             foreach(var face in faces){var polygon=Polygon(face,plane,cuts);if(polygon.Count>=3)result.Add(polygon);}
             var unique=new List<D3>();foreach(var p in cuts)if(!unique.Any(q=>(p-q).Length<1e-13))unique.Add(p);
+            sectionArea = 0;
             if(unique.Count>=3)
             {
                 D3 centre=new D3();foreach(var p in unique)centre+=p;centre/=unique.Count;
                 D3 axis=Math.Abs(plane.N.X)<.8?new D3(1,0,0):new D3(0,1,0),u=D3.Cross(axis,plane.N).Unit(),v=D3.Cross(plane.N,u);
                 unique.Sort((a,b)=>Math.Atan2(D3.Dot(a-centre,v),D3.Dot(a-centre,u)).CompareTo(Math.Atan2(D3.Dot(b-centre,v),D3.Dot(b-centre,u))));result.Add(unique);
+                if (measureSection) sectionArea = Area(unique);
             }
             return result;
         }
