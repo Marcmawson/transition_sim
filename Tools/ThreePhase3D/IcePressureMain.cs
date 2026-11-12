@@ -13,8 +13,8 @@ internal static class IcePressureMain
         CheckWaterline();
         CheckColumnPrediction();
         var twoPhase = IceTwoPhaseCheck.Run((plan, tentative, dt, flux) =>
-            FlowCpuReference.Project(plan, tentative, dt, 32768, null, flux));
-        Console.WriteLine($"S11 CPU two-phase ice passed: first speed {twoPhase.FirstSpeed:G6} m/s, second speed {twoPhase.SecondSpeed:G6} m/s, pressure change {twoPhase.PressureChange:G6} Pa.");
+            FlowCpuReference.Project(plan, tentative, dt, 32768, null, flux), steps: 64);
+        Console.WriteLine($"S11 CPU two-phase ice passed: first speed {twoPhase.FirstSpeed:G6} m/s, second speed {twoPhase.SecondSpeed:G6} m/s, pressure change {twoPhase.PressureChange:G6} Pa, submerged fraction after 64 steps {twoPhase.SubmergedFraction:P4}.");
         const double g = 9.81, rho = 1000;
         var size = new D3(0.04, 0.03, 0.02);
         var centre = new D3(0.055, 0.054, 0.053);

@@ -36,7 +36,7 @@ The CPU fixture rebuilds the geometry after translating a box 4 mm across one fa
 
 The reconciliation starts from the projected face velocity times old aperture and timestep. It computes each cell's residual against the exact old-to-new fluid capacity change. A weighted graph Laplacian distributes the correction across interior faces open at both poses. The solve rejects an unclosed residual or a face correction larger than the supplied budget. The scalar remap separately checks available donor volume and final cell closure.
 
-The CPU fixture advances the submerged box using the coupled pressure step, rebuilds the geometry at its accepted pose, and uses the projected velocities to remap water and enthalpy. The check passed at both grid offsets, preserving uniform energy density and total water volume. The correction budget was 0.5% of one cell volume per face. The current path requires a closed domain and rejects projected flow through faces that close or lose a fluid endpoint. The staggered momentum transfer follows below. Free-surface flotation remains open.
+The CPU fixture advances the submerged box using the coupled pressure step, rebuilds the geometry at its accepted pose, and uses the projected velocities to remap water and enthalpy. The check passed at both grid offsets, preserving uniform energy density and total water volume. The correction budget was 0.5% of one cell volume per face. The current path requires a closed domain. A face that closes can carry its old-pose projected transfer if an old donor and a new receiver exist. Corrections use faces open at both poses. The staggered momentum transfer follows below. Free-surface flotation remains open.
 
 ## Staggered momentum across poses
 
@@ -83,3 +83,9 @@ The CPU fixture kept a flat surface at rest and reproduced the analytic downslop
 Run **Physics Sim > Three Phase 3D > Run S11 GPU two-phase ice check**. This uses the same two-step V24 fixture and conservation checks as the CPU runner. Unity dispatches the moving-wall pressure solve on the GPU and compares both ice speeds with the CPU reference to within 2e-6 m/s. Geometry, phase inventories, hydrostatic reconstruction and remapping run on the host.
 
 The CPU fixture passed after extraction and the runtime and Editor code compiled separately against Unity 2022.3.46f1. Device execution and the longer flotation run remain pending.
+
+## Extended two-phase continuation
+
+The CPU fixture advances 64 consecutive 2 ms steps from 50% submerged and checks all five phase inventories after each remap. The final displaced volume is measured by intersecting the ice with the reconstructed liquid columns. At 0.128 s the ice was 95.0972% submerged and the conservation checks passed.
+
+The longer run exercised faces that close during a pose change. The remap retains their first-order projected transfers when the donor exists in the old geometry and the receiver exists in the new geometry. It still checks donor capacity, volume closure and the correction budget. This is a transient result. Settling to the equilibrium displaced volume and GPU execution of the two-phase check remain open.

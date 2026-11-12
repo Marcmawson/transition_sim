@@ -116,9 +116,11 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return Pressure(x, z, grid.Frame.ToLocal(worldPointM).Y);
         }
 
+        internal double WaterlineLocalM(int x, int z) => waterline[z * grid.Cells.X + x];
+
         private double Pressure(int x, int z, double pointY)
         {
-            double height = waterline[z * grid.Cells.X + x];
+            double height = WaterlineLocalM(x, z);
             double waterDepth = Math.Max(0, height - pointY);
             double airDepth = grid.Cells.Y * grid.Spacing.Y - Math.Max(pointY, height);
             return liquidSlope * waterDepth + gasSlope * airDepth;

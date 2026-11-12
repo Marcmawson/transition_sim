@@ -50,18 +50,24 @@ namespace PhysicsSim.ThreePhase3D.Flow
                         continue;
                     }
                     int low = grid.Cells.Index(x, y, z), high = grid.Cells.Index(i, j, k);
-                    double weight = Math.Min(oldArea[face], newArea[face]) / grid.FaceArea(axis);
-                    if (weight <= 1e-12 || oldPlan.GroupByCell[low] < 0 || oldPlan.GroupByCell[high] < 0 ||
-                        newPlan.GroupByCell[low] < 0 || newPlan.GroupByCell[high] < 0)
-                    {
-                        if (velocity != 0) throw new NotSupportedException("Projected flux crosses a face blocked at an endpoint pose.");
-                        continue;
-                    }
+                    // A face can carry fluid during the step even if the
+                    // new pose closes it. The transfer still needs an old
+                    // donor and a new receiver.
                     double transfer = velocity * oldArea[face] * flow.Diagnostics.Dt;
-                    swept[axis][face] = transfer;
-                    rhs[low] -= transfer;
-                    rhs[high] += transfer;
-                    faces.Add((axis, face, low, high, weight));
+                    if (transfer != 0)
+                    {
+                        int donor = transfer > 0 ? low : high;
+                        int receiver = transfer > 0 ? high : low;
+                        if (oldPlan.GroupByCell[donor] < 0 || newPlan.GroupByCell[receiver] < 0)
+                            throw new NotSupportedException("Projected flux has no fluid donor or receiver across the pose change.");
+                        swept[axis][face] = transfer;
+                        rhs[low] -= transfer;
+                        rhs[high] += transfer;
+                    }
+                    double weight = Math.Min(oldArea[face], newArea[face]) / grid.FaceArea(axis);
+                    if (weight > 1e-12 && oldPlan.GroupByCell[low] >= 0 && oldPlan.GroupByCell[high] >= 0 &&
+                        newPlan.GroupByCell[low] >= 0 && newPlan.GroupByCell[high] >= 0)
+                        faces.Add((axis, face, low, high, weight));
                 }
             }
 

@@ -8,10 +8,11 @@ namespace PhysicsSim.ThreePhase3D.Verification
 {
     public static class IceTwoPhaseCheck
     {
-        public static (double FirstSpeed, double SecondSpeed, double PressureChange) Run(
-            Func<VariableCoefficientProjection, float[], double, double[], FlowStep> project)
+        public static (double FirstSpeed, double SecondSpeed, double PressureChange, double SubmergedFraction) Run(
+            Func<VariableCoefficientProjection, float[], double, double[], FlowStep> project, int steps = 2)
         {
             if (project == null) throw new ArgumentNullException(nameof(project));
+            if (steps < 2) throw new ArgumentOutOfRangeException(nameof(steps));
             const double rhoWater = 1000, rhoAir = 1.2, g = 9.81, dt = 0.002;
             var grid = new Grid3D(8, 8, 8, new D3(0.01, 0.01, 0.01));
             var centre = new D3(0.038, 0.041, 0.039);
@@ -82,7 +83,40 @@ namespace PhysicsSim.ThreePhase3D.Verification
             for (int field = 0; field < inventory.Planes.Length; field++)
                 Near(Math.Abs(System.Linq.Enumerable.Sum(final.Fields.Planes[field]) -
                     System.Linq.Enumerable.Sum(inventory.Planes[field])), 1e-13);
-            return (moved.Body.VelocityMPerS.Y, second.Body.VelocityMPerS.Y, pressureChange);
+            var currentBody = second.Body;
+            for (int step = 2; step < steps; step++)
+            {
+                var currentPlan = WithPhaseDensity(finalTopology, final.Fields);
+                var currentColumn = new ColumnHydrostaticPressure(currentPlan, final.Fields, gravity, rhoWater, rhoAir);
+                var input = currentColumn.Predict(Array.ConvertAll(final.Momentum.VelocityMPerS, value => (float)value), dt);
+                var accepted = IcePressureCoupling.Advance(currentBody, currentPlan, dt, gravity,
+                    flux => project(currentPlan, input, dt, flux), columnPressure: currentColumn);
+                finalTopology = new VariableCoefficientProjection(Geometry(accepted.Body), boundaries, _ => rhoWater, _ => 0);
+                var transfers = MovingCutCellRemap.Reconcile(currentPlan, finalTopology, accepted.Fluid, 0.005 * grid.CellVolume);
+                final = MovingCutCellRemap.ApplyWithMomentum(currentPlan, finalTopology, final.Fields,
+                    transfers, accepted.Fluid.VelocityMPerS, rhoWater, rhoAir);
+                currentBody = accepted.Body;
+                for (int field = 0; field < inventory.Planes.Length; field++)
+                    Near(Math.Abs(System.Linq.Enumerable.Sum(final.Fields.Planes[field]) -
+                        System.Linq.Enumerable.Sum(inventory.Planes[field])), 1e-13);
+            }
+
+            var finalColumn = new ColumnHydrostaticPressure(finalTopology, final.Fields, gravity, rhoWater, rhoAir);
+            var fluid = new CutCellVofGeometry(finalTopology.Geometry);
+            var empty = new CutCellVofGeometry(CutCellGeometry.Build(grid));
+            double submerged = 0;
+            for (int cell = 0; cell < grid.Cells.Count; cell++)
+            {
+                if (finalTopology.Geometry.IceVolumeM3[cell] <= 0) continue;
+                grid.Cells.Coordinates(cell, out int x, out int y, out int z);
+                if (!grid.Cells.Interior(x, y, z)) continue;
+                var plane = new ClipPlane(new D3(0, 1, 0), new D3(0, finalColumn.WaterlineLocalM(x, z), 0));
+                submerged += empty.LiquidVolume(cell, plane) - fluid.LiquidVolume(cell, plane);
+            }
+            double fraction = submerged / (size.X * size.Y * size.Z);
+            if (!(fraction > 0.5 && fraction <= 1 + 1e-10))
+                throw new InvalidOperationException("The sinking ice did not increase its submerged volume.");
+            return (moved.Body.VelocityMPerS.Y, second.Body.VelocityMPerS.Y, pressureChange, fraction);
         }
 
         private static void Near(double error, double tolerance)
