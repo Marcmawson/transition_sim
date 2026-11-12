@@ -3,6 +3,7 @@ using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
 using PhysicsSim.ThreePhase3D.Geometry;
 using PhysicsSim.ThreePhase3D.Solids;
+using PhysicsSim.ThreePhase3D.Verification;
 
 internal static class IcePressureMain
 {
@@ -11,7 +12,9 @@ internal static class IcePressureMain
         CheckRemap();
         CheckWaterline();
         CheckColumnPrediction();
-        CheckTwoPhaseMotion();
+        var twoPhase = IceTwoPhaseCheck.Run((plan, tentative, dt, flux) =>
+            FlowCpuReference.Project(plan, tentative, dt, 32768, null, flux));
+        Console.WriteLine($"S11 CPU two-phase ice passed: first speed {twoPhase.FirstSpeed:G6} m/s, second speed {twoPhase.SecondSpeed:G6} m/s, pressure change {twoPhase.PressureChange:G6} Pa.");
         const double g = 9.81, rho = 1000;
         var size = new D3(0.04, 0.03, 0.02);
         var centre = new D3(0.055, 0.054, 0.053);
@@ -155,83 +158,6 @@ internal static class IcePressureMain
         double expected = -dt * g * (rhoWater - rhoAir) * 0.001 * plan.Faces[face].Mobility;
         Near(Math.Abs(slopedPressure.Predict(still, dt)[face] - expected), 1e-9);
         Console.WriteLine($"S11 column prediction passed: flat surface at rest, downslope face speed {expected:G6} m/s.");
-    }
-
-    private static void CheckTwoPhaseMotion()
-    {
-        const double rhoWater = 1000, rhoAir = 1.2, g = 9.81, dt = 0.002;
-        var grid = new Grid3D(8, 8, 8, new D3(0.01, 0.01, 0.01));
-        var centre = new D3(0.038, 0.041, 0.039);
-        var waterline = new D3(0, centre.Y, 0);
-        var size = new D3(0.018, 0.017, 0.016);
-        var box = SurfacePrimitives.Box(size * -0.5, size * 0.5);
-        var body = IceBody.Box(917, size, RigidFrame.Euler(centre, 0.14, 0, 0));
-        CutCellGeometry Geometry(IceBody pose) => CutCellGeometry.Build(grid,
-            iceSurface: SurfacePrimitives.Transform(box, pose.Frame));
-        var geometry = Geometry(body);
-        var boundaries = BoundaryConditions3D.Closed;
-        var topology = new VariableCoefficientProjection(geometry, boundaries, _ => rhoWater, _ => 0);
-        var inventory = PlanarLiquidInventory.Create(topology, waterline, new D3(0, 1, 0), 42, 12, 0.01);
-        double water = System.Linq.Enumerable.Sum(inventory.LiquidM3);
-        Near(Math.Abs(water - (0.08 * 0.08 * centre.Y - 0.5 * size.X * size.Y * size.Z)), 1e-15);
-        VariableCoefficientProjection WithPhaseDensity(VariableCoefficientProjection groups, CutCellInventories fields) =>
-            new VariableCoefficientProjection(groups.Geometry, boundaries, cell =>
-        {
-            int group = groups.GroupByCell[cell];
-            return group < 0 ? rhoAir :
-                (rhoWater * fields.LiquidM3[group] + rhoAir * fields.GasM3[group]) / groups.Volumes[group];
-        }, _ => 0);
-        var plan = WithPhaseDensity(topology, inventory);
-        var gravity = new D3(0, -g, 0);
-        var initialColumn = new ColumnHydrostaticPressure(plan, inventory, gravity, rhoWater, rhoAir);
-        int sampleCell = grid.Cells.Index(0, 1, 0);
-        var sample = grid.Centre(0, 1, 0);
-        double expectedPressure = g * (rhoWater * (waterline.Y - sample.Y) + rhoAir * (0.08 - waterline.Y));
-        Near(Math.Abs(initialColumn.At(sampleCell, sample) - expectedPressure), 1e-8);
-        var still = new float[plan.FaceCount];
-        var moved = IcePressureCoupling.Advance(body, plan, dt, new D3(0, -g, 0),
-            flux => FlowCpuReference.Project(plan, still, dt, 32768, null, flux),
-            point => rhoWater * g * Math.Max(0, waterline.Y - point.Y));
-        var updatedGeometry = Geometry(moved.Body);
-        var updatedPlan = new VariableCoefficientProjection(updatedGeometry, boundaries, _ => rhoWater, _ => 0);
-        var swept = MovingCutCellRemap.Reconcile(plan, updatedPlan, moved.Fluid, 0.005 * grid.CellVolume);
-        var updated = MovingCutCellRemap.ApplyWithMomentum(plan, updatedPlan, inventory, swept,
-            moved.Fluid.VelocityMPerS, rhoWater, rhoAir);
-        for (int field = 0; field < inventory.Planes.Length; field++)
-            Near(Math.Abs(System.Linq.Enumerable.Sum(updated.Fields.Planes[field]) -
-                System.Linq.Enumerable.Sum(inventory.Planes[field])), 1e-13);
-        var staticSurface = PlanarLiquidInventory.Create(updatedPlan, waterline, new D3(0, 1, 0), 42, 12, 0.01);
-        double redistribution = 0;
-        for (int group = 0; group < updatedPlan.GroupCount; group++)
-            redistribution += Math.Abs(updated.Fields.LiquidM3[group] - staticSurface.LiquidM3[group]);
-        if (moved.Body.VelocityMPerS.Y >= 0 || redistribution <= 1e-12)
-            throw new InvalidOperationException("Two-phase ice step failed to sink or redistribute the water inventory.");
-        var secondPlan = WithPhaseDensity(updatedPlan, updated.Fields);
-        var column = new ColumnHydrostaticPressure(secondPlan, updated.Fields, gravity, rhoWater, rhoAir);
-        double pressureChange = 0;
-        for (int z = 0; z < grid.Cells.Z; z++)
-        for (int x = 0; x < grid.Cells.X; x++)
-        {
-            int cell = grid.Cells.Index(x, 0, z);
-            var point = grid.Centre(x, 0, z);
-            pressureChange = Math.Max(pressureChange, Math.Abs(column.At(cell, point) - initialColumn.At(cell, point)));
-        }
-        var tentative = column.Predict(Array.ConvertAll(updated.Momentum.VelocityMPerS, value => (float)value), dt);
-        var second = IcePressureCoupling.Advance(moved.Body, secondPlan, dt, gravity,
-            flux => FlowCpuReference.Project(secondPlan, tentative, dt, 32768, null, flux),
-            columnPressure: column);
-        if (pressureChange <= 1e-5 || second.Body.Frame.Origin.Y >= moved.Body.Frame.Origin.Y)
-            throw new InvalidOperationException("Transported liquid did not update hydrostatic loading and ice motion.");
-        var finalTopology = new VariableCoefficientProjection(Geometry(second.Body), boundaries, _ => rhoWater, _ => 0);
-        var secondSweep = MovingCutCellRemap.Reconcile(secondPlan, finalTopology, second.Fluid, 0.005 * grid.CellVolume);
-        var final = MovingCutCellRemap.ApplyWithMomentum(secondPlan, finalTopology, updated.Fields,
-            secondSweep, second.Fluid.VelocityMPerS, rhoWater, rhoAir);
-        for (int field = 0; field < inventory.Planes.Length; field++)
-            Near(Math.Abs(System.Linq.Enumerable.Sum(final.Fields.Planes[field]) -
-                System.Linq.Enumerable.Sum(inventory.Planes[field])), 1e-13);
-        Console.WriteLine($"S11 updated water-column pressure passed: maximum change {pressureChange:G6} Pa, second-step speed {second.Body.VelocityMPerS.Y:G6} m/s.");
-        Console.WriteLine(FormattableString.Invariant(
-            $"S11 two-phase ice step passed: vertical speed {moved.Body.VelocityMPerS.Y:G6} m/s, water redistribution {redistribution:G6} m3."));
     }
 
     private static void CheckWaterline()

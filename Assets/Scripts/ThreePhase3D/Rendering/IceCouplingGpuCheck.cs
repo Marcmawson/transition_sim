@@ -4,6 +4,7 @@ using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
 using PhysicsSim.ThreePhase3D.Geometry;
 using PhysicsSim.ThreePhase3D.Solids;
+using PhysicsSim.ThreePhase3D.Verification;
 using UnityEngine;
 
 namespace PhysicsSim.ThreePhase3D.Rendering
@@ -17,6 +18,47 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 throw new NotSupportedException("The S11 ice check requires the GPU pressure solver.");
             Check(shader, 0, 0.000257786, cancel);
             Check(shader, 0.003, 0.000260333, cancel);
+        }
+
+        public static void RunTwoPhase(Func<string, float, bool> cancel)
+        {
+            var shader = Resources.Load<ComputeShader>("ThreePhase3D/SinglePhaseFlow");
+            if (!SystemInfo.supportsComputeShaders || shader == null)
+                throw new NotSupportedException("The S11 two-phase check requires the GPU pressure solver.");
+
+            FlowGpuSolver solver = null;
+            VariableCoefficientProjection activePlan = null;
+            double[] pressureSeed = null;
+            int step = 0, trial = 0;
+            try
+            {
+                var result = IceTwoPhaseCheck.Run((plan, tentative, dt, flux) =>
+                {
+                    if (activePlan != plan)
+                    {
+                        solver?.Dispose();
+                        solver = new FlowGpuSolver(plan, null, shader);
+                        activePlan = plan;
+                        pressureSeed = null;
+                        step++;
+                        trial = 0;
+                    }
+                    if (cancel?.Invoke($"Two-phase step {step}/2, projection {++trial}", (step - 1) / 2f) == true)
+                        throw new OperationCanceledException();
+                    var projected = solver.Project(tentative, dt, 32768,
+                        initialPressure: pressureSeed, boundaryFlux: flux);
+                    pressureSeed = projected.GroupPressurePa;
+                    return projected;
+                });
+                if (Math.Abs(result.FirstSpeed - (-0.00747123)) > 2e-6 ||
+                    Math.Abs(result.SecondSpeed - (-0.0143223)) > 2e-6)
+                    throw new InvalidOperationException($"S11 GPU two-phase speeds differ from the CPU reference: {result.FirstSpeed:G6}, {result.SecondSpeed:G6} m/s.");
+                Debug.Log($"S11 GPU two-phase ice passed: first speed {result.FirstSpeed:G6} m/s, second speed {result.SecondSpeed:G6} m/s, pressure change {result.PressureChange:G6} Pa.");
+            }
+            finally
+            {
+                solver?.Dispose();
+            }
         }
 
         private static void Check(ComputeShader shader, double offset, double referenceRise,

@@ -77,3 +77,9 @@ In the CPU fixture, the initial flat surface reproduced the analytic column pres
 The predictor uses an analytic vertical gravity/pressure balance within each column. Horizontal faces receive the pressure jump between adjacent columns at the face height, multiplied by the same face mobility as the dynamic projection. The coupled solve projects these tentative velocities with the trial ice boundary flux.
 
 The CPU fixture kept a flat surface at rest and reproduced the analytic downslope tentative face speed of -0.00195965 m/s for a 1 mm water-height difference across one face. The two-phase ice fixture now uses this predictor in its second step and still closes all five inventory ledgers. The column model assumes one waterline per column on a gravity-aligned closed grid. Equilibrium settling and GPU execution of this two-phase path remain open.
+
+## Unity GPU two-phase verification
+
+Run **Physics Sim > Three Phase 3D > Run S11 GPU two-phase ice check**. This uses the same two-step V24 fixture and conservation checks as the CPU runner. Unity dispatches the moving-wall pressure solve on the GPU and compares both ice speeds with the CPU reference to within 2e-6 m/s. Geometry, phase inventories, hydrostatic reconstruction and remapping run on the host.
+
+The CPU fixture passed after extraction and the runtime and Editor code compiled separately against Unity 2022.3.46f1. Device execution and the longer flotation run remain pending.

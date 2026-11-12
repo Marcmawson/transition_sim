@@ -8,16 +8,21 @@ namespace PhysicsSim.ThreePhase3D.Editor
     public static class IceCouplingVerificationMenu
     {
         [MenuItem("Physics Sim/Three Phase 3D/Run S11 GPU submerged ice check")]
-        public static void Run()
+        public static void Run() => RunWithProgress("S11 GPU submerged ice", IceCouplingGpuCheck.Run);
+
+        [MenuItem("Physics Sim/Three Phase 3D/Run S11 GPU two-phase ice check")]
+        public static void RunTwoPhase() => RunWithProgress("S11 GPU two-phase ice", IceCouplingGpuCheck.RunTwoPhase);
+
+        private static void RunWithProgress(string title, Action<Func<string, float, bool>> check)
         {
             try
             {
-                IceCouplingGpuCheck.Run((message, progress) =>
-                    EditorUtility.DisplayCancelableProgressBar("S11 GPU submerged ice", message, progress));
+                check((message, progress) =>
+                    EditorUtility.DisplayCancelableProgressBar(title, message, progress));
             }
             catch (OperationCanceledException)
             {
-                Debug.Log("S11 GPU submerged ice check cancelled.");
+                Debug.Log($"{title} check cancelled.");
             }
             finally
             {
