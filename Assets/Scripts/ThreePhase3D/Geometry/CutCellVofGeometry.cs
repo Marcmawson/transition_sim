@@ -109,6 +109,36 @@ namespace PhysicsSim.ThreePhase3D.Geometry
             return FluidVolume(cell, lo, hi, plane);
         }
 
+        internal double FluidNormalDistance(int cell, D3 point, D3 outward)
+        {
+            Bounds(cell, out D3 lo, out D3 hi);
+            var halfSpace = new ClipPlane(-outward, point);
+            var bounds = PolyhedronClip.Bounds(lo, hi);
+            double volume = 0, moment = 0;
+            Accumulate(Box(lo, hi), 1);
+            if (solids[cell] != null)
+                foreach (var tetra in solids[cell])
+                {
+                    var faces = tetra.Faces;
+                    foreach (var bound in bounds)
+                    {
+                        faces = PolyhedronClip.Clip(faces, bound);
+                        if (faces.Count == 0) break;
+                    }
+                    if (faces.Count > 0) Accumulate(faces, -tetra.Sign);
+                }
+            return volume > 0 ? moment / volume : 0;
+
+            void Accumulate(List<List<D3>> faces, double sign)
+            {
+                var clipped = PolyhedronClip.Clip(faces, halfSpace);
+                double amount = PolyhedronClip.Volume(clipped);
+                if (amount <= 0) return;
+                volume += sign * amount;
+                moment += sign * amount * D3.Dot(PolyhedronClip.VolumeCentroid(clipped) - point, outward);
+            }
+        }
+
         private void Bounds(int cell, out D3 lo, out D3 hi)
         {
             grid.Cells.Coordinates(cell, out int i, out int j, out int k);

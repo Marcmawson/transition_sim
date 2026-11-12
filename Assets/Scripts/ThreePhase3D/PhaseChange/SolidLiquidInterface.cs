@@ -77,17 +77,25 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
         private ThermodynamicState LiquidAt(double temperatureK)
         {
             // The upper endpoint was checked for liquid stability. In this
-            // narrow interval, follow the dense EOS root directly, including
-            // the short interval below the triple-point temperature.
+            // narrow interval, follow the dense EOS root directly.
             double density = 1000;
+            ThermodynamicState best = default;
+            double bestError = double.PositiveInfinity;
             for (int i = 0; i < 12; i++)
             {
                 var state = water.ReferenceRhoT(temperatureK, density);
                 double error = state.PressurePa - pressurePa;
                 if (Math.Abs(error) < Math.Max(3e-5, pressurePa * 1e-11)) return state;
+                if (Math.Abs(error) < bestError)
+                {
+                    best = state;
+                    bestError = Math.Abs(error);
+                }
                 density -= error * state.DensityPressureDerivative;
                 if (!SiUnits.IsFinite(density) || density < 990 || density > 1010) break;
             }
+            // The dense root can oscillate at the numerical pressure noise floor.
+            if (bestError < 1e-3) return best;
             throw new InvalidOperationException("The dense liquid density inversion did not converge.");
         }
 

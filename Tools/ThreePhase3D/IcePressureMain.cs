@@ -29,8 +29,8 @@ internal static class IcePressureMain
     {
         var equilibrium = new SolidLiquidInterface(101325, 250, 290);
         double rho = equilibrium.LiquidMeltingDensityKgM3;
-        var size = new D3(0.022, 0.018, 0.016);
-        var body = IceBody.Box(917, size, RigidFrame.Euler(new D3(0.035, 0.039, 0.038), 0, 0, 0));
+        var size = new D3(0.022, 0.02, 0.02);
+        var body = IceBody.Box(917, size, RigidFrame.Euler(new D3(0.035, 0.04, 0.04), 0, 0, 0));
         var box = SurfacePrimitives.Box(-size * 0.5, size * 0.5);
         var grid = new Grid3D(8, 8, 8, new D3(0.01, 0.01, 0.01), RigidFrame.Identity);
         var geometry = CutCellGeometry.Build(grid, iceSurface: SurfacePrimitives.Transform(box, body.Frame));
@@ -47,7 +47,7 @@ internal static class IcePressureMain
         var normal = new D3(1, 0, 0);
         var transfer = IceFaceConduction.Transfer(plan, fields, body, equilibrium, normal, dt,
             rho, conductivity, warm, patch => patch.FluidExposedAreaM2);
-        double expected = conductivity * size.Y * size.Z * 10 * dt / 0.001;
+        double expected = conductivity * size.Y * size.Z * 10 * dt / 0.002;
         Near(Math.Abs(transfer.HeatJ - expected), 1e-12);
         double removed = 0;
         for (int group = 0; group < plan.GroupCount; group++)

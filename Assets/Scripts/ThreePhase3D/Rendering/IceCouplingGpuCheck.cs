@@ -124,9 +124,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     pressureSeed = flow.GroupPressurePa;
                     return flow;
                 });
-                if (Math.Abs(result.HeatJ / 0.0020747506 - 1) > 0.01 ||
-                    Math.Abs(result.MassLossKg / 6.2225123e-9 - 1) > 0.01 ||
-                    Math.Abs(result.DisplacementM - 2.6307321e-6) > 1e-6)
+                if (Math.Abs(result.HeatJ / 0.0041447627 - 1) > 0.01 ||
+                    Math.Abs(result.MassLossKg / 1.2430813e-8 - 1) > 0.01 ||
+                    Math.Abs(result.DisplacementM - 2.6424854e-6) > 1e-6)
                     throw new InvalidOperationException($"S11 GPU moving melt differs from the CPU baseline: heat {result.HeatJ:G8} J, ice loss {result.MassLossKg:G8} kg, centre displacement {result.DisplacementM:G8} m.");
                 Debug.Log($"S11 GPU moving melt passed: heat {result.HeatJ:G8} J, ice loss {result.MassLossKg:G8} kg, centre displacement {result.DisplacementM:G8} m.");
             }

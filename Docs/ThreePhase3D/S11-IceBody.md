@@ -232,3 +232,15 @@ Run `dotnet run --project Tools/ThreePhase3D/IcePressureChecks.csproj -- --melt-
 | 12³ | 0.0020725143 | 6.2158052e-9 | 2.3867571 |
 
 All three runs passed the water mass, gas mass and thermal enthalpy checks. Heat transfer varied non-monotonically with resolution. The melting face begins at 32.5 mm. The conduction stencil's initial absolute distance from that face to the geometric cell centre is 2.5 mm on the 8³ and 12³ grids and 3.5 mm on the 10³ grid. The inverse-distance ratio predicts a 28.6% drop, consistent with the measured 28.6% drop at 10³. The heat transfer has yet to demonstrate spatial convergence.
+
+## V26 exposed-side heat-flux stencil
+
+The stencil clips the cut cell to the exposed half-space of the ice face, subtracts solid occupancy, and uses the normal distance to that fluid centroid. The supplied wetted area and pressure-group liquid temperature still determine the heat input. The planar CPU check recovered 0.012 J through a 2 mm centroid distance and closed the mass and enthalpy balances. The dense-liquid EOS retains its strict pressure target and accepts the best iterate within 0.001 Pa when further iterations stall.
+
+| Grid | Heat transferred (J) | Ice mass loss (kg) | Centre displacement (µm) |
+| --- | ---: | ---: | ---: |
+| 8³ | 0.0041447627 | 1.2430813e-8 | 2.6424854 |
+| 10³ | 0.020669314 | 6.1990611e-8 | 2.5299338 |
+| 12³ | 0.0017769663 | 5.3294091e-9 | 2.3850789 |
+
+All three cases passed the inventory checks. The 10³ face lies just 0.5 mm from the lower cell boundary, leaving a liquid-side centroid distance of 0.25 mm at the start. The resulting large gradient shows that coupling a group-average temperature directly to a very thin cut-cell sample still leaves the melt rate strongly dependent on grid alignment. Spatial convergence remains open. The Unity check now compares against the revised 8³ CPU baseline and awaits a GPU run.

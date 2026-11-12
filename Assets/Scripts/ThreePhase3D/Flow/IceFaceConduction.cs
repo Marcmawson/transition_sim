@@ -31,6 +31,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             var localNormal = new D3(D3.Dot(normal, gridFrame.U), D3.Dot(normal, gridFrame.V),
                 D3.Dot(normal, gridFrame.W));
             var extraction = new double[plan.GroupCount];
+            CutCellVofGeometry clipping = null;
             foreach (var patch in plan.Geometry.Patches)
             {
                 if (patch.Role != SolidRole.Ice || patch.FluidExposedAreaM2 <= 0 ||
@@ -46,9 +47,11 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 if (!SiUnits.IsFinite(excessK))
                     throw new ArgumentException("Liquid temperature must be finite.", nameof(liquidTemperatureK));
                 if (excessK <= 0) continue;
-                if (!(patch.CellCentreNormalDistanceM > 0))
-                    throw new InvalidOperationException("Conduction requires a positive normal sample distance.");
-                extraction[group] += seconds * conductivityWmK * wet * excessK / patch.CellCentreNormalDistanceM;
+                clipping ??= new CutCellVofGeometry(plan.Geometry);
+                double distance = clipping.FluidNormalDistance(patch.Cell, patch.CentroidLocalM, patch.NormalLocal);
+                if (!(distance > 0) || !SiUnits.IsFinite(distance))
+                    throw new InvalidOperationException("Conduction requires a fluid centroid on the exposed side of the ice face.");
+                extraction[group] += seconds * conductivityWmK * wet * excessK / distance;
             }
 
             double heat = 0;
