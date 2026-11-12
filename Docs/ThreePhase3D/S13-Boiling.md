@@ -33,3 +33,9 @@ At 101325 Pa over 20 ms, a 0.5 mm seed reached 0.53760683 mm at 2 K superheat an
 Run `FlowMain --bubble-rise`. The CPU fixture initializes a tessellated vapour seed of 1.6 mm radius in an 8³ closed grid with 1 mm cells. The variable-density pressure projection and phase momentum transport advance the bubble at saturation densities. Over six 0.4 ms steps the vapour centroid rose 2.6590927e-5 m under gravity and stayed still in the zero-gravity control. The phase volumes, vapour mass and both enthalpy inventories closed within tolerance.
 
 The fixture exposed trace-phase roundoff in the CPU scalar transport. The donor update now separates retained material from receipts, limits transfers to the available donor volume, and carries its remaining enthalpy and vapour. Volume closure preserves the smaller phase directly. This check isolates early buoyant motion with phase change, viscosity and capillarity disabled. Rise-speed convergence, coupled growth and motion, and the GPU path remain open.
+
+## Growing bubble with gravity and an open outlet
+
+Run `FlowMain --bubble-growth-rise`. The 3D fixture enables an open top boundary and applies a prescribed 10000 W/m² heat flux to the reconstructed pure-water interface. It rebuilds the pressure density from the transported phase fractions and projects gravity and the Stefan volume source together. The projected velocity is carried to the next step. This fixture omits a separate momentum-advection update during phase exchange.
+
+After six 0.4 ms steps, the gravity case gained 1.1182693e-9 m³ of vapour and its centroid rose 68.709737 µm. The open-outlet, zero-gravity control rose 41.688666 µm with phase change active. Both runs balanced vapour production, total water mass and enthalpy against the signed outlet ledger. This is an integration check of the coupled source and flow response. Heat flux is prescribed, and growth and rise rates remain unvalidated under spatial refinement.

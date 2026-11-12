@@ -14,6 +14,11 @@ internal static class FlowMain
             CheckResolvedBubbleRise();
             return 0;
         }
+        if (args.Length == 1 && args[0] == "--bubble-growth-rise")
+        {
+            CheckResolvedBubbleRise(growing: true);
+            return 0;
+        }
         if (args.Length == 1 && args[0] == "--pure-stefan")
         {
             CheckPureWaterStefan();
@@ -62,7 +67,7 @@ internal static class FlowMain
         return suite.Passed ? 0 : 1;
     }
 
-    private static void CheckResolvedBubbleRise()
+    private static void CheckResolvedBubbleRise(bool growing = false)
     {
         const double dx = 0.001, dt = 0.0004;
         var grid = new Grid3D(8, 8, 8, new D3(dx, dx, dx), RigidFrame.Identity);
@@ -71,9 +76,13 @@ internal static class FlowMain
             RigidFrame.Euler(centre, 0, 0, 0));
         var seed = CutCellGeometry.Build(grid, iceSurface: sphere);
         var domain = CutCellGeometry.Build(grid);
-        var saturation = new PureWaterStefanInterface(101325, 370, 377, 0, 0).Saturation;
+        var surface = new PureWaterStefanInterface(101325, 370, 377, growing ? 10000 : 0, 0);
+        var saturation = surface.Saturation;
         double rhoL = saturation.Liquid.DensityKgM3, rhoG = saturation.Vapour.DensityKgM3;
-        var plan = new VariableCoefficientProjection(domain, BoundaryConditions3D.Closed,
+        var sides = new FlowBoundary[6];
+        if (growing) sides[3] = new FlowBoundary(FlowBoundaryKind.OpenPressure);
+        var boundaries = new BoundaryConditions3D(sides);
+        var plan = new VariableCoefficientProjection(domain, boundaries,
             cell => rhoL + (rhoG - rhoL) * seed.IceVolumeM3[cell] / grid.CellVolume, _ => 0);
         var gas = new double[plan.GroupCount];
         var centres = new D3[plan.GroupCount];
@@ -94,6 +103,18 @@ internal static class FlowMain
         var transport = new CutCellVofTransport(plan);
         double volume = Sum(gas);
         D3 initial = Centre(gas);
+        if (growing)
+        {
+            var noGravity = RunGrowing(0);
+            var withGravity = RunGrowing(-9.81);
+            var rise = Centre(withGravity.GasM3) - initial;
+            double control = (Centre(noGravity.GasM3) - initial).Y;
+            if (!(rise.Y - control > 1e-8 && Sum(withGravity.GasM3) > volume))
+                throw new InvalidOperationException("The phase-changing vapour seed did not grow and rise.");
+            Console.WriteLine(FormattableString.Invariant(
+                $"S13 growing bubble passed: 6 steps, rise {rise.Y:G8} m, no-gravity rise {control:G8} m, vapour gained {Sum(withGravity.GasM3) - volume:G8} m3."));
+            return;
+        }
         var still = Run(default);
         var rising = Run(new D3(0, -9.81, 0));
         var displacement = Centre(rising.GasM3) - initial;
@@ -119,6 +140,43 @@ internal static class FlowMain
                     if (Math.Abs(Sum(fields.Planes[field]) - before) > Math.Abs(before) * 1e-9)
                         throw new InvalidOperationException("The closed bubble fixture failed an inventory balance.");
                 }
+            }
+            return fields;
+        }
+
+        CutCellInventories RunGrowing(double gravityY)
+        {
+            var fields = state;
+            var velocity = new float[plan.FaceCount];
+            double water = Sum(state.LiquidM3) * rhoL + Sum(state.VapourKg);
+            double energy = Sum(state.LiquidEnergyJ) + Sum(state.GasEnergyJ);
+            double waterIn = 0, energyIn = 0, vapourProduced = 0, gasIn = 0;
+            for (int step = 0; step < 6; step++)
+            {
+                var current = new VariableCoefficientProjection(domain, boundaries, cell =>
+                {
+                    int group = plan.GroupByCell[cell];
+                    return (rhoL * fields.LiquidM3[group] + rhoG * fields.GasM3[group]) / plan.Volumes[group];
+                }, _ => 0);
+                var tentative = (float[])velocity.Clone();
+                for (int face = 0; face < current.FaceCount; face++)
+                    if (current.Faces[face].Active != 0 && current.Faces[face].Axis == 1)
+                        tentative[face] = (float)(tentative[face] + dt * gravityY);
+                var result = new CutCellVofTransport(current).AdvancePureWaterStefan(fields, dt, surface, source =>
+                {
+                    vapourProduced += -Sum(source) * dt / (1 / rhoG - 1 / rhoL) / rhoG;
+                    return FlowCpuReference.Project(current, tentative, dt, 32768, null, source);
+                }, _ => new CutCellInflow(1, rhoL * saturation.Liquid.EnthalpyJkg, 0, 0));
+                fields = result.Transport.Fields;
+                velocity = result.Pressure.VelocityMPerS;
+                var boundary = result.Transport.BoundaryInflow;
+                waterIn += boundary[0] * rhoL + boundary[4];
+                energyIn += boundary[2] + boundary[3];
+                gasIn += boundary[1];
+                if (Math.Abs(Sum(fields.GasM3) - volume - vapourProduced - gasIn) > 1e-16 ||
+                    Math.Abs(Sum(fields.LiquidM3) * rhoL + Sum(fields.VapourKg) - water - waterIn) > 1e-13 ||
+                    Math.Abs(Sum(fields.LiquidEnergyJ) + Sum(fields.GasEnergyJ) - energy - energyIn) > 1e-8)
+                    throw new InvalidOperationException($"The growing bubble failed its phase or outlet balance at step {step + 1}.");
             }
             return fields;
         }
