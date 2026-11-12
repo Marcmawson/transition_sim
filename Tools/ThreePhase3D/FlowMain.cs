@@ -373,7 +373,7 @@ internal static class FlowMain
         foreach (double liquidHeat in new[] { 10000.0, -10000.0 })
         foreach (double initialHeight in new[] { 0.01, 0.015 })
         {
-            int steps = initialHeight == dx ? 1 : 4;
+            const int steps = 4;
             var surface = new PureWaterStefanInterface(pressure, 370, 377, liquidHeat, 0);
             var liquid = surface.Saturation.Liquid;
             var vapour = surface.Saturation.Vapour;
@@ -397,6 +397,8 @@ internal static class FlowMain
                     source => FlowCpuReference.Project(plan, new float[plan.FaceCount], dt, 4096, null, source),
                     _ => new CutCellInflow(0, 0, vapour.DensityKgM3 * vapour.EnthalpyJkg, vapour.DensityKgM3));
                 fields = result.Transport.Fields;
+                if (initialHeight == dx && liquidHeat > 0)
+                    Near(fields.LiquidM3[plan.GroupByCell[grid.Cells.Index(0, 1, 0)]], 1e-18);
                 var boundary = result.Transport.BoundaryInflow;
                 Near(Math.Abs(boundary[0]), 1e-18);
                 boundaryWater += boundary[4];
@@ -412,7 +414,7 @@ internal static class FlowMain
                 initialWater - boundaryWater), 1e-14);
             Near(Math.Abs(Sum(fields.LiquidEnergyJ) + Sum(fields.GasEnergyJ) - initialHeat - boundaryHeat), 1e-9);
             Console.WriteLine(FormattableString.Invariant(
-                $"S13 V29 planar Stefan passed: flux {surface.MassFluxKgM2PerS:G8} kg/m2/s, front shift {frontShift:G8} m, velocity jump {surface.VapourMinusLiquidVelocityMPerS:G8} m/s."));
+                $"S13 V29 planar Stefan passed ({(initialHeight == dx ? "initially aligned" : "initially mixed")}): flux {surface.MassFluxKgM2PerS:G8} kg/m2/s, front shift {frontShift:G8} m, velocity jump {surface.VapourMinusLiquidVelocityMPerS:G8} m/s."));
         }
 
         void Near(double error, double tolerance)

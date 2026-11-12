@@ -330,7 +330,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
             };
             return AdvanceInterfaceExchange(state, dt, surface.Saturation.Liquid.DensityKgM3,
                 (_, _, area, availableLiquid, availableVapour) =>
-                    surface.Transfer(area, dt, availableLiquid, availableVapour), project, pureInflow, phaseTransfers);
+                    surface.Transfer(area, dt, availableLiquid, availableVapour), project, pureInflow, phaseTransfers,
+                surface);
         }
 
         private (FlowStep Pressure, CutCellTransportResult Transport) AdvanceInterfaceExchange(
@@ -338,7 +339,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
             Func<int, int, double, double, double, (double WaterKg, double LiquidM3, double GasM3,
                 double LiquidEnthalpyJ, double GasEnthalpyJ)> calculate,
             Func<double[], FlowStep> project, Func<int, CutCellInflow> inflow,
-            List<(int Donor, int Recipient, double MassKg)> phaseTransfers = null)
+            List<(int Donor, int Recipient, double MassKg)> phaseTransfers = null,
+            PureWaterStefanInterface pureSurface = null)
         {
             if (!SiUnits.IsFinite(liquidDensityKgM3) || liquidDensityKgM3 <= 0 ||
                 !SiUnits.IsFinite(dt) || dt <= 0)
@@ -351,7 +353,15 @@ namespace PhysicsSim.ThreePhase3D.Flow
             var vapourUsed = new double[count];
             for (int group = 0; group < count; group++)
             {
-                if (areas[group] > 0) Add(group, group, areas[group]);
+                if (areas[group] <= 0) continue;
+                int gas = group;
+                // A growing vapour layer thinner than its source volume cannot
+                // supply that volume through the old PLIC slab. Deposit into
+                // the adjacent resolved vapour on a grid-parallel interface.
+                if (pureSurface != null && pureSurface.MassFluxKgM2PerS * areas[group] * dt >
+                    state.GasM3[group] * pureSurface.Saturation.Vapour.DensityKgM3)
+                    gas = AlignedVapourNeighbour(group);
+                Add(group, gas, areas[group]);
             }
             for (int index = 0; index < plan.FaceCount; index++)
             {
@@ -365,6 +375,24 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     Add(high, low, area);
             }
             return AdvanceWithPhaseExchange(state, increments, dt, project, inflow);
+
+            int AlignedVapourNeighbour(int group)
+            {
+                for (int entry = plan.Rows[group]; entry < plan.Rows[group + 1]; entry++)
+                {
+                    int signed = plan.Incidence[entry], index = Math.Abs(signed) - 1;
+                    var face = plan.Faces[index];
+                    int neighbour = signed > 0 ? face.High : face.Low;
+                    if (neighbour < 0 || state.LiquidM3[neighbour] != 0) continue;
+                    double aperture = plan.Geometry.Areas(face.Axis)[index - plan.FaceOffsets[face.Axis]];
+                    if (Math.Abs(aperture - areas[group]) > 1e-8 * aperture) continue;
+                    int cell = signed > 0 ? lowCell[index] : highCell[index];
+                    var normal = EstimateNormal(cell, group, state.LiquidM3);
+                    if (normal.Length > 0 && Math.Sign(signed) * normal[face.Axis] >= (1 - 1e-10) * normal.Length)
+                        return neighbour;
+                }
+                return group;
+            }
 
             void Add(int liquid, int gas, double area)
             {
