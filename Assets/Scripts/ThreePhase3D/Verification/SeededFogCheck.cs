@@ -56,6 +56,55 @@ namespace PhysicsSim.ThreePhase3D.Verification
             CheckSpatialTransport();
             CheckConversion();
             CheckDetachedLiquid();
+            CheckSwitchThreshold();
+
+            void CheckSwitchThreshold()
+            {
+                const double length = 1e-3, area = 1e-8;
+                const double smallWidth = 0.115e-3, largeWidth = 0.175e-3;
+                const double threshold = 0.145e-3 * area;
+                foreach (int cells in new[] { 20, 40, 80 })
+                {
+                    double dx = length / cells;
+                    var grid = new Grid3D(cells, 1, 1, new D3(dx, 1e-4, 1e-4), RigidFrame.Identity);
+                    var plan = new VariableCoefficientProjection(CutCellGeometry.Build(grid),
+                        BoundaryConditions3D.Closed, _ => 1.2, _ => 0);
+                    var liquid = new double[plan.GroupCount];
+                    var gas = new double[liquid.Length];
+                    var energy = new double[liquid.Length];
+                    var anchors = new bool[liquid.Length];
+                    for (int cell = 0; cell < cells; cell++)
+                    {
+                        int group = plan.PressureGroup(cell, 0, 0);
+                        double left = cell * dx, right = (cell + 1) * dx;
+                        double Overlap(double start, double end) =>
+                            Math.Max(0, Math.Min(right, end) - Math.Max(left, start));
+                        double wet = Overlap(0, 0.1e-3) + Overlap(0.21e-3, 0.21e-3 + smallWidth) +
+                            Overlap(0.61e-3, 0.61e-3 + largeWidth);
+                        liquid[group] = Math.Min(plan.Volumes[group], wet * area);
+                        // Snap coordinate roundoff at fully filled faces.
+                        if (plan.Volumes[group] - liquid[group] <= 1e-13 * plan.Volumes[group])
+                            liquid[group] = plan.Volumes[group];
+                        gas[group] = plan.Volumes[group] - liquid[group];
+                        energy[group] = liquid[group] * DropletGasCellExchange.LiquidDensity *
+                            DropletGasCellExchange.LiquidCp * (temperature - referenceK);
+                        anchors[group] = cell == 0;
+                    }
+                    var fields = new CutCellInventories(liquid, gas, energy, new double[liquid.Length], new double[liquid.Length]);
+                    var selected = SeededFogCell.DetachedLiquidGroups(plan, fields, anchors, threshold);
+                    if (selected.Count != 1 ||
+                        SeededFogCell.DetachedLiquidGroups(plan, fields, anchors, 0.10e-3 * area).Count != 0 ||
+                        SeededFogCell.DetachedLiquidGroups(plan, fields, anchors, 0.19e-3 * area).Count != 2)
+                        throw new InvalidOperationException($"S14 threshold selection changed on the {cells}-cell grid.");
+                    var converted = SeededFogCell.DebitResolvedLiquid(fields, selected[0], default);
+                    double expected = smallWidth * area;
+                    double actual = DropletGasCellExchange.Mass(converted.Parcel.RadiusM) / DropletGasCellExchange.LiquidDensity;
+                    if (Math.Abs(actual / expected - 1) > 1e-12)
+                        throw new InvalidOperationException("S14 threshold refinement changed the converted volume.");
+                    log(FormattableString.Invariant(
+                        $"S14 representation threshold passed: {cells} cells, axial spacing {dx * 1e6:G5} um, converted {actual:G8} m3."));
+                }
+            }
 
             void CheckDetachedLiquid()
             {

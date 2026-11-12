@@ -117,3 +117,7 @@ Liquid connectivity uses overlap of the reconstructed liquid sections on shared 
 The conversion returns staged inventories for a caller to use. Projection and VOF transport still need to consume the parcel displacement, and the representation threshold needs a convergence study.
 
 The CPU displacement step now feeds the change in parcel occupancy into pressure projection and transports resolved phase inventories over the resulting fluxes. The six-cell check moves the parcel displacement one cell to the right over 0.4 ms and measures 1e-13 m3 of gas swept back to the left, with gas enthalpy and vapour following the donor inventory. Resolved liquid stays in place in this fixture. The parcel move is prescribed. Displaced groups must remain gas-only and the step currently has no open-boundary inflow reservoir or GPU transport path.
+
+### Representation threshold under axial refinement
+
+A CPU classification check integrates three planar liquid intervals into Cartesian VOF cells. One interval is anchored and two are detached, with volumes of 1.15e-12 and 1.75e-12 m3. Axial spacing is refined from 50 to 25 to 12.5 micrometres at fixed cross-section. At all three resolutions the 1.45e-12 m3 threshold selects only the smaller interval and its parcel recovers 1.15e-12 m3. The 1.0e-12 and 1.9e-12 m3 controls select zero and two detached intervals respectively. This verifies classification and inventory consistency for exact planar input. Dynamic three-dimensional threshold convergence and parcel-to-VOF insertion remain open.
