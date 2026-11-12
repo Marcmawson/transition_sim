@@ -13,6 +13,13 @@ namespace PhysicsSim.ThreePhase3D.Editor
         [MenuItem("Physics Sim/Three Phase 3D/Run S11 GPU two-phase ice check")]
         public static void RunTwoPhase() => RunWithProgress("S11 GPU two-phase ice", IceCouplingGpuCheck.RunTwoPhase);
 
+        [MenuItem("Physics Sim/Three Phase 3D/Run S11 GPU beaker impact check")]
+        public static void RunImpact()
+        {
+            if (Application.isBatchMode) IceCouplingGpuCheck.RunImpact(null);
+            else RunWithProgress("S11 GPU beaker impact", IceCouplingGpuCheck.RunImpact);
+        }
+
         private static void RunWithProgress(string title, Action<Func<string, float, bool>> check)
         {
             try
