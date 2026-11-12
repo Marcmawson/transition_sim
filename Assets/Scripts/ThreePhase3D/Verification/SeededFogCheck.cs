@@ -55,6 +55,60 @@ namespace PhysicsSim.ThreePhase3D.Verification
             CheckSampling();
             CheckSpatialTransport();
             CheckConversion();
+            CheckDetachedLiquid();
+
+            void CheckDetachedLiquid()
+            {
+                const double dx = 1e-4;
+                var grid = new Grid3D(6, 1, 1, new D3(dx, dx, dx), RigidFrame.Identity);
+                var plan = new VariableCoefficientProjection(CutCellGeometry.Build(grid),
+                    BoundaryConditions3D.Closed, _ => 1.2, _ => 0);
+                var liquid = new double[plan.GroupCount];
+                var gas = new double[liquid.Length];
+                var energy = new double[liquid.Length];
+                var gasEnergy = new double[liquid.Length];
+                var vapour = new double[liquid.Length];
+                var anchors = new bool[liquid.Length];
+                int bulk = plan.PressureGroup(0, 0, 0), neck = plan.PressureGroup(1, 0, 0);
+                int detached = plan.PressureGroup(4, 0, 0);
+                anchors[bulk] = true;
+                liquid[bulk] = plan.Volumes[bulk];
+                liquid[neck] = plan.Volumes[neck] * 0.25;
+                liquid[detached] = plan.Volumes[detached] * 0.1;
+                for (int group = 0; group < liquid.Length; group++)
+                {
+                    gas[group] = plan.Volumes[group] - liquid[group];
+                    energy[group] = liquid[group] * DropletGasCellExchange.LiquidDensity *
+                        DropletGasCellExchange.LiquidCp * (temperature - referenceK);
+                    gasEnergy[group] = gas[group] * 1e5;
+                    vapour[group] = gas[group] * 0.01;
+                }
+                var fields = new CutCellInventories(liquid, gas, energy, gasEnergy, vapour);
+                var eligible = SeededFogCell.DetachedLiquidGroups(plan, fields, anchors, 0.3 * grid.CellVolume);
+                if (eligible.Count != 1 || eligible[0].Length != 1 || eligible[0][0] != detached ||
+                    SeededFogCell.DetachedLiquidGroups(plan, fields, anchors, 0.05 * grid.CellVolume).Count != 0)
+                    throw new InvalidOperationException("S14 detached VOF classification failed bulk connectivity or volume threshold.");
+                var momentum = new D3(1e-13, 0, 0);
+                var converted = SeededFogCell.DebitResolvedLiquid(fields, eligible[0], momentum);
+                var parcel = converted.Parcel;
+                var restored = SeededFogCell.ToResolvedLiquid(parcel.RadiusM, parcel.TemperatureK, parcel.Multiplicity, parcel.Velocity);
+                for (int group = 0; group < liquid.Length; group++)
+                {
+                    double filled = converted.Fields.LiquidM3[group] + converted.Fields.GasM3[group] +
+                        converted.ParcelDisplacementM3[group];
+                    if (Math.Abs(filled - plan.Volumes[group]) > 1e-14 * grid.CellVolume ||
+                        converted.Fields.GasM3[group] != gas[group] || converted.Fields.GasEnergyJ[group] != gasEnergy[group] ||
+                        converted.Fields.VapourKg[group] != vapour[group])
+                        throw new InvalidOperationException("S14 conversion altered gas inventories or lost displaced volume.");
+                }
+                if (converted.Fields.LiquidM3[detached] != 0 || converted.Fields.LiquidEnergyJ[detached] != 0 ||
+                    Math.Abs(restored.LiquidM3 / liquid[detached] - 1) > 1e-13 ||
+                    Math.Abs(restored.EnthalpyJ / energy[detached] - 1) > 1e-13 ||
+                    (restored.Momentum - momentum).Length > 1e-26)
+                    throw new InvalidOperationException("S14 detached component conversion lost liquid inventories.");
+                log(FormattableString.Invariant(
+                    $"S14 detached VOF conversion passed: anchored neck retained, parcel displacement {restored.LiquidM3:G8} m3."));
+            }
 
             void CheckConversion()
             {

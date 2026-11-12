@@ -861,7 +861,11 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return areas;
         }
 
-        public double[] ReconstructGasFaceAreas(CutCellInventories fields)
+        public double[] ReconstructGasFaceAreas(CutCellInventories fields) => ReconstructPhaseFaceAreas(fields, false);
+
+        internal double[] ReconstructLiquidFaceAreas(CutCellInventories fields) => ReconstructPhaseFaceAreas(fields, true);
+
+        private double[] ReconstructPhaseFaceAreas(CutCellInventories fields, bool liquidPhase)
         {
             if (fields == null) throw new ArgumentNullException(nameof(fields));
             if (fields.LiquidM3.Length != plan.GroupCount || fields.GasM3.Length != plan.GroupCount)
@@ -874,16 +878,18 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     throw new ArgumentException("Phase volumes must fill the pressure groups.", nameof(fields));
 
             var grid = plan.Grid;
+            var phase = liquidPhase ? fields.LiquidM3 : fields.GasM3;
+            var other = liquidPhase ? fields.GasM3 : fields.LiquidM3;
             var result = new double[plan.FaceCount];
             var planes = new ClipPlane?[grid.Cells.Count];
             for (int face = 0; face < result.Length; face++)
             {
                 var metric = plan.Faces[face];
                 if (metric.Active == 0 || metric.Low == metric.High ||
-                    (metric.Low >= 0 && fields.GasM3[metric.Low] == 0) ||
-                    (metric.High >= 0 && fields.GasM3[metric.High] == 0)) continue;
-                if ((metric.Low < 0 || fields.LiquidM3[metric.Low] == 0) &&
-                    (metric.High < 0 || fields.LiquidM3[metric.High] == 0))
+                    (metric.Low >= 0 && phase[metric.Low] == 0) ||
+                    (metric.High >= 0 && phase[metric.High] == 0)) continue;
+                if ((metric.Low < 0 || other[metric.Low] == 0) &&
+                    (metric.High < 0 || other[metric.High] == 0))
                 {
                     result[face] = metric.Area;
                     continue;
@@ -897,8 +903,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     throw new NotSupportedException("Mixed gas aperture reconstruction requires nonperiodic faces.");
                 int low = grid.Cells.Index(x, y, z);
                 int high = grid.Cells.Index(i, j, k);
-                var gasLow = GasPlane(low, metric.Low);
-                var gasHigh = GasPlane(high, metric.High);
+                var gasLow = PhasePlane(low, metric.Low);
+                var gasHigh = PhasePlane(high, metric.High);
                 double area = metric.Area;
                 if (metric.Low >= 0) area = Math.Min(area, geometry.GasFaceSection(low, axis, true, gasLow, gasHigh));
                 if (metric.High >= 0) area = Math.Min(area, geometry.GasFaceSection(high, axis, false, gasLow, gasHigh));
@@ -906,13 +912,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
             }
             return result;
 
-            ClipPlane? GasPlane(int cell, int group)
+            ClipPlane? PhasePlane(int cell, int group)
             {
-                if (group < 0 || fields.LiquidM3[group] == 0) return null;
+                if (group < 0 || other[group] == 0) return null;
                 if (planes[cell].HasValue) return planes[cell];
                 var liquid = geometry.Reconstruct(cell, EstimateNormal(cell, group, fields.LiquidM3),
                     fields.LiquidM3[group] / plan.Volumes[group] * plan.Geometry.FluidVolumeM3[cell]);
-                return planes[cell] = new ClipPlane(-liquid.N, liquid.N * liquid.Offset);
+                return planes[cell] = liquidPhase ? liquid : new ClipPlane(-liquid.N, liquid.N * liquid.Offset);
             }
         }
 

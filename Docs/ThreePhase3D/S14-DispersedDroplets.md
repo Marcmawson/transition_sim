@@ -109,3 +109,9 @@ The coupled benchmark now accumulates the deposited liquid into a stationary wal
 ## Resolved-liquid and parcel inventory conversion
 
 The CPU conversion maps a supplied liquid volume, sensible enthalpy and momentum to identical spherical droplets at a prescribed multiplicity, using the constant-density and constant-heat-capacity parcel model. The reverse map recovers the same extensive inventories. Nine round trips at three liquid volumes and three multiplicities closed to a maximum relative residual of 2.4425e-15. This check covers inventory representation. Identifying detached VOF components, conservative gas-volume remapping, and convergence of the representation-switch threshold remain open.
+
+### Detached VOF components
+
+Liquid connectivity uses overlap of the reconstructed liquid sections on shared faces. Caller-provided anchors identify bulk or attached liquid. Components connected to an anchor or open liquid face stay resolved, as do components exceeding the supplied volume threshold. The six-cell CPU fixture retained an anchored liquid neck and converted a detached component of volume 1e-13 m3. The conversion credits the parcel with the supplied liquid momentum and debits resolved volume and enthalpy. The separate parcel displacement inventory closes the geometric volume without altering gas volume, vapour or gas enthalpy.
+
+The conversion returns staged inventories for a caller to use. Projection and VOF transport still need to consume the parcel displacement, and the representation threshold needs a convergence study.

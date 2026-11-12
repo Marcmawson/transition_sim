@@ -7,6 +7,72 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // Each parcel represents identical seeded droplets sharing one gas inventory.
     internal static class SeededFogCell
     {
+        // Anchors identify bulk liquid. Components touching an open liquid face
+        // remain resolved so their inventory can be handled by the boundary flux.
+        internal static List<int[]> DetachedLiquidGroups(VariableCoefficientProjection plan, CutCellInventories fields,
+            bool[] anchors, double maxVolumeM3)
+        {
+            if (plan.IsPeriodic || anchors.Length != plan.GroupCount || !(maxVolumeM3 > 0) ||
+                !SiUnits.IsFinite(maxVolumeM3))
+                throw new ArgumentException("Invalid detached-liquid topology or threshold.");
+            var areas = new CutCellVofTransport(plan).ReconstructLiquidFaceAreas(fields);
+            var visited = new bool[plan.GroupCount];
+            var detached = new List<int[]>();
+            for (int group = 0; group < visited.Length; group++)
+            {
+                if (visited[group] || fields.LiquidM3[group] == 0) continue;
+                var component = new List<int> { group };
+                visited[group] = true;
+                bool attached = false;
+                double volume = 0;
+                for (int cursor = 0; cursor < component.Count; cursor++)
+                {
+                    int current = component[cursor];
+                    attached |= anchors[current];
+                    volume += fields.LiquidM3[current];
+                    for (int entry = plan.Rows[current]; entry < plan.Rows[current + 1]; entry++)
+                    {
+                        int signed = plan.Incidence[entry], index = Math.Abs(signed) - 1;
+                        var face = plan.Faces[index];
+                        if (areas[index] <= 1e-10 * face.Area) continue;
+                        int next = signed > 0 ? face.High : face.Low;
+                        if (next < 0) attached = true;
+                        else if (!visited[next])
+                        {
+                            visited[next] = true;
+                            component.Add(next);
+                        }
+                    }
+                }
+                if (!attached && volume <= maxVolumeM3) detached.Add(component.ToArray());
+            }
+            return detached;
+        }
+
+        // Return a separate displacement inventory. Gas volume and scalars stay
+        // physical, and the caller must account for this volume in projection.
+        internal static (CutCellInventories Fields, double[] ParcelDisplacementM3,
+            (double RadiusM, double TemperatureK, int Multiplicity, D3 Velocity) Parcel) DebitResolvedLiquid(
+            CutCellInventories fields, int[] component, D3 componentMomentum)
+        {
+            var liquid = (double[])fields.LiquidM3.Clone();
+            var enthalpy = (double[])fields.LiquidEnergyJ.Clone();
+            var displacement = new double[liquid.Length];
+            double volume = 0, energy = 0;
+            foreach (int group in component)
+            {
+                if (!(liquid[group] > 0)) throw new ArgumentException("Conversion requires unique wet groups.");
+                volume += liquid[group];
+                energy += enthalpy[group];
+                displacement[group] = liquid[group];
+                liquid[group] = 0;
+                enthalpy[group] = 0;
+            }
+            return (new CutCellInventories(liquid, (double[])fields.GasM3.Clone(), enthalpy,
+                (double[])fields.GasEnergyJ.Clone(), (double[])fields.VapourKg.Clone()), displacement,
+                FromResolvedLiquid(volume, energy, componentMomentum, 1));
+        }
+
         internal static (double RadiusM, double TemperatureK, int Multiplicity, D3 Velocity) FromResolvedLiquid(
             double liquidM3, double enthalpyJ, D3 momentum, int multiplicity)
         {
