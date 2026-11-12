@@ -8,6 +8,47 @@ using PhysicsSim.ThreePhase3D.Verification;
 
 internal static class IcePressureMain
 {
+    private static void CheckMeltwaterSource()
+    {
+        var equilibrium = new SolidLiquidInterface(101325, 250, 290);
+        var grid = new Grid3D(10, 10, 10, new D3(0.01, 0.01, 0.01),
+            RigidFrame.Euler(new D3(0.005, 0.004, -0.003), 0.13, 0, 0));
+        var size = new D3(0.04, 0.03, 0.02);
+        var frame = RigidFrame.Euler(grid.Centre(4, 4, 4), 0.2, 0.3, 0.4);
+        var box = IceBody.Box(917, size, frame);
+        var ice = new IceBody(box.MassKg, box.PrincipalInertiaKgM2, frame,
+            new D3(0.002, -0.003, 0.001), new D3(0.00001, 0.00002, -0.00003));
+        var melt = IceBoxMelting.Apply(ice, size, 0, 1, ice.MassKg * equilibrium.LatentHeatJkg / 4, equilibrium);
+        CutCellGeometry Geometry(D3 dimensions, RigidFrame pose) => CutCellGeometry.Build(grid,
+            iceSurface: SurfacePrimitives.Transform(SurfacePrimitives.Box(dimensions * -0.5, dimensions * 0.5), pose));
+        var before = Geometry(size, frame);
+        var after = Geometry(melt.DimensionsM, melt.Remaining.Frame);
+        double releasedVolume = melt.Released.MassKg / 917;
+        var source = MeltwaterCutCellSource.Build(before, after, melt.Released,
+            releasedVolume, melt.LiquidVolumeM3, melt.LiquidEnthalpyJ);
+        double water = 0, heat = 0, contraction = 0;
+        D3 momentum = default;
+        int occupied = 0;
+        for (int cell = 0; cell < source.Length; cell++)
+        {
+            var entry = source[cell];
+            Near(Math.Abs(entry.LiquidM3 + entry.ContractionM3 -
+                (after.FluidVolumeM3[cell] - before.FluidVolumeM3[cell])), 1e-17);
+            if (entry.LiquidM3 > 0) occupied++;
+            water += entry.LiquidM3;
+            heat += entry.EnthalpyJ;
+            contraction += entry.ContractionM3;
+            momentum += entry.MomentumKgMPerS;
+        }
+        if (occupied < 2 || contraction <= 0) throw new InvalidOperationException("Expected multi-cell meltwater and contraction.");
+        Near(Math.Abs(water - melt.LiquidVolumeM3), 1e-17);
+        Near(Math.Abs(heat - melt.LiquidEnthalpyJ), 1e-10);
+        Near(Math.Abs(contraction - (releasedVolume - water)), 1e-17);
+        Near((momentum - melt.Released.MomentumKgMPerS).Length, 1e-14);
+        Console.WriteLine(FormattableString.Invariant(
+            $"S11 V26 cut-cell meltwater source passed: {occupied} cells, {water * 1e6:F6} mL liquid, {contraction * 1e6:F6} mL contraction."));
+    }
+
     private static void CheckMeltingTransfer()
     {
         var equilibrium = new SolidLiquidInterface(101325, 250, 290);
@@ -122,6 +163,7 @@ internal static class IcePressureMain
 
     private static void Main()
     {
+        CheckMeltwaterSource();
         CheckMeltingTransfer();
         CheckCoupledSupport();
         CheckCoupledImpact();

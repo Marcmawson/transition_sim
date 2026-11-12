@@ -188,3 +188,9 @@ The same fixture is available in Unity under **Physics Sim â†’ Three Phase 3D â†
 For a homogeneous ice box already at the equilibrium melting temperature, a supplied heat increment recesses one face. The step updates the remaining dimensions, centre of mass and principal inertia. The removed slab describes the source geometry and momentum of the released water. The liquid volume and enthalpy use the S10 melting-point properties. Both portions inherit the original rigid velocity field. Complete melting returns heat in excess of the latent requirement to the caller.
 
 The CPU fixture removed one quarter of a translating and rotating box from each of its six faces in separate runs. It checked the analytic centre shift, mass, liquid volume, enthalpy, linear and angular momentum, and kinetic energy. Zero heat and complete melting also passed. The supplied heat and homogeneous face recession are fixture assumptions. Conduction-driven recession, deposition into the fluid grid and the freely melting coupled benchmark remain open.
+
+## V26 cut-cell meltwater source
+
+At a fixed pose, the before and after cut-cell volumes give the vacated ice volume per cell. The difference in their first moments gives the centroid of the released material in that cell. The source assigns liquid volume and enthalpy in proportion to the vacated ice volume and integrates the inherited linear momentum at that centroid. It reports the volume contraction explicitly for the receiving flow update.
+
+A rotated ice box on an offset, rotated grid released 6 mL of ice across 30 cells. The CPU fixture recovered 5.502863 mL of liquid and 0.497137 mL of contraction, with closure per cell and conservation of the released enthalpy and linear momentum. Consuming these sources in the fluid inventory and reconciling contraction with the flow remain open.
