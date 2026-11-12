@@ -88,8 +88,47 @@ internal static class IcePressureMain
         Near(Math.Abs(Sum(coupled.Fields.GasM3) * coupled.GasDensityKgM3 - Sum(gas) * 1.2), 1e-15);
         for (int group = 0; group < coupled.Topology.GroupCount; group++)
             Near(Math.Abs(coupled.Fields.LiquidM3[group] + coupled.Fields.GasM3[group] - coupled.Topology.Volumes[group]), 1e-16);
+        CheckTransientContact();
         Console.WriteLine(FormattableString.Invariant(
             $"S11 V26 coupled face melting passed: {coupled.HeatJ:G8} J transferred, {body.MassKg - coupled.Body.MassKg:G8} kg melted and remapped."));
+
+        void CheckTransientContact()
+        {
+            double diffusivity = conductivity / (rho * water.Evaluate(warmK, 101325,
+                PhysicsSim.ThreePhase3D.Materials.WaterBranch.Liquid).CpJkgK);
+            double faceArea = size.Y * size.Z;
+            const double firstStep = 0.001, secondStep = 0.002, rewetStep = 0.0015;
+            var first = Transfer(fields, firstStep, 0, warmK, patch => patch.FluidExposedAreaM2);
+            var second = Transfer(first.Fields, secondStep, firstStep, warmK, patch => patch.FluidExposedAreaM2);
+            double expectedWet = Integral(faceArea, 10, firstStep + secondStep);
+            Near(Math.Abs(first.HeatJ + second.HeatJ - expectedWet), 1e-12);
+            Near(Math.Abs(Sum(fields.LiquidEnergyJ) - Sum(second.Fields.LiquidEnergyJ) - expectedWet), 1e-10);
+
+            var dryStep = Transfer(second.Fields, 0.004, firstStep + secondStep, warmK, _ => 0);
+            Near(dryStep.HeatJ, 0);
+            Near(Math.Abs(Sum(dryStep.Fields.LiquidEnergyJ) - Sum(second.Fields.LiquidEnergyJ)), 0);
+
+            // This episode replaces the donor water, so the thermal age starts again at zero.
+            double coolK = equilibrium.MeltingTemperatureK + 5;
+            double coolH = water.Evaluate(coolK, 101325,
+                PhysicsSim.ThreePhase3D.Materials.WaterBranch.Liquid).EnthalpyJkg;
+            var freshEnergy = Array.ConvertAll(volume, value => value * rho * coolH);
+            var fresh = new CutCellInventories(volume, zero, freshEnergy, zero, zero);
+            var rewet = Transfer(fresh, rewetStep, 0, coolK,
+                patch => patch.CentroidLocalM.Y < 0.04 ? patch.FluidExposedAreaM2 : 0);
+            double expectedRewet = Integral(faceArea / 2, 5, rewetStep);
+            Near(Math.Abs(rewet.HeatJ - expectedRewet), 1e-12);
+            Near(Math.Abs(Sum(freshEnergy) - Sum(rewet.Fields.LiquidEnergyJ) - expectedRewet), 1e-10);
+            Console.WriteLine(FormattableString.Invariant(
+                $"S11 V26 transient contact passed: {expectedWet:G8} J wet, 0 J dry, {rewet.HeatJ:G8} J after cooler half-face rewetting."));
+
+            double Integral(double area, double excess, double duration) =>
+                2 * conductivity * area * excess * Math.Sqrt(duration / (Math.PI * diffusivity));
+            (CutCellInventories Fields, double HeatJ) Transfer(CutCellInventories donor, double duration,
+                double age, double bulkK, Func<InterfacePatch, double> wet) =>
+                IceFaceConduction.Transfer(plan, donor, body, equilibrium, normal, duration, rho, conductivity,
+                    null, wet, new IceFaceConduction.TransientLayer(age, bulkK, diffusivity));
+        }
     }
 
     private static void CheckMeltwaterSource()
