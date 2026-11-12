@@ -122,6 +122,49 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 input.WallImpulseKgMPerS, input.MaxDualMassErrorKg, input.ContactTractionPatches, energyLoss);
         }
 
+        internal double[][] GatherGroupMomentum(CutCellInventories state, float[] velocity, double rhoL, double rhoG)
+        {
+            if (velocity == null || velocity.Length != plan.FaceCount)
+                throw new ArgumentException("Velocity does not match the old staggered grid.", nameof(velocity));
+            var result = new[] { new double[plan.GroupCount], new double[plan.GroupCount], new double[plan.GroupCount] };
+            for (int f = 0; f < plan.FaceCount; f++)
+            {
+                var face = plan.Faces[f];
+                double u = velocity[f];
+                if (!SiUnits.IsFinite(u) || (face.Active == 0 && u != 0))
+                    throw new ArgumentException("Nonfinite velocity or nonzero blocked-face velocity.", nameof(velocity));
+                if (face.Active == 0) continue;
+                if (face.Low >= 0) result[face.Axis][face.Low] += PartMass(state, face, face.Low, rhoL, rhoG) * u;
+                if (face.High >= 0) result[face.Axis][face.High] += PartMass(state, face, face.High, rhoL, rhoG) * u;
+            }
+            return result;
+        }
+
+        internal CutCellMomentumResult ScatterGroupMomentum(CutCellInventories state, double[][] groupMomentum,
+            double rhoL, double rhoG)
+        {
+            for (int axis = 0; axis < 3; axis++)
+            for (int group = 0; group < plan.GroupCount; group++)
+                if (areaSum[axis, group] == 0 && groupMomentum[axis][group] != 0)
+                    throw new InvalidOperationException("Remapped momentum has no active staggered face.");
+            var velocity = new double[plan.FaceCount];
+            var momentum = new double[plan.FaceCount];
+            for (int f = 0; f < plan.FaceCount; f++)
+            {
+                var face = plan.Faces[f];
+                if (face.Active == 0) continue;
+                double mass = FaceMass(state, face, rhoL, rhoG);
+                momentum[f] = Portion(face.Low) + Portion(face.High);
+                velocity[f] = momentum[f] / mass;
+                if (!(mass > 0) || !SiUnits.IsFinite(velocity[f]))
+                    throw new InvalidOperationException("Invalid remapped staggered mass or velocity.");
+
+                double Portion(int group) => group < 0 ? 0 :
+                    groupMomentum[face.Axis][group] * (face.Area / areaSum[face.Axis, group]);
+            }
+            return new CutCellMomentumResult(velocity, momentum, new double[3], new double[3], 0);
+        }
+
         private double FaceMass(CutCellInventories state, VariableCoefficientProjection.Face face, double rhoL, double rhoG) =>
             PartMass(state, face, face.Low, rhoL, rhoG) + PartMass(state, face, face.High, rhoL, rhoG);
 

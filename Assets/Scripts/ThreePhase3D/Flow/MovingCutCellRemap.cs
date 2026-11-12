@@ -118,7 +118,23 @@ namespace PhysicsSim.ThreePhase3D.Flow
         // Signed swept fluid volumes are in geometric X/Y/Z face order.
         // Positive transfer is from the low cell to the high cell.
         public static CutCellInventories Apply(VariableCoefficientProjection oldPlan,
-            VariableCoefficientProjection newPlan, CutCellInventories state, double[][] sweptM3)
+            VariableCoefficientProjection newPlan, CutCellInventories state, double[][] sweptM3) =>
+            ApplyCore(oldPlan, newPlan, state, sweptM3, null, 0, 0).Fields;
+
+        public static (CutCellInventories Fields, CutCellMomentumResult Momentum) ApplyWithMomentum(
+            VariableCoefficientProjection oldPlan, VariableCoefficientProjection newPlan, CutCellInventories state,
+            double[][] sweptM3, float[] oldVelocityMPerS, double liquidDensityKgM3, double gasDensityKgM3)
+        {
+            if (oldVelocityMPerS == null) throw new ArgumentNullException(nameof(oldVelocityMPerS));
+            if (!SiUnits.IsFinite(liquidDensityKgM3) || liquidDensityKgM3 <= 0 ||
+                !SiUnits.IsFinite(gasDensityKgM3) || gasDensityKgM3 <= 0)
+                throw new ArgumentException("Positive finite phase densities are required.");
+            return ApplyCore(oldPlan, newPlan, state, sweptM3, oldVelocityMPerS, liquidDensityKgM3, gasDensityKgM3);
+        }
+
+        private static (CutCellInventories Fields, CutCellMomentumResult Momentum) ApplyCore(
+            VariableCoefficientProjection oldPlan, VariableCoefficientProjection newPlan, CutCellInventories state,
+            double[][] sweptM3, float[] oldVelocity, double rhoL, double rhoG)
         {
             if (oldPlan == null || newPlan == null || state == null)
                 throw new ArgumentNullException("Both projection plans and the old inventory are required.");
@@ -146,6 +162,11 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 if (state.LiquidM3[group] < 0 || state.GasM3[group] < 0 || state.VapourKg[group] < 0 ||
                     Math.Abs(state.LiquidM3[group] + state.GasM3[group] - oldPlan.Volumes[group]) > tolerance)
                     throw new ArgumentException("The old phase volumes must fill their fluid groups.", nameof(state));
+
+            var oldMomentum = oldVelocity == null ? null :
+                new CutCellMomentum(oldPlan).GatherGroupMomentum(state, oldVelocity, rhoL, rhoG);
+            var newMomentum = oldMomentum == null ? null :
+                new[] { new double[newPlan.GroupCount], new double[newPlan.GroupCount], new double[newPlan.GroupCount] };
 
             for (int axis = 0; axis < 3; axis++)
             {
@@ -187,7 +208,10 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     Add(oldPlan.GroupByCell[cell], receiver, retained);
             }
 
-            return new CutCellInventories(result);
+            var fields = new CutCellInventories(result);
+            var momentum = newMomentum == null ? null :
+                new CutCellMomentum(newPlan).ScatterGroupMomentum(fields, newMomentum, rhoL, rhoG);
+            return (fields, momentum);
 
             void Add(int donor, int receiver, double volume)
             {
@@ -196,6 +220,9 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 double fraction = volume / oldPlan.Volumes[donor];
                 for (int field = 0; field < result.Length; field++)
                     result[field][receiver] += fraction * state.Planes[field][donor];
+                if (newMomentum != null)
+                    for (int axis = 0; axis < 3; axis++)
+                        newMomentum[axis][receiver] += fraction * oldMomentum[axis][donor];
             }
         }
     }
