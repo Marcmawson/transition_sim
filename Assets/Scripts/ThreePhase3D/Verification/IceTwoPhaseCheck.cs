@@ -8,13 +8,15 @@ namespace PhysicsSim.ThreePhase3D.Verification
 {
     public static class IceTwoPhaseCheck
     {
-        public static (double FirstSpeed, double SecondSpeed, double PressureChange, double SubmergedFraction, double FinalSpeed, double TailPeakVerticalSpeed) Run(
-            Func<VariableCoefficientProjection, float[], double, double[], FlowStep> project, int steps = 2)
+        public static (double FirstSpeed, double SecondSpeed, double PressureChange, double SubmergedFraction, double FinalSpeed, double TailPeakVerticalSpeed,
+            double TailMinimumImmersion, double TailMaximumImmersion, double TailPeakAngularSpeed) Run(
+            Func<VariableCoefficientProjection, float[], double, double[], FlowStep> project, int steps = 2, double gridOffsetM = 0)
         {
             if (project == null) throw new ArgumentNullException(nameof(project));
             if (steps < 2) throw new ArgumentOutOfRangeException(nameof(steps));
             const double rhoWater = 1000, rhoAir = 1.2, g = 9.81, dt = 0.002;
-            var grid = new Grid3D(8, 8, 8, new D3(0.01, 0.01, 0.01));
+            var grid = new Grid3D(8, 8, 8, new D3(0.01, 0.01, 0.01),
+                RigidFrame.Euler(new D3(gridOffsetM, 0, 0), 0, 0, 0));
             var centre = new D3(0.038, 0.041, 0.039);
             var waterline = new D3(0, centre.Y, 0);
             var size = new D3(0.018, 0.017, 0.016);
@@ -84,6 +86,9 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 Near(Math.Abs(System.Linq.Enumerable.Sum(final.Fields.Planes[field]) -
                     System.Linq.Enumerable.Sum(inventory.Planes[field])), 1e-13);
             var currentBody = second.Body;
+            var empty = new CutCellVofGeometry(CutCellGeometry.Build(grid));
+            double minimumImmersion = double.PositiveInfinity, maximumImmersion = double.NegativeInfinity;
+            double peakAngular = 0;
             double tailPeak = steps <= 32 ? Math.Max(Math.Abs(moved.Body.VelocityMPerS.Y), Math.Abs(second.Body.VelocityMPerS.Y)) : 0;
             for (int step = 2; step < steps; step++)
             {
@@ -97,28 +102,45 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 final = MovingCutCellRemap.ApplyWithMomentum(currentPlan, finalTopology, final.Fields,
                     transfers, accepted.Fluid.VelocityMPerS, rhoWater, rhoAir);
                 currentBody = accepted.Body;
-                if (step >= steps - 32) tailPeak = Math.Max(tailPeak, Math.Abs(currentBody.VelocityMPerS.Y));
+                if (steps > 2 && step >= steps - 32)
+                {
+                    tailPeak = Math.Max(tailPeak, Math.Abs(currentBody.VelocityMPerS.Y));
+                    peakAngular = Math.Max(peakAngular, currentBody.AngularVelocityRadPerS.Length);
+                    double immersion = MeasureImmersion(finalTopology, final.Fields);
+                    minimumImmersion = Math.Min(minimumImmersion, immersion);
+                    maximumImmersion = Math.Max(maximumImmersion, immersion);
+                }
                 for (int field = 0; field < inventory.Planes.Length; field++)
                     Near(Math.Abs(System.Linq.Enumerable.Sum(final.Fields.Planes[field]) -
                         System.Linq.Enumerable.Sum(inventory.Planes[field])), 1e-13);
             }
 
-            var finalColumn = new ColumnHydrostaticPressure(finalTopology, final.Fields, gravity, rhoWater, rhoAir);
-            var fluid = new CutCellVofGeometry(finalTopology.Geometry);
-            var empty = new CutCellVofGeometry(CutCellGeometry.Build(grid));
-            double submerged = 0;
-            for (int cell = 0; cell < grid.Cells.Count; cell++)
-            {
-                if (finalTopology.Geometry.IceVolumeM3[cell] <= 0) continue;
-                grid.Cells.Coordinates(cell, out int x, out int y, out int z);
-                if (!grid.Cells.Interior(x, y, z)) continue;
-                var plane = new ClipPlane(new D3(0, 1, 0), new D3(0, finalColumn.WaterlineLocalM(x, z), 0));
-                submerged += empty.LiquidVolume(cell, plane) - fluid.LiquidVolume(cell, plane);
-            }
-            double fraction = submerged / (size.X * size.Y * size.Z);
+            double fraction = MeasureImmersion(finalTopology, final.Fields);
             if (!(fraction > 0.5 && fraction <= 1 + 1e-10))
                 throw new InvalidOperationException("The sinking ice did not increase its submerged volume.");
-            return (moved.Body.VelocityMPerS.Y, second.Body.VelocityMPerS.Y, pressureChange, fraction, currentBody.VelocityMPerS.Y, tailPeak);
+            if (steps == 2)
+            {
+                minimumImmersion = maximumImmersion = fraction;
+                peakAngular = currentBody.AngularVelocityRadPerS.Length;
+            }
+            return (moved.Body.VelocityMPerS.Y, second.Body.VelocityMPerS.Y, pressureChange, fraction,
+                currentBody.VelocityMPerS.Y, tailPeak, minimumImmersion, maximumImmersion, peakAngular);
+
+            double MeasureImmersion(VariableCoefficientProjection pose, CutCellInventories fields)
+            {
+                var columnPressure = new ColumnHydrostaticPressure(pose, fields, gravity, rhoWater, rhoAir);
+                var fluid = new CutCellVofGeometry(pose.Geometry);
+                double submerged = 0;
+                for (int cell = 0; cell < grid.Cells.Count; cell++)
+                {
+                    if (pose.Geometry.IceVolumeM3[cell] <= 0) continue;
+                    grid.Cells.Coordinates(cell, out int x, out int y, out int z);
+                    if (!grid.Cells.Interior(x, y, z)) continue;
+                    var plane = new ClipPlane(new D3(0, 1, 0), new D3(0, columnPressure.WaterlineLocalM(x, z), 0));
+                    submerged += empty.LiquidVolume(cell, plane) - fluid.LiquidVolume(cell, plane);
+                }
+                return submerged / (size.X * size.Y * size.Z);
+            }
         }
 
         private static void Near(double error, double tolerance)

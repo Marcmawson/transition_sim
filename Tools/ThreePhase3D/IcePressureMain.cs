@@ -12,9 +12,15 @@ internal static class IcePressureMain
         CheckRemap();
         CheckWaterline();
         CheckColumnPrediction();
-        var twoPhase = IceTwoPhaseCheck.Run((plan, tentative, dt, flux) =>
-            FlowCpuReference.Project(plan, tentative, dt, 32768, null, flux), steps: 256);
-        Console.WriteLine($"S11 CPU two-phase ice passed: first speed {twoPhase.FirstSpeed:G6} m/s, second speed {twoPhase.SecondSpeed:G6} m/s, pressure change {twoPhase.PressureChange:G6} Pa, submerged fraction after 256 steps {twoPhase.SubmergedFraction:P4}, final vertical speed {twoPhase.FinalSpeed:G6} m/s, last 32 steps peak vertical speed {twoPhase.TailPeakVerticalSpeed:G6} m/s.");
+        foreach (double offset in new[] { 0.0, 0.003 })
+        {
+            var twoPhase = IceTwoPhaseCheck.Run((plan, tentative, dt, flux) =>
+                FlowCpuReference.Project(plan, tentative, dt, 32768, null, flux), steps: 512, gridOffsetM: offset);
+            Console.WriteLine(FormattableString.Invariant(
+                $"S11 CPU two-phase ice passed at offset {offset:G} m: final immersion {twoPhase.SubmergedFraction:P4}, final vertical speed {twoPhase.FinalSpeed:G6} m/s."));
+            Console.WriteLine(FormattableString.Invariant(
+                $"Last 32 steps: immersion {twoPhase.TailMinimumImmersion:P4} to {twoPhase.TailMaximumImmersion:P4}, peak vertical speed {twoPhase.TailPeakVerticalSpeed:G6} m/s, peak angular speed {twoPhase.TailPeakAngularSpeed:G6} rad/s."));
+        }
         const double g = 9.81, rho = 1000;
         var size = new D3(0.04, 0.03, 0.02);
         var centre = new D3(0.055, 0.054, 0.053);

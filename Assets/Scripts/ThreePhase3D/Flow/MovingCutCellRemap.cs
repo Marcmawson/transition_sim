@@ -77,7 +77,9 @@ namespace PhysicsSim.ThreePhase3D.Flow
             var direction = (double[])rhs.Clone();
             var product = new double[count];
             double residualSquared = Dot(rhs, rhs);
-            double tolerance = grid.CellVolume * 1e-11;
+            // Keep the local closure residual well below the inventory tolerance
+            // so repeated remaps do not accumulate a pressure-group volume defect.
+            double tolerance = grid.CellVolume * 1e-13;
             int maxIterations = Math.Min(count, 4096);
             for (int iteration = 0; residualSquared > tolerance * tolerance && iteration < maxIterations; iteration++)
             {

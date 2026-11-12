@@ -89,3 +89,14 @@ The CPU fixture passed after extraction and the runtime and Editor code compiled
 The CPU fixture advances 256 consecutive 2 ms steps from 50% submerged and checks all five phase inventories after each remap. The final displaced volume is measured by intersecting the ice with the reconstructed liquid columns. The earlier 64-step run reached 95.0972% immersion at 0.128 s. The extended run reached 92.3779% at 0.512 s and passed the conservation checks. The final vertical speed was +5.78106e-5 m/s, while the peak absolute vertical speed over the last 32 steps was 0.00435034 m/s. The small final speed alone does not establish settling.
 
 The longer run exercised faces that close during a pose change. The remap retains their first-order projected transfers when the donor exists in the old geometry and the receiver exists in the new geometry. It still checks donor capacity, volume closure and the correction budget. This is a transient result. Settling to the equilibrium displaced volume and GPU execution of the two-phase check remain open.
+
+## Late-time flotation window
+
+The 512-step CPU runs initially exceeded the phase-volume closure tolerance after repeated remaps. Tightening the swept-volume residual from 1e-11 to 1e-13 of one cell volume let both grids complete 1.024 s with all five inventory checks passing.
+
+| X grid offset | Final immersion | Final 32-step immersion range | Peak vertical speed | Peak angular speed |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 mm | 92.0701% | 91.8123% to 92.0701% | 0.4488 mm/s | 0.7878 rad/s |
+| 3 mm | 91.6418% | 91.6418% to 91.7382% | 0.1220 mm/s | 0.2210 rad/s |
+
+The hydrostatic reference is approximately 91.7% submerged. The two offsets still differ and the body continues rotating. V24 settled flotation remains open. The Unity GPU check still covers the short two-step fixture.
