@@ -25,3 +25,9 @@ The same benchmark now applies a wall 10 K below the melting point and advances 
 | 64 | 3.8744e-7 | 0.0010539 | 1.6298e-8 |
 
 The analytic front at 100 s is 0.00359543106 m. The fine run removed 845527.232 J/m2 through the cold wall. Its front released 819844.767 J/m2 of latent heat, compared with 819715.584 J/m2 in the analytic solution. The remainder is sensible cooling. The V21 melting regression and V22 freezing benchmark both passed on CPU. GPU integration and V23 volume coupling remain open.
+
+## GPU planar solver check
+
+Run **Physics Sim > Three Phase 3D > Run S10 GPU planar Stefan check** in Unity. The compute shader advances a 32-cell moving mesh through 4096 fixed steps for each case, from a 2 mm seed with a linear temperature profile. The GPU holds temperature, front position and wall energy across batches. Each case compares the final front, temperature profile and wall heat against the FP64 CPU solver with the same initial conditions and timestep, and independently closes the energy ledger. The analytic seeded runs above remain the independent discretisation checks.
+
+The Editor code compiled against Unity 2022.3.46f1 assemblies and the kernel compiled for Direct3D Shader Model 5. An FP32 arithmetic replay of the kernel update met the benchmark tolerances for both cases. Unity GPU execution and coupling to the beaker simulation remain open.

@@ -1,0 +1,70 @@
+#pragma kernel AdvancePlanarFront
+
+// One group owns the 32-cell verification mesh. State persists across batches.
+RWStructuredBuffer<float> TemperatureOffset;
+RWStructuredBuffer<float4> FrontAndWallHeat;
+float Density, HeatCapacity, Conductivity, LatentHeat, WallOffset, Dt;
+int Steps;
+
+groupshared float CellTemperature[32];
+groupshared float FaceHeatFlux[33];
+groupshared float Front;
+groupshared float FrontRoundoff;
+groupshared float WallHeat;
+groupshared float FrontSpeed;
+
+[numthreads(32, 1, 1)]
+void AdvancePlanarFront(uint cell : SV_GroupIndex)
+{
+    CellTemperature[cell] = TemperatureOffset[cell];
+    if (cell == 0)
+    {
+        float4 state = FrontAndWallHeat[0];
+        Front = state.x;
+        WallHeat = state.y;
+        FrontRoundoff = state.z;
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    for (int step = 0; step < Steps; step++)
+    {
+        float width = Front / 32;
+        if (cell == 0)
+        {
+            FaceHeatFlux[0] = Conductivity * (6 * WallOffset - 7 * CellTemperature[0] + CellTemperature[1]) / (2 * width);
+            FaceHeatFlux[32] = Conductivity * (7 * CellTemperature[31] - CellTemperature[30]) / (2 * width);
+            FrontSpeed = sign(WallOffset) * FaceHeatFlux[32] / (Density * LatentHeat);
+        }
+        GroupMemoryBarrierWithGroupSync();
+
+        float capacity = Density * HeatCapacity;
+        if (cell > 0)
+        {
+            float meshSpeed = FrontSpeed * (cell / 32.0);
+            FaceHeatFlux[cell] = Conductivity * (CellTemperature[cell - 1] - CellTemperature[cell]) / width
+                - capacity * meshSpeed * CellTemperature[cell];
+        }
+        GroupMemoryBarrierWithGroupSync();
+
+        // Preserve the small front increments that round off in FP32.
+        precise float increment = Dt * FrontSpeed - FrontRoundoff;
+        precise float nextFront = Front + increment;
+        precise float roundoff = (nextFront - Front) - increment;
+        float oldTemperature = CellTemperature[cell];
+        float relativeFlux = FaceHeatFlux[cell] - FaceHeatFlux[cell + 1] - capacity * (FrontSpeed / 32) * oldTemperature;
+        float updated = oldTemperature + Dt * relativeFlux / (capacity * (nextFront / 32));
+        GroupMemoryBarrierWithGroupSync();
+
+        CellTemperature[cell] = updated;
+        if (cell == 0)
+        {
+            Front = nextFront;
+            FrontRoundoff = roundoff;
+            WallHeat += Dt * FaceHeatFlux[0];
+        }
+        GroupMemoryBarrierWithGroupSync();
+    }
+
+    TemperatureOffset[cell] = CellTemperature[cell];
+    if (cell == 0) FrontAndWallHeat[0] = float4(Front, WallHeat, FrontRoundoff, 0);
+}
