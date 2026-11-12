@@ -702,10 +702,11 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
     public sealed class CutCellInventories
     {
+        internal const int LiquidVolume = 0, GasVolume = 1, LiquidEnergy = 2;
         internal readonly double[][] Planes;
-        public double[] LiquidM3 => Planes[0];
-        public double[] GasM3 => Planes[1];
-        public double[] LiquidEnergyJ => Planes[2];
+        public double[] LiquidM3 => Planes[LiquidVolume];
+        public double[] GasM3 => Planes[GasVolume];
+        public double[] LiquidEnergyJ => Planes[LiquidEnergy];
         public double[] GasEnergyJ => Planes[3];
         public double[] VapourKg => Planes[4];
         public CutCellInventories(double[] liquid, double[] gas, double[] liquidEnergy, double[] gasEnergy, double[] vapour)

@@ -194,3 +194,9 @@ The CPU fixture removed one quarter of a translating and rotating box from each 
 At a fixed pose, the before and after cut-cell volumes give the vacated ice volume per cell. The difference in their first moments gives the centroid of the released material in that cell. The source assigns liquid volume and enthalpy in proportion to the vacated ice volume and integrates the inherited linear momentum at that centroid. It reports the volume contraction explicitly for the receiving flow update.
 
 A rotated ice box on an offset, rotated grid released 6 mL of ice across 30 cells. The CPU fixture recovered 5.502863 mL of liquid and 0.497137 mL of contraction, with closure per cell and conservation of the released enthalpy and linear momentum. Consuming these sources in the fluid inventory and reconciling contraction with the flow remain open.
+
+## V26 meltwater inventory remap
+
+For a closed domain with an existing gas inventory, the remap uses a uniform gas expansion to fill the volume left by melting contraction. It preserves gas mass and enthalpy and returns the revised gas density for the next flow step. Swept face reconciliation transports the expanded donor volumes, then the remap adds liquid volume, enthalpy and linear momentum to the receiving groups. This closure prescribes the gas expansion and carries no pressure-work term.
+
+The CPU fixture deposited 5.502863 mL of water, conserved liquid mass and source enthalpy and momentum, and closed every new pressure-group volume. The gas density changed from 1.2 to 1.19938908 kg/m³ while gas mass, gas enthalpy and vapour mass stayed within the fixture tolerances. Conduction-driven recession and the freely melting coupled benchmark remain open.

@@ -10,7 +10,12 @@ namespace PhysicsSim.ThreePhase3D.Flow
         // Reconcile a closed-domain projected flux with the change in cell
         // capacity. Only faces open at both poses carry correction.
         public static double[][] Reconcile(VariableCoefficientProjection oldPlan,
-            VariableCoefficientProjection newPlan, FlowStep flow, double maxCorrectionM3)
+            VariableCoefficientProjection newPlan, FlowStep flow, double maxCorrectionM3) =>
+            ReconcileCore(oldPlan, newPlan, flow, maxCorrectionM3, null, null);
+
+        private static double[][] ReconcileCore(VariableCoefficientProjection oldPlan,
+            VariableCoefficientProjection newPlan, FlowStep flow, double maxCorrectionM3,
+            MeltwaterCutCellSource.Cell[] melt, double[] expansion)
         {
             if (oldPlan == null || newPlan == null || flow == null) throw new ArgumentNullException();
             var grid = oldPlan.Grid;
@@ -26,7 +31,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
             {
                 grid.Cells.Coordinates(cell, out int i, out int j, out int k);
                 if (grid.Cells.Interior(i, j, k))
-                    rhs[cell] = oldPlan.Geometry.FluidVolumeM3[cell] - newPlan.Geometry.FluidVolumeM3[cell];
+                    rhs[cell] = ExpandedVolume(oldPlan, expansion, cell) + (melt?[cell].LiquidM3 ?? 0) -
+                        newPlan.Geometry.FluidVolumeM3[cell];
             }
 
             var faces = new List<(int Axis, int Index, int Low, int High, double Weight)>();
@@ -60,13 +66,16 @@ namespace PhysicsSim.ThreePhase3D.Flow
                         int receiver = transfer > 0 ? high : low;
                         if (oldPlan.GroupByCell[donor] < 0 || newPlan.GroupByCell[receiver] < 0)
                             throw new NotSupportedException("Projected flux has no fluid donor or receiver across the pose change.");
+                        if (expansion != null) transfer *= expansion[oldPlan.GroupByCell[donor]];
                         swept[axis][face] = transfer;
                         rhs[low] -= transfer;
                         rhs[high] += transfer;
                     }
-                    double weight = Math.Min(oldArea[face], newArea[face]) / grid.FaceArea(axis);
-                    if (weight > 1e-12 && oldPlan.GroupByCell[low] >= 0 && oldPlan.GroupByCell[high] >= 0 &&
-                        newPlan.GroupByCell[low] >= 0 && newPlan.GroupByCell[high] >= 0)
+                    bool oldLow = oldPlan.GroupByCell[low] >= 0, oldHigh = oldPlan.GroupByCell[high] >= 0;
+                    double aperture = oldLow && oldHigh ? Math.Min(oldArea[face], newArea[face]) :
+                        melt != null && (oldLow || oldHigh) ? newArea[face] : 0;
+                    double weight = aperture / grid.FaceArea(axis);
+                    if (weight > 1e-12 && newPlan.GroupByCell[low] >= 0 && newPlan.GroupByCell[high] >= 0)
                         faces.Add((axis, face, low, high, weight));
                 }
             }
@@ -140,9 +149,56 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return ApplyCore(oldPlan, newPlan, state, sweptM3, oldVelocityMPerS, liquidDensityKgM3, gasDensityKgM3);
         }
 
+        // Closed-domain volume closure with a uniform gas density change.
+        // Gas expands at fixed mass and enthalpy before donor transport.
+        public static (CutCellInventories Fields, CutCellMomentumResult Momentum, double GasDensityKgM3)
+            ApplyMeltingWithMomentum(VariableCoefficientProjection oldPlan, VariableCoefficientProjection newPlan,
+                CutCellInventories state, FlowStep flow, MeltwaterCutCellSource.Cell[] melt,
+                double maxCorrectionM3, double liquidDensityKgM3, double gasDensityKgM3)
+        {
+            if (oldPlan == null || newPlan == null || state == null || flow == null || melt == null)
+                throw new ArgumentNullException();
+            if (melt.Length != oldPlan.Grid.Cells.Count || oldPlan.Grid != newPlan.Grid ||
+                state.GasM3.Length != oldPlan.GroupCount)
+                throw new ArgumentException("Meltwater sources and inventories must match the remap grids.");
+            if (!SiUnits.IsFinite(liquidDensityKgM3) || liquidDensityKgM3 <= 0 ||
+                !SiUnits.IsFinite(gasDensityKgM3) || gasDensityKgM3 <= 0)
+                throw new ArgumentException("Positive finite phase densities are required.");
+
+            double contraction = 0, gasVolume = 0;
+            foreach (var source in melt) contraction += source.ContractionM3;
+            foreach (double gas in state.GasM3)
+            {
+                if (!SiUnits.IsFinite(gas) || gas < 0)
+                    throw new ArgumentException("Gas volumes must be finite and nonnegative.", nameof(state));
+                gasVolume += gas;
+            }
+            if (contraction > 0 && !(gasVolume > 0))
+                throw new InvalidOperationException("Closed melting contraction requires an existing gas inventory.");
+            double gasScale = contraction > 0 ? 1 + contraction / gasVolume : 1;
+            double nextGasDensity = gasDensityKgM3 / gasScale;
+            if (!SiUnits.IsFinite(gasScale) || nextGasDensity <= 0)
+                throw new InvalidOperationException("Melting contraction exceeds the gas volume model.");
+            var expansion = new double[oldPlan.GroupCount];
+            for (int group = 0; group < expansion.Length; group++)
+                expansion[group] = 1 + (gasScale - 1) * state.GasM3[group] / oldPlan.Volumes[group];
+
+            var swept = ReconcileCore(oldPlan, newPlan, flow, maxCorrectionM3, melt, expansion);
+            var remap = ApplyCore(oldPlan, newPlan, state, swept, flow.VelocityMPerS,
+                liquidDensityKgM3, gasDensityKgM3, melt, expansion, gasScale);
+            return (remap.Fields, remap.Momentum, nextGasDensity);
+        }
+
+        private static double ExpandedVolume(VariableCoefficientProjection plan, double[] expansion, int cell)
+        {
+            int group = plan.GroupByCell[cell];
+            return plan.Geometry.FluidVolumeM3[cell] * (expansion != null && group >= 0 ? expansion[group] : 1);
+        }
+
         private static (CutCellInventories Fields, CutCellMomentumResult Momentum) ApplyCore(
             VariableCoefficientProjection oldPlan, VariableCoefficientProjection newPlan, CutCellInventories state,
-            double[][] sweptM3, float[] oldVelocity, double rhoL, double rhoG)
+            double[][] sweptM3, float[] oldVelocity, double rhoL, double rhoG,
+            MeltwaterCutCellSource.Cell[] melt = null, double[] expansion = null, double gasScale = 1)
         {
             if (oldPlan == null || newPlan == null || state == null)
                 throw new ArgumentNullException("Both projection plans and the old inventory are required.");
@@ -206,28 +262,37 @@ namespace PhysicsSim.ThreePhase3D.Flow
             {
                 grid.Cells.Coordinates(cell, out int i, out int j, out int k);
                 if (!grid.Cells.Interior(i, j, k)) continue;
-                double oldVolume = oldPlan.Geometry.FluidVolumeM3[cell];
+                double oldVolume = ExpandedVolume(oldPlan, expansion, cell);
                 double newVolume = newPlan.Geometry.FluidVolumeM3[cell];
                 double retained = oldVolume - outgoing[cell];
-                if (retained < 0 || Math.Abs(retained + incoming[cell] - newVolume) > tolerance)
+                var source = melt?[cell] ?? default;
+                if (retained < 0 || Math.Abs(retained + incoming[cell] + source.LiquidM3 - newVolume) > tolerance)
                     throw new InvalidOperationException("Swept face volumes do not close the moving-cell volume balance.");
                 int receiver = newPlan.GroupByCell[cell];
                 if (retained > 0)
                     Add(oldPlan.GroupByCell[cell], receiver, retained);
+                if (source.LiquidM3 <= 0) continue;
+                if (receiver < 0) throw new InvalidOperationException("A meltwater source has no receiving fluid group.");
+                result[CutCellInventories.LiquidVolume][receiver] += source.LiquidM3;
+                result[CutCellInventories.LiquidEnergy][receiver] += source.EnthalpyJ;
+                newMomentum[0][receiver] += D3.Dot(source.MomentumKgMPerS, grid.Frame.U);
+                newMomentum[1][receiver] += D3.Dot(source.MomentumKgMPerS, grid.Frame.V);
+                newMomentum[2][receiver] += D3.Dot(source.MomentumKgMPerS, grid.Frame.W);
             }
 
             var fields = new CutCellInventories(result);
             var momentum = newMomentum == null ? null :
-                new CutCellMomentum(newPlan).ScatterGroupMomentum(fields, newMomentum, rhoL, rhoG);
+                new CutCellMomentum(newPlan).ScatterGroupMomentum(fields, newMomentum, rhoL, rhoG / gasScale);
             return (fields, momentum);
 
             void Add(int donor, int receiver, double volume)
             {
                 if (donor < 0 || receiver < 0)
                     throw new InvalidOperationException("A remap transfer has no fluid donor or receiver.");
-                double fraction = volume / oldPlan.Volumes[donor];
+                double fraction = volume / (oldPlan.Volumes[donor] * (expansion?[donor] ?? 1));
                 for (int field = 0; field < result.Length; field++)
-                    result[field][receiver] += fraction * state.Planes[field][donor];
+                    result[field][receiver] += fraction * state.Planes[field][donor] *
+                        (field == CutCellInventories.GasVolume ? gasScale : 1);
                 if (newMomentum != null)
                     for (int axis = 0; axis < 3; axis++)
                         newMomentum[axis][receiver] += fraction * oldMomentum[axis][donor];

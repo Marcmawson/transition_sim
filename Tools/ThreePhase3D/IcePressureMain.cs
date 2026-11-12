@@ -45,6 +45,33 @@ internal static class IcePressureMain
         Near(Math.Abs(heat - melt.LiquidEnthalpyJ), 1e-10);
         Near(Math.Abs(contraction - (releasedVolume - water)), 1e-17);
         Near((momentum - melt.Released.MomentumKgMPerS).Length, 1e-14);
+        double rhoLiquid = equilibrium.LiquidMeltingDensityKgM3;
+        const double rhoGas = 1.2;
+        var oldPlan = new VariableCoefficientProjection(before, BoundaryConditions3D.Closed, _ => rhoGas, _ => 0);
+        var newPlan = new VariableCoefficientProjection(after, BoundaryConditions3D.Closed, _ => rhoGas, _ => 0);
+        var zero = new double[oldPlan.GroupCount];
+        var oldGas = (double[])oldPlan.Volumes.Clone();
+        var oldHeat = Array.ConvertAll(oldGas, volume => volume * 12);
+        var vapour = Array.ConvertAll(oldGas, volume => volume * 0.01);
+        var fields = new CutCellInventories(zero, oldGas, zero, oldHeat, vapour);
+        var flow = FlowCpuReference.Project(oldPlan, new float[oldPlan.FaceCount], 0.001, 16384);
+        var mapped = MovingCutCellRemap.ApplyMeltingWithMomentum(oldPlan, newPlan, fields, flow, source,
+            grid.CellVolume, rhoLiquid, rhoGas);
+        double Sum(double[] values) => System.Linq.Enumerable.Sum(values);
+        Near(Math.Abs(Sum(mapped.Fields.LiquidM3) * rhoLiquid - melt.Released.MassKg), 1e-14);
+        Near(Math.Abs(Sum(mapped.Fields.LiquidEnergyJ) - heat), 1e-10);
+        Near(Math.Abs(Sum(mapped.Fields.GasM3) * mapped.GasDensityKgM3 - Sum(oldGas) * rhoGas), 1e-15);
+        Near(Math.Abs(Sum(mapped.Fields.GasEnergyJ) - Sum(oldHeat)), 1e-14);
+        Near(Math.Abs(Sum(mapped.Fields.VapourKg) - Sum(vapour)), 1e-15);
+        for (int group = 0; group < newPlan.GroupCount; group++)
+            Near(Math.Abs(mapped.Fields.LiquidM3[group] + mapped.Fields.GasM3[group] - newPlan.Volumes[group]), 1e-16);
+        var packed = new double[3];
+        for (int face = 0; face < newPlan.FaceCount; face++)
+            packed[newPlan.Faces[face].Axis] += mapped.Momentum.MomentumKgMPerS[face];
+        D3 mappedMomentum = grid.Frame.U * packed[0] + grid.Frame.V * packed[1] + grid.Frame.W * packed[2];
+        Near((mappedMomentum - momentum).Length, 1e-14);
+        Console.WriteLine(FormattableString.Invariant(
+            $"S11 V26 meltwater remap passed: {water * 1e6:F6} mL liquid, gas density {mapped.GasDensityKgM3:F8} kg/m3."));
         Console.WriteLine(FormattableString.Invariant(
             $"S11 V26 cut-cell meltwater source passed: {occupied} cells, {water * 1e6:F6} mL liquid, {contraction * 1e6:F6} mL contraction."));
     }
