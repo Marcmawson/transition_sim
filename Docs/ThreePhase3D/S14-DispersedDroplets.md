@@ -60,4 +60,10 @@ Both CPU runs closed dry air, water, enthalpy and momentum at every step. At 0.1
 
 The deposition fixture starts with a 2 µm gap between the spherical droplet surface and a planar wall. On first contact with the prescribed sticking face, the step transfers the remaining liquid mass and enthalpy to the wall deposit inventory and transfers its momentum to the wall impulse ledger. The gas solver continues after deposition.
 
-CPU runs at 0.2 and 0.1 ms closed the dry-air, water, enthalpy and momentum ledgers at every step. At 0.1 ms, impact occurred on step 5 and deposited 4.1525538e-12 kg of water and 4.1608284e-7 J of liquid enthalpy, with a wall impulse of -1.3964958e-14 N·s along X. Contact is resolved at the end of the step. This fixture assumes perfect sticking and uses an enthalpy ledger without impact kinetic heating. Apparatus wetting, rebound, film re-evaporation, coupled extinction and condensation remain open.
+CPU runs at 0.2 and 0.1 ms closed the dry-air, water, enthalpy and momentum ledgers at every step. At 0.1 ms, impact occurred on step 5 and deposited 4.1525538e-12 kg of water and 4.1608284e-7 J of liquid enthalpy, with a wall impulse of -1.3964958e-14 N·s along X. Contact is resolved at the end of the step. This fixture assumes perfect sticking and uses an enthalpy ledger without impact kinetic heating.
+
+## V37 wall-film re-evaporation
+
+From the step after impact, the stationary deposit exchanges sensible heat and vapour with the adjacent gas cell. It uses the same saturation pressure and enthalpy conventions as the isolated droplet, with planar stagnant-film transfer over a prescribed 1e-10 m² wet area and 20 µm gas film. The enthalpy update debits the deposit by exactly what the gas gains, and gas projection and transport use the updated inventories.
+
+The 0.1 ms run returned 6.2842125e-15 kg to the gas, with a net film enthalpy loss of 1.0235465e-8 J. Both timesteps passed the coupled conservation checks. This fixture uses a fixed wet area and an insulated wall. Apparatus wetting, rebound, wall heat conduction, film dry-out, coupled droplet extinction and condensation remain open.

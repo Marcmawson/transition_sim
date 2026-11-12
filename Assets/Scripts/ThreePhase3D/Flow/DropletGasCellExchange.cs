@@ -51,6 +51,40 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         internal static double Mass(double radius) => (4 * Math.PI / 3) * LiquidDensity * radius * radius * radius;
 
+        // Stationary, well-mixed wall liquid with a prescribed planar gas film.
+        internal static (double LiquidKg, double LiquidEnthalpyJ, double VapourKg, double GasEnthalpyJ) AdvanceWallFilm(
+            double liquidKg, double liquidEnthalpyJ, double dryAirKg, double vapourKg, double gasEnthalpyJ,
+            double pressurePa, double areaM2, double thicknessM, double conductivity, double diffusivity, double dt)
+        {
+            if (!Positive(liquidKg) || !Positive(dryAirKg) || !SiUnits.IsFinite(vapourKg) || vapourKg < 0 ||
+                !(pressurePa >= 80000 && pressurePa <= 101325) || !Positive(areaM2) ||
+                !Positive(thicknessM) || !Positive(conductivity) || !Positive(diffusivity) || !Positive(dt))
+                throw new ArgumentException("Invalid wall-film inventory or transport properties.");
+
+            double liquidK = ReferenceK + liquidEnthalpyJ / (liquidKg * LiquidCp);
+            double gasK = GasTemperature(dryAirKg, vapourKg, gasEnthalpyJ);
+            CheckTemperature(liquidK);
+            CheckTemperature(gasK);
+            double surface = HumidGas.WaterMassFraction(SaturationPressurePa(liquidK) / pressurePa);
+            double ambient = vapourKg / (dryAirKg + vapourKg);
+            double density = (dryAirKg + vapourKg) / GasVolumeM3(dryAirKg, vapourKg, gasEnthalpyJ, pressurePa);
+            double areaTimePerThickness = areaM2 * dt / thicknessM;
+            double evaporated = density * diffusivity * areaTimePerThickness *
+                Math.Max(0, Math.Log((1 - ambient) / (1 - surface)));
+            double sensible = conductivity * areaTimePerThickness * (gasK - liquidK);
+            double transfer = evaporated * (VapourReferenceEnthalpy + VapourCp * (liquidK - ReferenceK)) - sensible;
+            double remaining = liquidKg - evaporated;
+            if (!(remaining > 0))
+                throw new InvalidOperationException("The wall film would run dry in one step. Reduce the timestep.");
+            double remainingEnthalpy = liquidEnthalpyJ - transfer;
+            double updatedVapour = vapourKg + evaporated, updatedGasEnthalpy = gasEnthalpyJ + transfer;
+            CheckTemperature(ReferenceK + remainingEnthalpy / (remaining * LiquidCp));
+            CheckTemperature(GasTemperature(dryAirKg, updatedVapour, updatedGasEnthalpy));
+            return (remaining, remainingEnthalpy, updatedVapour, updatedGasEnthalpy);
+        }
+
+        private static bool Positive(double value) => SiUnits.IsFinite(value) && value > 0;
+
         internal static int PressureGroupAt(VariableCoefficientProjection plan, D3 worldPosition)
         {
             var grid = plan.Grid;

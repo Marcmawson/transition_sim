@@ -72,6 +72,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 double liquidOut = 0, liquidEnthalpyOut = 0;
                 D3 liquidMomentumOut = default;
                 double depositedLiquid = 0, depositedEnthalpy = 0;
+                double filmLiquid = 0, filmEnthalpy = 0;
                 D3 impactReaction = default;
                 int crossings = 0, exitStep = 0, impactStep = 0;
                 int previousGroup = exitDomain ? secondGroup : firstGroup;
@@ -125,9 +126,20 @@ namespace PhysicsSim.ThreePhase3D.Verification
                             impactStep = step + 1;
                             depositedLiquid = DropletGasCellExchange.Mass(radius);
                             depositedEnthalpy = LiquidEnthalpy(depositedLiquid, liquidK);
+                            filmLiquid = depositedLiquid;
+                            filmEnthalpy = depositedEnthalpy;
                             impactReaction = velocity * depositedLiquid;
                             radius = 0;
                         }
+                    }
+                    else if (filmLiquid > 0)
+                    {
+                        var adjacent = gas[firstGroup];
+                        var film = DropletGasCellExchange.AdvanceWallFilm(filmLiquid, filmEnthalpy, adjacent.DryAirKg,
+                            adjacent.VapourKg, adjacent.EnthalpyJ, pressure, 1e-10, 2e-5, 0.026, 2.5e-5, dt);
+                        filmLiquid = film.LiquidKg;
+                        filmEnthalpy = film.LiquidEnthalpyJ;
+                        gas[firstGroup] = (adjacent.DryAirKg, film.VapourKg, film.GasEnthalpyJ, adjacent.MomentumKgMPerS);
                     }
                     var volumes = new double[gas.Length];
                     var source = new double[gas.Length];
@@ -165,8 +177,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     energyOut += moved.Outflow.EnthalpyJ;
                     momentumOut += moved.Outflow.MomentumKgMPerS;
                     double remaining = DropletGasCellExchange.Mass(radius);
-                    double air = airOut, water = vapourOut + liquidOut + depositedLiquid + remaining;
-                    double energy = energyOut + liquidEnthalpyOut + depositedEnthalpy + LiquidEnthalpy(remaining, liquidK);
+                    double air = airOut, water = vapourOut + liquidOut + filmLiquid + remaining;
+                    double energy = energyOut + liquidEnthalpyOut + filmEnthalpy + LiquidEnthalpy(remaining, liquidK);
                     D3 momentum = momentumOut + liquidMomentumOut + impactReaction + wallReaction + openReaction + velocity * remaining;
                     foreach (var state in gas)
                     {
@@ -214,6 +226,10 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         throw new InvalidOperationException("S14 wall deposition did not account for the remaining droplet.");
                     log(FormattableString.Invariant(
                         $"S14 V37 wall deposition passed: {steps} steps, impact step {impactStep}, liquid {depositedLiquid:G8} kg, enthalpy {depositedEnthalpy:G8} J, wall impulse X {impactReaction.X:G8} N s."));
+                    if (!(filmLiquid > 0 && filmLiquid < depositedLiquid && filmEnthalpy < depositedEnthalpy))
+                        throw new InvalidOperationException("S14 deposited liquid did not re-evaporate.");
+                    log(FormattableString.Invariant(
+                        $"S14 V37 wall re-evaporation passed: {steps} steps, vapour returned {depositedLiquid - filmLiquid:G8} kg, film enthalpy loss {depositedEnthalpy - filmEnthalpy:G8} J."));
                 }
                 return (radius, vapourOut, feedback, wallReaction.X);
             }
