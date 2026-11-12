@@ -51,3 +51,7 @@ The growing-bubble fixture now carries the remapped velocity to the next project
 When one step produces more vapour than the existing layer in a mixed cell, the old PLIC sweep can pull liquid into the adjacent gas group and create a second reconstructed interface. For a grid-parallel section covering the shared aperture, the pure-water source now deposits the new vapour and its enthalpy in the neighbouring pure gas group. The same phase transfer supplies the corresponding momentum and pressure-volume increments. This treatment is limited to full-aperture, grid-parallel sections.
 
 The initially aligned and initially mixed planar fixtures now both pass four steps in both flux directions. They match the analytical front shift of ±3.6993723e-8 m and velocity jump of ±0.0074104975 m/s. The evaporation test also checks that the adjacent vapour cell remains free of liquid. The growing-bubble and S12 CPU regressions passed.
+
+## Unity pressure backend verification
+
+In Unity, select **Physics Sim → Three Phase 3D → Run S13 GPU boiling checks**. The menu runs the shared planar Stefan and growing-bubble fixtures with GPU pressure projection and CPU interface reconstruction, phase transport and momentum remapping. The planar cases check the analytical front shift, velocity jump and boundary ledgers. The growing case also checks the CPU reference within 1 µm for both centroid displacements and 1% for vapour volume gain. The shared CPU fixtures passed and the changed scripts compiled against Unity 2022.3.46f1 assemblies. Device results are pending.
