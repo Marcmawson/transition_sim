@@ -9,6 +9,11 @@ internal static class FlowMain
 {
     public static int Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--droplet-heating")
+        {
+            DropletSensibleHeatCheck.Run(Console.WriteLine);
+            return 0;
+        }
         if (args.Length == 1 && args[0] == "--droplet-settling")
         {
             StokesDropletCheck.Run(Console.WriteLine);
