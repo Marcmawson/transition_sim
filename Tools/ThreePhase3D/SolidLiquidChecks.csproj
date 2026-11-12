@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="SolidLiquidMain.cs" />
+    <Compile Include="../../Assets/Scripts/ThreePhase3D/Materials/*.cs" />
+    <Compile Include="../../Assets/Scripts/ThreePhase3D/Core/SiUnits.cs" />
+    <Compile Include="../../Assets/Scripts/ThreePhase3D/PhaseChange/SolidLiquidInterface.cs" />
+  </ItemGroup>
+</Project>
