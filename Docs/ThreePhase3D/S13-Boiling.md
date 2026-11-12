@@ -54,4 +54,6 @@ The initially aligned and initially mixed planar fixtures now both pass four ste
 
 ## Unity pressure backend verification
 
+The first Unity run exposed sensitivity to pressure roundoff. Changing the CPU convergence check from every 16 iterations to every 31 reproduced a substantial change in bubble rise and growth. Pure-water heat exchange now excludes reconstructed sections where the smaller phase occupies at most 1e-10 of its pressure-group volume. The trace phase stays in the conserved inventories. The corrected CPU reference rises 47.08612 µm with gravity and 10.661593 µm without gravity, with a vapour volume gain of 5.8324244e-10 m³.
+
 In Unity, select **Physics Sim → Three Phase 3D → Run S13 GPU boiling checks**. The menu runs the shared planar Stefan and growing-bubble fixtures with GPU pressure projection and CPU interface reconstruction, phase transport and momentum remapping. The planar cases check the analytical front shift, velocity jump and boundary ledgers. The growing case also checks the CPU reference within 1 µm for both centroid displacements and 1% for vapour volume gain. The shared CPU fixtures passed and the changed scripts compiled against Unity 2022.3.46f1 assemblies. Device results are pending.

@@ -53,8 +53,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 double gained = Sum(withGravity.GasM3) - volume;
                 if (!(rise.Y - control > 1e-8 && gained > 0))
                     throw new InvalidOperationException("The phase-changing vapour seed did not grow and rise.");
-                if (Math.Abs(rise.Y - 8.1593956e-5) > 1e-6 || Math.Abs(control - 4.350105e-5) > 1e-6 ||
-                    Math.Abs(gained / 1.1635088e-9 - 1) > 0.01)
+                if (Math.Abs(rise.Y - 4.708612e-5) > 1e-6 || Math.Abs(control - 1.0661593e-5) > 1e-6 ||
+                    Math.Abs(gained / 5.8324244e-10 - 1) > 0.01)
                     throw new InvalidOperationException($"The growing bubble differs from the CPU baseline. Rise {rise.Y:G8} m, control {control:G8} m, vapour gain {gained:G8} m3.");
                 log(FormattableString.Invariant(
                     $"S13 growing bubble passed: 6 steps, rise {rise.Y:G8} m, no-gravity rise {control:G8} m, vapour gained {gained:G8} m3."));

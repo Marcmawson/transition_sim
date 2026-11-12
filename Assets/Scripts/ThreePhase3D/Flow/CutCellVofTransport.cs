@@ -345,7 +345,9 @@ namespace PhysicsSim.ThreePhase3D.Flow
             if (!SiUnits.IsFinite(liquidDensityKgM3) || liquidDensityKgM3 <= 0 ||
                 !SiUnits.IsFinite(dt) || dt <= 0)
                 throw new ArgumentException("Phase exchange requires positive density and timestep.");
-            var areas = ReconstructLiquidGasInterfaceAreas(state);
+            // A roundoff-sized phase trace can reconstruct as a full face.
+            // Exclude those sections from pure-water heating while retaining their inventories.
+            var areas = ReconstructLiquidGasInterfaceAreas(state, pureSurface == null ? 0 : Tolerance);
             int count = plan.GroupCount;
             var increments = new CutCellInventories(new double[count], new double[count],
                 new double[count], new double[count], new double[count]);
@@ -839,7 +841,10 @@ namespace PhysicsSim.ThreePhase3D.Flow
             }
         }
 
-        public double[] ReconstructLiquidGasInterfaceAreas(CutCellInventories fields)
+        public double[] ReconstructLiquidGasInterfaceAreas(CutCellInventories fields) =>
+            ReconstructLiquidGasInterfaceAreas(fields, 0);
+
+        private double[] ReconstructLiquidGasInterfaceAreas(CutCellInventories fields, double minimumFraction)
         {
             if (fields == null) throw new ArgumentNullException(nameof(fields));
             Validate(fields.Planes);
@@ -847,7 +852,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
             for (int cell = 0; cell < plan.GroupByCell.Length; cell++)
             {
                 int group = plan.GroupByCell[cell];
-                if (group < 0 || fields.LiquidM3[group] == 0 || fields.GasM3[group] == 0) continue;
+                if (group < 0 || Math.Min(fields.LiquidM3[group], fields.GasM3[group]) <=
+                    minimumFraction * plan.Volumes[group]) continue;
                 var plane = geometry.Reconstruct(cell, EstimateNormal(cell, group, fields.LiquidM3),
                     fields.LiquidM3[group] / plan.Volumes[group] * plan.Geometry.FluidVolumeM3[cell]);
                 areas[group] += geometry.LiquidGasInterfaceArea(cell, plane);
