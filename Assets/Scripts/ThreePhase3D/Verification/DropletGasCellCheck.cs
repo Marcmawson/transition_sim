@@ -26,6 +26,77 @@ namespace PhysicsSim.ThreePhase3D.Verification
             log(FormattableString.Invariant(
                 $"S14 V37 gas-cell exchange passed: droplet {reference.LiquidK:F6} K, radius {reference.RadiusM * 1e6:F6} um, vapour gain {reference.VapourKg - initialVapour:G8} kg."));
             CheckProjection();
+            var coarseGrid = SimulateGrid(10);
+            var fineGrid = SimulateGrid(20);
+            var referenceGrid = SimulateGrid(40);
+            if (!(referenceGrid.RadiusM < initialRadius && referenceGrid.OutletVapourKg != 0) ||
+                Math.Abs(fineGrid.RadiusM - referenceGrid.RadiusM) >= Math.Abs(coarseGrid.RadiusM - referenceGrid.RadiusM) ||
+                Math.Abs(fineGrid.OutletVapourKg - referenceGrid.OutletVapourKg) >=
+                    Math.Abs(coarseGrid.OutletVapourKg - referenceGrid.OutletVapourKg))
+                throw new InvalidOperationException("S14 coupled gas-grid results did not refine.");
+            log(FormattableString.Invariant(
+                $"S14 V37 multi-step gas grid passed: 40 steps, radius {referenceGrid.RadiusM * 1e6:F6} um, outlet vapour {referenceGrid.OutletVapourKg:G8} kg."));
+
+            (double RadiusM, double OutletVapourKg) SimulateGrid(int steps)
+            {
+                const double pressure = 101325;
+                double dt = duration / steps;
+                double cellVolume = DropletGasCellExchange.GasVolumeM3(dryAir, initialVapour, initialGasEnergy, pressure);
+                double dx = Math.Pow(cellVolume, 1.0 / 3);
+                var grid = new Grid3D(2, 1, 1, new D3(dx, dx, dx), RigidFrame.Identity);
+                var geometry = CutCellGeometry.Build(grid);
+                var sides = new FlowBoundary[6];
+                sides[1] = new FlowBoundary(FlowBoundaryKind.OpenPressure);
+                var boundaries = new BoundaryConditions3D(sides);
+                var seed = new VariableCoefficientProjection(geometry, boundaries,
+                    _ => (dryAir + initialVapour) / cellVolume, _ => 0);
+                int dropletGroup = seed.GroupByCell[grid.Cells.Index(0, 0, 0)];
+                var gas = new (double DryAirKg, double VapourKg, double EnthalpyJ)[seed.GroupCount];
+                for (int group = 0; group < gas.Length; group++) gas[group] = (dryAir, initialVapour, initialGasEnergy);
+                double radius = initialRadius, liquidK = initialK, airOut = 0, vapourOut = 0, energyOut = 0;
+                for (int step = 0; step < steps; step++)
+                {
+                    var local = gas[dropletGroup];
+                    var exchanged = DropletGasCellExchange.Advance(radius, liquidK, local.DryAirKg, local.VapourKg,
+                        local.EnthalpyJ, pressure, 0.026, 2.5e-5, dt);
+                    radius = exchanged.RadiusM;
+                    liquidK = exchanged.LiquidK;
+                    gas[dropletGroup] = (local.DryAirKg, exchanged.VapourKg, exchanged.GasEnthalpyJ);
+                    var volumes = new double[gas.Length];
+                    var source = new double[gas.Length];
+                    for (int group = 0; group < gas.Length; group++)
+                    {
+                        var state = gas[group];
+                        volumes[group] = DropletGasCellExchange.GasVolumeM3(state.DryAirKg, state.VapourKg, state.EnthalpyJ, pressure);
+                        source[group] = (seed.Volumes[group] - volumes[group]) / dt;
+                    }
+                    var plan = new VariableCoefficientProjection(geometry, boundaries, cell =>
+                    {
+                        int group = seed.GroupByCell[cell];
+                        return (gas[group].DryAirKg + gas[group].VapourKg) / volumes[group];
+                    }, _ => 0);
+                    var flow = FlowCpuReference.Project(plan, new float[plan.FaceCount], dt, 4096, null, source);
+                    var moved = HumidGasAdvection.Advance(plan, flow, volumes, gas,
+                        (dryAir / cellVolume, initialVapour / cellVolume, initialGasEnergy / cellVolume));
+                    gas = moved.Gas;
+                    airOut += moved.Outflow.DryAirKg;
+                    vapourOut += moved.Outflow.VapourKg;
+                    energyOut += moved.Outflow.EnthalpyJ;
+                    double air = airOut, water = vapourOut + DropletGasCellExchange.Mass(radius);
+                    double energy = energyOut + LiquidEnthalpy(DropletGasCellExchange.Mass(radius), liquidK);
+                    foreach (var state in gas)
+                    {
+                        air += state.DryAirKg;
+                        water += state.VapourKg;
+                        energy += state.EnthalpyJ;
+                    }
+                    if (Math.Abs(air - 2 * dryAir) > 1e-12 * dryAir ||
+                        Math.Abs(water - initialMass - 2 * initialVapour) > 1e-12 * initialMass ||
+                        Math.Abs(energy - initialTotalEnergy - initialGasEnergy) > 1e-12 * initialTotalEnergy)
+                        throw new InvalidOperationException($"S14 gas-grid inventory mismatch at step {step + 1}.");
+                }
+                return (radius, vapourOut);
+            }
 
             void CheckProjection()
             {

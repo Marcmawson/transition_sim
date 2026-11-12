@@ -3,13 +3,14 @@ using PhysicsSim.ThreePhase3D.Core;
 
 namespace PhysicsSim.ThreePhase3D.Flow
 {
-    // First-order donor transport for gas-only groups with outflow boundaries.
+    // First-order donor transport for gas-only groups. The outlet ledger is signed.
     internal static class HumidGasAdvection
     {
         internal static ((double DryAirKg, double VapourKg, double EnthalpyJ)[] Gas,
             (double DryAirKg, double VapourKg, double EnthalpyJ) Outflow) Advance(
             VariableCoefficientProjection plan, FlowStep flow, double[] gasVolumes,
-            (double DryAirKg, double VapourKg, double EnthalpyJ)[] gas)
+            (double DryAirKg, double VapourKg, double EnthalpyJ)[] gas,
+            (double DryAirKg, double VapourKg, double EnthalpyJ)? reservoirPerM3 = null)
         {
             if (!flow.Diagnostics.Converged || flow.VelocityMPerS.Length != plan.FaceCount ||
                 gas.Length != plan.GroupCount || gasVolumes.Length != plan.GroupCount)
@@ -27,7 +28,18 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 int donor = volume > 0 ? face.Low : face.High;
                 int receiver = volume > 0 ? face.High : face.Low;
                 if (donor < 0)
-                    throw new InvalidOperationException("Gas advection requires a prescribed reservoir for boundary inflow.");
+                {
+                    if (!reservoirPerM3.HasValue)
+                        throw new InvalidOperationException("Gas advection requires a prescribed reservoir for boundary inflow.");
+                    var reservoir = reservoirPerM3.Value;
+                    if (!(reservoir.DryAirKg > 0 && reservoir.VapourKg >= 0) ||
+                        !SiUnits.IsFinite(reservoir.DryAirKg) || !SiUnits.IsFinite(reservoir.VapourKg) ||
+                        !SiUnits.IsFinite(reservoir.EnthalpyJ))
+                        throw new ArgumentException("Invalid gas reservoir concentrations.");
+                    incoming[receiver] = Add(incoming[receiver], Scale(reservoir, Math.Abs(volume)));
+                    outlet = Add(outlet, Scale(reservoir, -Math.Abs(volume)));
+                    continue;
+                }
                 double fraction = Math.Abs(volume) / gasVolumes[donor];
                 fractions[donor] += fraction;
                 if (!(fractions[donor] <= 1))
