@@ -159,8 +159,10 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     $"S14 detached VOF conversion passed: anchored neck retained, parcel displacement {restored.LiquidM3:G8} m3."));
                 const double dt = 0.0004;
                 int destination = plan.PressureGroup(5, 0, 0);
-                var displaced = new double[plan.GroupCount];
-                displaced[destination] = liquid[detached];
+                var displaced = SeededFogCell.SelectParcelFootprint(plan, converted.Fields, grid.Centre(5, 0, 0),
+                    parcel.RadiusM, parcel.Multiplicity);
+                if (Math.Abs(displaced[destination] / liquid[detached] - 1) > 1e-13)
+                    throw new InvalidOperationException("S14 automatic footprint missed the destination pressure group.");
                 var moved = new CutCellVofTransport(plan).AdvanceParcelDisplacement(converted.Fields,
                     converted.ParcelDisplacementM3, displaced, dt,
                     source => FlowCpuReference.Project(plan, new float[plan.FaceCount], dt, 4096, null, source));

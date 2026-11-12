@@ -7,6 +7,23 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // Each parcel represents identical seeded droplets sharing one gas inventory.
     internal static class SeededFogCell
     {
+        // Deposit unresolved occupancy in the pressure group containing the centre.
+        // Mixed groups and footprints that would fill the group require a different remap.
+        internal static double[] SelectParcelFootprint(VariableCoefficientProjection plan,
+            CutCellInventories state, D3 position, double radiusM, int multiplicity)
+        {
+            if (!(radiusM > 0) || !SiUnits.IsFinite(radiusM) || multiplicity <= 0 ||
+                state.LiquidM3.Length != plan.GroupCount)
+                throw new ArgumentException("Parcel footprint requires a valid parcel and matching VOF groups.");
+            int group = DropletGasCellExchange.PressureGroupAt(plan, position);
+            double volume = DropletGasCellExchange.Mass(radiusM) * multiplicity / DropletGasCellExchange.LiquidDensity;
+            if (state.LiquidM3[group] != 0 || !(volume > 0 && volume < plan.Volumes[group]))
+                throw new InvalidOperationException("Parcel footprint requires a gas-only group with sufficient volume.");
+            var displacement = new double[plan.GroupCount];
+            displacement[group] = volume;
+            return displacement;
+        }
+
         // Reinsert a parcel into its reserved footprint. The caller transfers
         // the returned momentum into the resolved momentum inventory.
         internal static (CutCellInventories Fields, D3[] LiquidMomentum) ReinsertResolvedLiquid(
