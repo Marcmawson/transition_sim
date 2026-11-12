@@ -9,6 +9,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
     public sealed class ColumnHydrostaticPressure
     {
         private readonly Grid3D grid;
+        private readonly VariableCoefficientProjection plan;
         private readonly double[] waterline;
         private readonly double liquidSlope, gasSlope;
 
@@ -23,6 +24,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             if (inventory.LiquidM3.Length != plan.GroupCount || inventory.GasM3.Length != plan.GroupCount)
                 throw new ArgumentException("Inventory does not match the pressure groups.", nameof(inventory));
 
+            this.plan = plan;
             grid = plan.Grid;
             double gravity = -D3.Dot(gravityMPerS2, grid.Frame.V);
             if (!(gravity > 0) || (gravityMPerS2 + grid.Frame.V * gravity).Length > 1e-12 * gravity)
@@ -71,14 +73,52 @@ namespace PhysicsSim.ThreePhase3D.Flow
         }
 
 
+        // The analytic vertical column gradient cancels gravity on each
+        // side of the waterline. Across columns, use the pressure jump
+        // and the same face mobility as the dynamic pressure projection.
+        public float[] Predict(float[] velocityMPerS, double dt)
+        {
+            if (velocityMPerS == null || velocityMPerS.Length != plan.FaceCount)
+                throw new ArgumentException("Velocity does not match the staggered grid.", nameof(velocityMPerS));
+            if (!SiUnits.IsFinite(dt) || dt <= 0) throw new ArgumentOutOfRangeException(nameof(dt));
+            var tentative = (float[])velocityMPerS.Clone();
+            for (int axis = 0; axis < 3; axis++)
+            {
+                var shape = grid.Shape((GridLocation)(axis + 1));
+                for (int index = 0; index < shape.Count; index++)
+                {
+                    int faceIndex = plan.FaceOffsets[axis] + index;
+                    var face = plan.Faces[faceIndex];
+                    if (!SiUnits.IsFinite(tentative[faceIndex]) || (face.Active == 0 && tentative[faceIndex] != 0))
+                        throw new ArgumentException("Nonfinite or blocked-face velocity.", nameof(velocityMPerS));
+                    if (face.Active == 0) continue;
+                    if (face.Low < 0 || face.High < 0)
+                        throw new NotSupportedException("Column pressure prediction requires closed boundaries.");
+                    if (axis == 1) continue;
+                    shape.Coordinates(index, out int x, out int y, out int z);
+                    int lowX = x - (axis == 0 ? 1 : 0), lowZ = z - (axis == 2 ? 1 : 0);
+                    double pointY = (y + 0.5) * grid.Spacing.Y;
+                    double jump = Pressure(x, z, pointY) - Pressure(lowX, lowZ, pointY);
+                    tentative[faceIndex] = (float)(tentative[faceIndex] - dt * face.Mobility * jump);
+                    if (!SiUnits.IsFinite(tentative[faceIndex]))
+                        throw new InvalidOperationException("Column pressure produced nonfinite face velocity.");
+                }
+            }
+            return tentative;
+        }
+
         // Sample using the patch's fluid-side cell so an ice surface on
         // a grid face never selects the adjacent solid cell by rounding.
         public double At(int cell, D3 worldPointM)
         {
             grid.Cells.Coordinates(cell, out int x, out int y, out int z);
             if (!grid.Cells.Interior(x, y, z)) throw new ArgumentOutOfRangeException(nameof(cell));
+            return Pressure(x, z, grid.Frame.ToLocal(worldPointM).Y);
+        }
+
+        private double Pressure(int x, int z, double pointY)
+        {
             double height = waterline[z * grid.Cells.X + x];
-            double pointY = grid.Frame.ToLocal(worldPointM).Y;
             double waterDepth = Math.Max(0, height - pointY);
             double airDepth = grid.Cells.Y * grid.Spacing.Y - Math.Max(pointY, height);
             return liquidSlope * waterDepth + gasSlope * airDepth;

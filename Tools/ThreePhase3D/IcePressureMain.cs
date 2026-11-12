@@ -10,6 +10,7 @@ internal static class IcePressureMain
     {
         CheckRemap();
         CheckWaterline();
+        CheckColumnPrediction();
         CheckTwoPhaseMotion();
         const double g = 9.81, rho = 1000;
         var size = new D3(0.04, 0.03, 0.02);
@@ -136,6 +137,26 @@ internal static class IcePressureMain
         }
     }
 
+    private static void CheckColumnPrediction()
+    {
+        const double rhoWater = 1000, rhoAir = 1.2, g = 9.81, dt = 0.002;
+        var grid = new Grid3D(4, 4, 4, new D3(0.01, 0.01, 0.01));
+        var plan = new VariableCoefficientProjection(CutCellGeometry.Build(grid), BoundaryConditions3D.Closed, _ => rhoWater, _ => 0);
+        var surface = new D3(0, 0.023, 0);
+        var gravity = new D3(0, -g, 0);
+        var still = new float[plan.FaceCount];
+        var flat = PlanarLiquidInventory.Create(plan, surface, new D3(0, 1, 0), 0, 0, 0);
+        var flatPressure = new ColumnHydrostaticPressure(plan, flat, gravity, rhoWater, rhoAir);
+        foreach (float value in flatPressure.Predict(still, dt)) Near(Math.Abs(value), 1e-10);
+
+        var sloped = PlanarLiquidInventory.Create(plan, surface, new D3(-0.1, 1, 0), 0, 0, 0);
+        var slopedPressure = new ColumnHydrostaticPressure(plan, sloped, gravity, rhoWater, rhoAir);
+        int face = plan.FaceIndex(0, 2, 0, 1);
+        double expected = -dt * g * (rhoWater - rhoAir) * 0.001 * plan.Faces[face].Mobility;
+        Near(Math.Abs(slopedPressure.Predict(still, dt)[face] - expected), 1e-9);
+        Console.WriteLine($"S11 column prediction passed: flat surface at rest, downslope face speed {expected:G6} m/s.");
+    }
+
     private static void CheckTwoPhaseMotion()
     {
         const double rhoWater = 1000, rhoAir = 1.2, g = 9.81, dt = 0.002;
@@ -195,7 +216,7 @@ internal static class IcePressureMain
             var point = grid.Centre(x, 0, z);
             pressureChange = Math.Max(pressureChange, Math.Abs(column.At(cell, point) - initialColumn.At(cell, point)));
         }
-        var tentative = Array.ConvertAll(updated.Momentum.VelocityMPerS, value => (float)value);
+        var tentative = column.Predict(Array.ConvertAll(updated.Momentum.VelocityMPerS, value => (float)value), dt);
         var second = IcePressureCoupling.Advance(moved.Body, secondPlan, dt, gravity,
             flux => FlowCpuReference.Project(secondPlan, tentative, dt, 32768, null, flux),
             columnPressure: column);
