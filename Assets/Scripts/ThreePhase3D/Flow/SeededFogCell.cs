@@ -8,6 +8,37 @@ namespace PhysicsSim.ThreePhase3D.Flow
     internal static class SeededFogCell
     {
         internal static ((D3 Position, double RadiusM, double TemperatureK, int Multiplicity)[] Parcels,
+            (double DryAirKg, double VapourKg, double EnthalpyJ)[] Gas, D3[] ParcelVelocity, D3[] GasMomentum)
+            AdvanceMovingGrid(VariableCoefficientProjection plan,
+                (D3 Position, double RadiusM, double TemperatureK, int Multiplicity)[] parcels,
+                (double DryAirKg, double VapourKg, double EnthalpyJ)[] gas, D3[] parcelVelocity, D3[] gasMomentum,
+                double pressurePa, double conductivity, double diffusivity, double viscosity, double dt)
+        {
+            if (parcelVelocity.Length != parcels.Length || gasMomentum.Length != gas.Length)
+                throw new ArgumentException("Fog velocity and gas momentum must match their inventories.");
+            var exchange = AdvanceGrid(plan, parcels, gas, default, pressurePa, conductivity, diffusivity, dt);
+            var velocity = new D3[parcels.Length];
+            var momentum = (D3[])gasMomentum.Clone();
+            for (int index = 0; index < parcels.Length; index++)
+            {
+                var parcel = parcels[index];
+                int group = DropletGasCellExchange.PressureGroupAt(plan, parcel.Position);
+                var donor = gas[group];
+                double mass = donor.DryAirKg + donor.VapourKg;
+                double volume = DropletGasCellExchange.GasVolumeM3(donor.DryAirKg, donor.VapourKg, donor.EnthalpyJ, pressurePa);
+                double vapourGain = DropletGasCellExchange.Mass(parcel.RadiusM) -
+                    DropletGasCellExchange.Mass(exchange.Parcels[index].RadiusM);
+                var motion = StokesDroplet.Advance(parcel.Position, parcelVelocity[index], gasMomentum[group] / mass,
+                    default, parcel.RadiusM, DropletGasCellExchange.LiquidDensity, mass / volume, viscosity, dt, vapourGain);
+                DropletGasCellExchange.PressureGroupAt(plan, motion.Position);
+                exchange.Parcels[index].Position = motion.Position;
+                velocity[index] = motion.Velocity;
+                momentum[group] += motion.GasMomentumGain * parcel.Multiplicity;
+            }
+            return (exchange.Parcels, exchange.Gas, velocity, momentum);
+        }
+
+        internal static ((D3 Position, double RadiusM, double TemperatureK, int Multiplicity)[] Parcels,
             (double DryAirKg, double VapourKg, double EnthalpyJ)[] Gas) AdvanceGrid(
             VariableCoefficientProjection plan, (D3 Position, double RadiusM, double TemperatureK, int Multiplicity)[] parcels,
             (double DryAirKg, double VapourKg, double EnthalpyJ)[] gas, D3 carrierVelocity,

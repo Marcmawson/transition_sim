@@ -108,8 +108,10 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 }
                 CheckGasFeedback(10);
                 CheckGasFeedback(20);
+                CheckGasFeedback(10, moving: true);
+                CheckGasFeedback(20, moving: true);
 
-                void CheckGasFeedback(int steps)
+                void CheckGasFeedback(int steps, bool moving = false)
                 {
                     const double pressure = 101325;
                     double dt = duration / steps;
@@ -130,17 +132,30 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     var initialTotals = Totals(initialParcels, gas);
                     var parcels = initialParcels;
                     var momentum = new D3[gas.Length];
+                    var parcelVelocity = new D3[parcels.Length];
+                    D3 startingMomentum = default;
+                    if (moving)
+                    {
+                        for (int index = 0; index < parcels.Length; index++)
+                        {
+                            parcelVelocity[index] = carrier;
+                            startingMomentum += carrier * (DropletGasCellExchange.Mass(parcels[index].Item2) * parcels[index].Item4);
+                        }
+                    }
                     D3 reaction = default, momentumOut = default;
                     double airOut = 0, vapourOut = 0, energyOut = 0;
                     double upstreamExchange = 0, downstreamExchange = 0, boundaryThroughput = 0;
                     for (int step = 0; step < steps; step++)
                     {
-                        var exchange = SeededFogCell.AdvanceGrid(plan, parcels, gas, carrier,
-                            pressure, 0.026, 2.5e-5, dt);
-                        parcels = exchange.Parcels;
-                        upstreamExchange += exchange.Gas[upstream].VapourKg - gas[upstream].VapourKg;
-                        downstreamExchange += exchange.Gas[downstream].VapourKg - gas[downstream].VapourKg;
-                        gas = exchange.Gas;
+                        double upstreamBefore = gas[upstream].VapourKg, downstreamBefore = gas[downstream].VapourKg;
+                        if (moving)
+                            (parcels, gas, parcelVelocity, momentum) = SeededFogCell.AdvanceMovingGrid(plan,
+                                parcels, gas, parcelVelocity, momentum, pressure, 0.026, 2.5e-5, 1.81e-5, dt);
+                        else
+                            (parcels, gas) = SeededFogCell.AdvanceGrid(plan, parcels, gas, carrier,
+                                pressure, 0.026, 2.5e-5, dt);
+                        upstreamExchange += gas[upstream].VapourKg - upstreamBefore;
+                        downstreamExchange += gas[downstream].VapourKg - downstreamBefore;
                         var volumes = new double[gas.Length];
                         var source = new double[gas.Length];
                         var inventory = new (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[gas.Length];
@@ -179,16 +194,27 @@ namespace PhysicsSim.ThreePhase3D.Verification
                             totalMomentum += momentum[group];
                         }
                         var total = Totals(parcels, gas);
+                        for (int index = 0; index < parcels.Length; index++)
+                            totalMomentum += parcelVelocity[index] *
+                                (DropletGasCellExchange.Mass(parcels[index].Item2) * parcels[index].Item4);
                         if (Math.Abs(air - startingAir) > 1e-12 * startingAir ||
                             Math.Abs(total.Water + vapourOut - initialTotals.Water) > 1e-12 * initialTotals.Water ||
                             Math.Abs(total.Energy + energyOut - initialTotals.Energy) > 1e-12 * initialTotals.Energy ||
-                            totalMomentum.Length > 1e-24)
+                            (totalMomentum - startingMomentum).Length > 1e-24)
                             throw new InvalidOperationException("V38 fog gas feedback failed conservation.");
                     }
                     if (!(upstreamExchange > 0 && downstreamExchange < 0 && boundaryThroughput > 0) ||
                         gas[untouched] == reservoir)
                         throw new InvalidOperationException("V38 fog exchange did not drive transport into the unseeded cell and boundary.");
-                    log(FormattableString.Invariant(
+                    if (moving)
+                    {
+                        if (!(parcelVelocity[0].X > 0 && parcelVelocity[0].X < carrier.X) ||
+                            DropletGasCellExchange.PressureGroupAt(plan, parcels[0].Item1) != downstream)
+                            throw new InvalidOperationException("V38 moving parcel did not slow under drag or cross the face.");
+                        log(FormattableString.Invariant(
+                            $"S14 V38 moving fog passed: {steps} steps, first parcel speed {parcelVelocity[0].X:G8} m/s, downstream condensation {-downstreamExchange:G8} kg."));
+                    }
+                    else log(FormattableString.Invariant(
                         $"S14 V38 fog gas feedback passed: {steps} steps, downstream condensation {-downstreamExchange:G8} kg, signed boundary vapour {vapourOut:G8} kg."));
                 }
             }
