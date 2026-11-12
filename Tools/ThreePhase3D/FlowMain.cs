@@ -18,6 +18,7 @@ internal static class FlowMain
             HumidPhaseExchangeCheck.Run((plan, tentative, dt, source) =>
                 FlowCpuReference.Project(plan, tentative, dt, 4096, null, source), Console.WriteLine);
             HumidPhaseExchangeCheck.RunSphericalFilm(Console.WriteLine);
+            HumidPhaseExchangeCheck.RunTransientCondensation(Console.WriteLine);
             return 0;
         }
         var suite = new FlowChecks(FlowCpuReference.Advance);

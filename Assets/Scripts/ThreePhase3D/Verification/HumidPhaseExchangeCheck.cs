@@ -8,6 +8,71 @@ namespace PhysicsSim.ThreePhase3D.Verification
 {
     public static class HumidPhaseExchangeCheck
     {
+        public static void RunTransientCondensation(Action<string> log)
+        {
+            if (log == null) throw new ArgumentNullException(nameof(log));
+            const double pressure = 101325, surfaceK = 283.15, bulkK = 293.15;
+            const double dryAir = 1e-5, area = 1e-4, film = 0.001;
+            var humid = new HumidGas();
+            var surface = humid.EquilibriumWithLiquid(surfaceK, pressure);
+            double initialFraction = 0.85 * humid.EquilibriumWithLiquid(bulkK, pressure).WaterMassFraction;
+            double initialVapour = dryAir * initialFraction / (1 - initialFraction);
+            double equilibriumVapour = dryAir * surface.WaterMassFraction / (1 - surface.WaterMassFraction);
+            double target = 0.5 * (initialVapour + equilibriumVapour);
+            double diffusivity = HumidGas.ReferenceDiffusivity(surfaceK, pressure);
+            double latent = new Water95().Saturation(surfaceK).Vapour.EnthalpyJkg - surface.Liquid.EnthalpyJkg;
+            if (!(initialVapour > target && target > equilibriumVapour && latent > 0))
+                throw new InvalidOperationException("The cooler-surface condensation benchmark is not bracketed.");
+
+            // Integrate the separable sharp-interface film equation in vapour mass
+            // to find the exact benchmark duration for half of the excess to condense.
+            const int intervals = 1024;
+            double width = (initialVapour - target) / intervals;
+            double elapsed = 0;
+            for (int n = 0; n <= intervals; n++)
+            {
+                double vapour = target + n * width;
+                double removal = area * surface.Gas.DensityKgM3 * diffusivity / film *
+                    Math.Log((dryAir + vapour) / (dryAir + equilibriumVapour));
+                elapsed += (n == 0 || n == intervals ? 1 : n % 2 == 0 ? 2 : 4) / removal;
+            }
+            elapsed *= width / 3;
+
+            double expected = initialVapour - target;
+            var coarse = Advance(16);
+            var fine = Advance(64);
+            double coarseError = Math.Abs(coarse.CondensedKg / expected - 1);
+            double fineError = Math.Abs(fine.CondensedKg / expected - 1);
+            if (!(fineError < coarseError / 3.5 && fineError < 0.005))
+                throw new InvalidOperationException("Transient condensation did not refine towards the sharp-interface reference.");
+            Near(Math.Abs(fine.LatentJ / (expected * latent) - 1), 0.005);
+            log(FormattableString.Invariant(
+                $"S12 V28 transient condensation passed: {elapsed:G8} s, condensate {fine.CondensedKg:G8} kg, latent heat {fine.LatentJ:G8} J, 64-step reference error {fineError:P4}."));
+
+            (double CondensedKg, double LatentJ) Advance(int steps)
+            {
+                double vapour = initialVapour, gasMass = dryAir + initialVapour, condensate = 0, heat = 0;
+                double dt = elapsed / steps;
+                for (int step = 0; step < steps; step++)
+                {
+                    double flux = HumidInterfaceFlux.WaterFluxKgM2PerS(surface, vapour / gasMass, film, diffusivity);
+                    if (!(flux < 0)) throw new InvalidOperationException("The cooler interface stopped condensing prematurely.");
+                    double liquidHeat = flux * latent;
+                    var transfer = HumidInterfaceFlux.InventoryTransfer((surface, flux, liquidHeat, 0, latent),
+                        area, dt, 0, vapour);
+                    vapour += transfer.WaterKg;
+                    gasMass += transfer.WaterKg;
+                    condensate -= transfer.WaterKg;
+                    heat -= liquidHeat * area * dt;
+                    Near(Math.Abs(gasMass - vapour - dryAir), 1e-18);
+                    Near(Math.Abs(vapour + condensate - initialVapour), 1e-18);
+                    Near(Math.Abs(transfer.GasEnthalpyJ + transfer.LiquidEnthalpyJ), 1e-15);
+                }
+                Near(Math.Abs(heat - condensate * latent), 1e-14);
+                return (condensate, heat);
+            }
+        }
+
         public static void RunSphericalFilm(Action<string> log)
         {
             if (log == null) throw new ArgumentNullException(nameof(log));
