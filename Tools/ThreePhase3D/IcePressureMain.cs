@@ -8,6 +8,48 @@ using PhysicsSim.ThreePhase3D.Verification;
 
 internal static class IcePressureMain
 {
+    private static void CheckIceFaceConduction()
+    {
+        var equilibrium = new SolidLiquidInterface(101325, 250, 290);
+        double rho = equilibrium.LiquidMeltingDensityKgM3;
+        var size = new D3(0.022, 0.018, 0.016);
+        var body = IceBody.Box(917, size, RigidFrame.Euler(new D3(0.035, 0.039, 0.038), 0, 0, 0));
+        var box = SurfacePrimitives.Box(-size * 0.5, size * 0.5);
+        var grid = new Grid3D(8, 8, 8, new D3(0.01, 0.01, 0.01), RigidFrame.Identity);
+        var geometry = CutCellGeometry.Build(grid, iceSurface: SurfacePrimitives.Transform(box, body.Frame));
+        var plan = new VariableCoefficientProjection(geometry, BoundaryConditions3D.Closed, _ => rho, _ => 0);
+        var zero = new double[plan.GroupCount];
+        var volume = (double[])plan.Volumes.Clone();
+        var water = new PhysicsSim.ThreePhase3D.Materials.Water95();
+        double warmK = equilibrium.MeltingTemperatureK + 10;
+        double warmH = water.Evaluate(warmK, 101325, PhysicsSim.ThreePhase3D.Materials.WaterBranch.Liquid).EnthalpyJkg;
+        var energy = Array.ConvertAll(volume, value => value * rho * warmH);
+        var fields = new CutCellInventories(volume, zero, energy, zero, zero);
+        var warm = Array.ConvertAll(volume, _ => warmK);
+        const double conductivity = 0.6, dt = 0.01;
+        var normal = new D3(1, 0, 0);
+        var transfer = IceFaceConduction.Transfer(plan, fields, body, equilibrium, normal, dt,
+            rho, conductivity, warm, patch => patch.FluidExposedAreaM2);
+        double expected = conductivity * size.Y * size.Z * 10 * dt / 0.001;
+        Near(Math.Abs(transfer.HeatJ - expected), 1e-12);
+        double removed = 0;
+        for (int group = 0; group < plan.GroupCount; group++)
+            removed += energy[group] - transfer.Fields.LiquidEnergyJ[group];
+        Near(Math.Abs(removed - transfer.HeatJ), 1e-12);
+        var melted = IceBoxMelting.Apply(body, size, 0, 1, transfer.HeatJ, equilibrium);
+        Near(Math.Abs(melted.Released.MassKg * equilibrium.LatentHeatJkg - expected), 1e-12);
+        var dry = IceFaceConduction.Transfer(plan, fields, body, equilibrium, normal, dt,
+            rho, conductivity, warm, _ => 0);
+        Near(Math.Abs(dry.HeatJ), 0);
+        var limited = IceFaceConduction.Transfer(plan, fields, body, equilibrium, normal, 1e6,
+            rho, conductivity, warm, patch => patch.FluidExposedAreaM2);
+        for (int group = 0; group < plan.GroupCount; group++)
+            if (limited.Fields.LiquidEnergyJ[group] < volume[group] * rho * equilibrium.LiquidMeltingEnthalpyJkg - 1e-12)
+                throw new InvalidOperationException("Conduction cooled a donor below melting equilibrium.");
+        Console.WriteLine(FormattableString.Invariant(
+            $"S11 V26 ice face conduction passed: {transfer.HeatJ:G8} J transferred, {melted.Released.MassKg:G8} kg melted."));
+    }
+
     private static void CheckMeltwaterSource()
     {
         var equilibrium = new SolidLiquidInterface(101325, 250, 290);
@@ -190,6 +232,7 @@ internal static class IcePressureMain
 
     private static void Main()
     {
+        CheckIceFaceConduction();
         CheckMeltwaterSource();
         CheckMeltingTransfer();
         CheckCoupledSupport();

@@ -200,3 +200,9 @@ A rotated ice box on an offset, rotated grid released 6 mL of ice across 30 cell
 For a closed domain with an existing gas inventory, the remap uses a uniform gas expansion to fill the volume left by melting contraction. It preserves gas mass and enthalpy and returns the revised gas density for the next flow step. Swept face reconciliation transports the expanded donor volumes, then the remap adds liquid volume, enthalpy and linear momentum to the receiving groups. This closure prescribes the gas expansion and carries no pressure-work term.
 
 The CPU fixture deposited 5.502863 mL of water, conserved liquid mass and source enthalpy and momentum, and closed every new pressure-group volume. The gas density changed from 1.2 to 1.19938908 kg/m³ while gas mass, gas enthalpy and vapour mass stayed within the fixture tolerances. Conduction-driven recession and the freely melting coupled benchmark remain open.
+
+## V26 liquid conduction into a melting face
+
+The one-sided conduction step uses the supplied wetted area, the adjacent liquid temperature and the patch's normal cell-centre distance. It withdraws enthalpy from the liquid inventory and passes the same heat to the face recession operator. The transfer is capped by each donor's sensible heat above the melting point and by the remaining ice's latent capacity.
+
+For a fully wetted face with a 10 K temperature difference, the CPU check matched the analytic conductive transfer of 0.01728 J and melted 5.1825512e-8 kg of ice. It also checked zero transfer for a dry face and the donor cooling limit. The ice is isothermal at the melting point and the caller supplies the wetted area and temperature. Internal ice conduction and the freely melting coupled benchmark remain open.
