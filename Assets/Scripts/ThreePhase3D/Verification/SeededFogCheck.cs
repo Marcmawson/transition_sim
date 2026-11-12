@@ -23,10 +23,10 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 double initialGasEnergy = (dryAir * DropletGasCellExchange.AirCp +
                     initialVapour * DropletGasCellExchange.VapourCp) * (temperature - referenceK) +
                     initialVapour * DropletGasCellExchange.VapourReferenceEnthalpy;
-                var grouped = Simulate(seeds, 32);
-                var reference = Simulate(expanded, 32);
-                var coarse = Simulate(seeds, 16);
-                var fine = Simulate(seeds, 64);
+                var grouped = Simulate(seeds, 32, dryAir, initialVapour, initialGasEnergy);
+                var reference = Simulate(expanded, 32, dryAir, initialVapour, initialGasEnergy);
+                var coarse = Simulate(seeds, 16, dryAir, initialVapour, initialGasEnergy);
+                var fine = Simulate(seeds, 64, dryAir, initialVapour, initialGasEnergy);
                 if (Math.Abs(grouped.VapourKg - reference.VapourKg) > 1e-12 * initialLiquid ||
                     Math.Abs(grouped.GasEnthalpyJ - reference.GasEnthalpyJ) > 1e-12 * initialGasEnergy ||
                     Math.Abs(grouped.VapourKg - fine.VapourKg) >= Math.Abs(coarse.VapourKg - fine.VapourKg))
@@ -48,21 +48,84 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 log(FormattableString.Invariant(
                     $"S14 V38 seeded fog passed: initial vapour/dry-air ratio {humidity:G3}, liquid change {initialVapour - fine.VapourKg:G8} kg, radii {fine.Parcels[0].RadiusM * 1e6:F6}/{fine.Parcels[1].RadiusM * 1e6:F6}/{fine.Parcels[2].RadiusM * 1e6:F6} um."));
 
-                ((double RadiusM, double TemperatureK, int Multiplicity)[] Parcels, double VapourKg, double GasEnthalpyJ)
-                    Simulate((double, double, int)[] parcels, int steps)
+            }
+
+            CheckSampling();
+
+            void CheckSampling()
+            {
+                const int bins = 9, trials = 24, physicalCount = 2304;
+                var exact = new (double, double, int)[bins];
+                for (int bin = 0; bin < bins; bin++)
+                    exact[bin] = ((6 + bin) * 1e-6, temperature, physicalCount / bins);
+                double air = 10 * Water(exact), vapour = air * 0.018;
+                double energy = (air * DropletGasCellExchange.AirCp + vapour * DropletGasCellExchange.VapourCp) *
+                    (temperature - referenceK) + vapour * DropletGasCellExchange.VapourReferenceEnthalpy;
+                var expected = Simulate(exact, 32, air, vapour, energy);
+                double condensate = vapour - expected.VapourKg;
+                if (!(condensate > 0)) throw new InvalidOperationException("The V38 sampling reference did not condense.");
+                double[] referenceCdf = CumulativeSize(expected.Parcels);
+                double previousSizeRms = double.PositiveInfinity, previousCondensateRms = double.PositiveInfinity;
+                foreach (int count in new[] { 16, 64, 256 })
                 {
-                    var state = (Parcels: parcels, VapourKg: initialVapour, GasEnthalpyJ: initialGasEnergy);
-                    double totalEnergy = initialGasEnergy + Heat(parcels);
-                    for (int step = 0; step < steps; step++)
+                    double sizeError = 0, condensateError = 0;
+                    for (int seed = 0; seed < trials; seed++)
                     {
-                        state = SeededFogCell.Advance(state.Parcels, dryAir, state.VapourKg, state.GasEnthalpyJ,
-                            101325, 0.026, 2.5e-5, duration / steps);
-                        if (Math.Abs(Water(state.Parcels) + state.VapourKg - initialLiquid - initialVapour) > 1e-12 * initialLiquid ||
-                            Math.Abs(Heat(state.Parcels) + state.GasEnthalpyJ - totalEnergy) > 1e-12 * totalEnergy)
-                            throw new InvalidOperationException("S14 fog failed water or enthalpy conservation.");
+                        var random = new Random(seed);
+                        var sample = new (double, double, int)[count];
+                        for (int index = 0; index < sample.Length; index++)
+                            sample[index] = ((6 + random.Next(bins)) * 1e-6, temperature, physicalCount / count);
+                        var actual = Simulate(sample, 32, air, vapour, energy);
+                        double relative = (vapour - actual.VapourKg - condensate) / condensate;
+                        condensateError += relative * relative;
+                        var actualCdf = CumulativeSize(actual.Parcels);
+                        for (int bin = 0; bin < actualCdf.Length; bin++)
+                        {
+                            double difference = actualCdf[bin] - referenceCdf[bin];
+                            sizeError += difference * difference;
+                        }
                     }
-                    return state;
+                    double sizeRms = Math.Sqrt(sizeError / (trials * referenceCdf.Length));
+                    double condensateRms = Math.Sqrt(condensateError / trials);
+                    if (!(sizeRms < previousSizeRms && condensateRms < previousCondensateRms))
+                        throw new InvalidOperationException("V38 sampling errors did not decrease with parcel count.");
+                    previousSizeRms = sizeRms;
+                    previousCondensateRms = condensateRms;
+                    log(FormattableString.Invariant(
+                        $"S14 V38 fog sampling passed: {count} parcels, {trials} seeds, size CDF RMS {sizeRms:P3}, condensate RMS {condensateRms:P3}."));
                 }
+                if (previousSizeRms > 0.04 || previousCondensateRms > 0.04)
+                    throw new InvalidOperationException("V38 fine fog sample exceeded its 4% RMS tolerances.");
+
+                double[] CumulativeSize((double RadiusM, double TemperatureK, int Multiplicity)[] parcels)
+                {
+                    var fractions = new double[bins - 1];
+                    for (int bin = 0; bin < fractions.Length; bin++)
+                    {
+                        double threshold = (6.5 + bin) * 1e-6;
+                        int below = 0;
+                        foreach (var parcel in parcels)
+                            if (parcel.RadiusM < threshold) below += parcel.Multiplicity;
+                        fractions[bin] = (double)below / physicalCount;
+                    }
+                    return fractions;
+                }
+            }
+
+            ((double RadiusM, double TemperatureK, int Multiplicity)[] Parcels, double VapourKg, double GasEnthalpyJ)
+                Simulate((double, double, int)[] parcels, int steps, double air, double vapour, double gasEnergy)
+            {
+                var state = (Parcels: parcels, VapourKg: vapour, GasEnthalpyJ: gasEnergy);
+                double liquid = Water(parcels), totalEnergy = gasEnergy + Heat(parcels);
+                for (int step = 0; step < steps; step++)
+                {
+                    state = SeededFogCell.Advance(state.Parcels, air, state.VapourKg, state.GasEnthalpyJ,
+                        101325, 0.026, 2.5e-5, duration / steps);
+                    if (Math.Abs(Water(state.Parcels) + state.VapourKg - liquid - vapour) > 1e-12 * liquid ||
+                        Math.Abs(Heat(state.Parcels) + state.GasEnthalpyJ - totalEnergy) > 1e-12 * totalEnergy)
+                        throw new InvalidOperationException("S14 fog failed water or enthalpy conservation.");
+                }
+                return state;
             }
 
             double Water((double Radius, double Temperature, int Count)[] parcels)
