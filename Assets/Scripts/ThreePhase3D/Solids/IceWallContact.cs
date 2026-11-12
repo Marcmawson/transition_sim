@@ -137,6 +137,43 @@ namespace PhysicsSim.ThreePhase3D.Solids
             return new Sweep(rebound, sweep.ElapsedSeconds, true, sweep.ContactPointM);
         }
 
+        // Apply the external impulse, resolve resting normal contact at
+        // zero restitution, then drift with the constrained momentum.
+        public static IceBody AdvanceSupported(IceBody body, IReadOnlyList<D3> verticesLocalM,
+            D3 planePointM, D3 planeNormal, double seconds, D3 forceN, D3 torqueNm, out D3 wallReactionNs)
+        {
+            if (body == null) throw new ArgumentNullException(nameof(body));
+            if (verticesLocalM == null || verticesLocalM.Count == 0)
+                throw new ArgumentException("A contact hull requires vertices.", nameof(verticesLocalM));
+            if (!SiUnits.IsFinite(seconds) || seconds <= 0)
+                throw new ArgumentOutOfRangeException(nameof(seconds));
+
+            const double distanceToleranceM = 1e-10;
+            D3 normal = planeNormal.Unit();
+            var contacts = new List<D3>();
+            foreach (D3 vertex in verticesLocalM)
+            {
+                D3 point = body.Frame.ToWorld(vertex);
+                double gap = D3.Dot(point - planePointM, normal);
+                if (gap < -distanceToleranceM)
+                    throw new InvalidOperationException("The ice hull starts behind the support plane.");
+                if (gap <= distanceToleranceM) contacts.Add(point);
+            }
+            if (contacts.Count == 0)
+                throw new InvalidOperationException("The supported step requires a touching hull.");
+
+            var kicked = new IceBody(body.MassKg, body.PrincipalInertiaKgM2, body.Frame,
+                body.MomentumKgMPerS + forceN * seconds, body.AngularMomentumKgM2PerS + torqueNm * seconds);
+            var constrained = ResolveSimultaneousImpact(kicked, contacts, normal, 0, out D3 reaction);
+            var updated = constrained.Advance(seconds, default, default);
+            foreach (D3 vertex in verticesLocalM)
+                if (D3.Dot(updated.Frame.ToWorld(vertex) - planePointM, normal) < -distanceToleranceM)
+                    throw new InvalidOperationException("Supported drift penetrates the wall. A new impact solve or shorter step is required.");
+
+            wallReactionNs = reaction;
+            return updated;
+        }
+
         // Contacts are supplied at the same impact pose. The restitution
         // targets are fixed from the incident state for the entire solve.
         public static IceBody ResolveSimultaneousImpact(IceBody body, IReadOnlyList<D3> pointsM,
@@ -160,7 +197,7 @@ namespace PhysicsSim.ThreePhase3D.Solids
             }
 
             var trial = body;
-            const double tolerance = 1e-10;
+            const double tolerance = 1e-12;
             for (int iteration = 0; iteration < 256; iteration++)
             {
                 for (int i = 0; i < count; i++)

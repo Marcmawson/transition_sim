@@ -138,3 +138,9 @@ The CPU fixture hit the wall squarely at 0.4 m/s and resolved all four corners a
 The combined step advances to first contact, gathers the hull vertices within the contact tolerance of the first point, then resolves their normal impulses together. It returns the updated body, equal and opposite wall reaction, and time consumed up to impact. The caller owns the remainder of the timestep.
 
 The CPU fixture drove a level box into a wall at 20 m/s. It detected contact after 5 ms of a 20 ms interval. All four corners rebounded at 10 m/s with restitution 0.5, with no hull penetration within 1e-12 m and no spin above 1e-8 rad/s. Reversing the hull vertex order gave the same result within tolerance. A 2 ms clear sweep produced no impulse. Sustained support under gravity and coupled beaker-wall contact remain open.
+
+## V25 resting support under gravity
+
+The supported step starts with a touching hull. It applies the external force and torque impulse, solves simultaneous zero-restitution normal contact, then advances the pose with the constrained momentum. The fixed wall applies no tangential impulse. An inward drift beyond the wall tolerance rejects the step.
+
+The CPU fixture held a level box under a 0.21589848 N weight for 1000 consecutive 1 ms steps. The wall reaction matched that weight, and the hull stayed within 1e-10 m of the support plane without penetration beyond tolerance. A second run preserved a 0.1 m/s tangential slide and its kinetic energy. A lift-off test returned zero wall reaction under an outward load. Integration with the coupled fluid step and the curved beaker wall remains open.

@@ -37,7 +37,51 @@ internal static class IceBodyMain
         CheckRotatingSweep(body);
         CheckSimultaneousImpact(body);
         CheckSweptManifold(body);
+        CheckRestingSupport(body);
         Console.WriteLine("S11 rigid ice body passed: box inertia, force, torque, off-centre impulse, point velocity and free motion.");
+    }
+
+    private static void CheckRestingSupport(IceBody box)
+    {
+        var hull = new D3[8];
+        for (int i = 0; i < hull.Length; i++)
+            hull[i] = new D3((i & 1) == 0 ? -0.02 : 0.02,
+                (i & 2) == 0 ? -0.015 : 0.015, (i & 4) == 0 ? -0.01 : 0.01);
+        var normal = new D3(0, 1, 0);
+        var frame = RigidFrame.Euler(new D3(0, 0.015, 0), 0, 0, 0);
+        double weight = box.MassKg * 9.81;
+        const double dt = 0.001;
+        foreach (double slide in new[] { 0.0, 0.1 })
+        {
+            var body = new IceBody(box.MassKg, box.PrincipalInertiaKgM2, frame,
+                new D3(box.MassKg * slide, 0, 0), default);
+            double reaction = 0;
+            double initialEnergy = body.KineticEnergyJ;
+            for (int step = 0; step < 1000; step++)
+            {
+                body = IceWallContact.AdvanceSupported(body, hull, default, normal, dt,
+                    new D3(0, -weight, 0), default, out D3 impulse);
+                reaction += impulse.Y;
+                Near(impulse.Y / dt, -weight, 1e-9);
+                Near(body.Frame.Origin.Y, frame.Origin.Y, 1e-10);
+                Near(body.VelocityMPerS.Y, 0, 1e-10);
+                Near(body.AngularVelocityRadPerS.Length, 0, 1e-8);
+                foreach (D3 vertex in hull)
+                    if (body.Frame.ToWorld(vertex).Y < -1e-10)
+                        throw new InvalidOperationException("The supported hull penetrated the wall.");
+            }
+            Near(reaction, -weight, 1e-10);
+            Near(body.Frame.Origin.X, slide, 1e-12);
+            Near(body.KineticEnergyJ, initialEnergy, 1e-12);
+        }
+
+        var resting = new IceBody(box.MassKg, box.PrincipalInertiaKgM2, frame, default, default);
+        var lifted = IceWallContact.AdvanceSupported(resting, hull, default, normal, dt,
+            new D3(0, weight, 0), default, out D3 noReaction);
+        Near(noReaction.Length, 0, 0);
+        Near(lifted.VelocityMPerS.Y, 9.81 * dt, 1e-12);
+        Console.WriteLine(FormattableString.Invariant(
+            $"S11 V25 resting support passed: {weight:G8} N for 1 s, with frictionless sliding and lift-off."));
     }
 
     private static void CheckSweptManifold(IceBody box)
