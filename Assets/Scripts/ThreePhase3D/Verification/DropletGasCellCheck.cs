@@ -36,8 +36,10 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 throw new InvalidOperationException("S14 coupled gas-grid results did not refine.");
             log(FormattableString.Invariant(
                 $"S14 V37 multi-step gas grid passed: 40 steps, radius {referenceGrid.RadiusM * 1e6:F6} um, outlet vapour {referenceGrid.OutletVapourKg:G8} kg, projected feedback {referenceGrid.FeedbackMps:G8} m/s, wall reaction X {referenceGrid.WallReactionX:G8} N s."));
+            SimulateGrid(20, crossCell: true);
+            SimulateGrid(40, crossCell: true);
 
-            (double RadiusM, double OutletVapourKg, double FeedbackMps, double WallReactionX) SimulateGrid(int steps)
+            (double RadiusM, double OutletVapourKg, double FeedbackMps, double WallReactionX) SimulateGrid(int steps, bool crossCell = false)
             {
                 const double pressure = 101325;
                 double dt = duration / steps;
@@ -51,16 +53,22 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 var boundaries = new BoundaryConditions3D(sides);
                 var seed = new VariableCoefficientProjection(geometry, boundaries,
                     _ => (dryAir + initialVapour) / cellVolume, _ => 0);
-                int dropletGroup = seed.GroupByCell[grid.Cells.Index(0, 0, 0)];
+                int firstGroup = seed.PressureGroup(0, 0, 0), secondGroup = seed.PressureGroup(1, 0, 0);
                 var gas = new (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[seed.GroupCount];
                 for (int group = 0; group < gas.Length; group++) gas[group] = (dryAir, initialVapour, initialGasEnergy, default);
                 double radius = initialRadius, liquidK = initialK, airOut = 0, vapourOut = 0, energyOut = 0;
                 var initialVelocity = new D3(0.005, 0, 0);
                 D3 velocity = initialVelocity, position = grid.Centre(0, 0, 0), momentumOut = default;
+                if (crossCell) position += new D3(dx * 0.5 - 2e-6, 0, 0);
                 D3 wallReaction = default, openReaction = default;
-                double feedback = 0;
+                double feedback = 0, firstVapour = 0, secondVapour = 0;
+                int crossings = 0;
+                int previousGroup = firstGroup;
                 for (int step = 0; step < steps; step++)
                 {
+                    int dropletGroup = DropletGasCellExchange.PressureGroupAt(seed, position);
+                    if (dropletGroup != previousGroup) crossings++;
+                    previousGroup = dropletGroup;
                     var local = gas[dropletGroup];
                     var exchanged = DropletGasCellExchange.Advance(radius, liquidK, local.DryAirKg, local.VapourKg,
                         local.EnthalpyJ, pressure, 0.026, 2.5e-5, dt);
@@ -71,12 +79,20 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         exchanged.VapourKg - local.VapourKg);
                     velocity = motion.Velocity;
                     position = motion.Position;
-                    if (!(position.X >= 0 && position.X < dx))
-                        throw new InvalidOperationException("The S14 feedback fixture expects the droplet to stay in its initial cell.");
+                    DropletGasCellExchange.PressureGroupAt(seed, position);
                     radius = exchanged.RadiusM;
                     liquidK = exchanged.LiquidK;
                     gas[dropletGroup] = (local.DryAirKg, exchanged.VapourKg, exchanged.GasEnthalpyJ,
                         local.MomentumKgMPerS + motion.GasMomentumGain);
+                    double depositedVapour = exchanged.VapourKg - local.VapourKg;
+                    if (dropletGroup == firstGroup) firstVapour += depositedVapour;
+                    else if (dropletGroup == secondGroup)
+                    {
+                        secondVapour += depositedVapour;
+                        if (!(motion.GasMomentumGain.X > 0 && exchanged.GasEnthalpyJ != local.EnthalpyJ))
+                            throw new InvalidOperationException("S14 crossing did not exchange energy and momentum in the receiving cell.");
+                    }
+                    else throw new InvalidOperationException("S14 droplet entered an unexpected cell.");
                     var volumes = new double[gas.Length];
                     var source = new double[gas.Length];
                     for (int group = 0; group < gas.Length; group++)
@@ -134,6 +150,15 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 if ((openReaction - new D3(expectedOpen, 0, 0)).Length > expectedOpen * 1e-7 ||
                     !(wallReaction.Length > 0))
                     throw new InvalidOperationException("S14 wall or prescribed outlet pressure reaction did not balance.");
+                if (crossCell)
+                {
+                    if (!(crossings == 1 && previousGroup == secondGroup && firstVapour > 0 && secondVapour > 0))
+                        throw new InvalidOperationException("S14 droplet did not deposit vapour on both sides of the crossed face.");
+                    log(FormattableString.Invariant(
+                        $"S14 V37 droplet cell crossing passed: {steps} steps, first cell {firstVapour:G8} kg vapour, second cell {secondVapour:G8} kg vapour."));
+                }
+                else if (crossings != 0)
+                    throw new InvalidOperationException("S14 in-cell control unexpectedly crossed a face.");
                 return (radius, vapourOut, feedback, wallReaction.X);
             }
 

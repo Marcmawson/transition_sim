@@ -42,4 +42,10 @@ The multi-step CPU fixture uses a 2×2×1 grid. Each step recovers cell gas velo
 
 The cell momentum update applies the projected gauge-pressure impulse before advection. Interior faces use a shared mean pressure, so their impulses cancel in the domain sum. Rigid exterior faces use the adjacent cell pressure, and the outlet uses its prescribed pressure of 0.002 Pa gauge. The 40-step wall reaction along X was -1.6805139e-12 N·s. The outlet reaction matched its prescribed pressure times area and duration. Dry air, water, enthalpy and momentum closed at every step, including signed advective fluxes and the pressure reactions.
 
-The pressure-force update is for a nonperiodic Cartesian box with no embedded solids. The fixture keeps the droplet in its initial cell. General parcel motion across cells, coupled extinction and condensation remain open.
+The pressure-force update is for a nonperiodic Cartesian box with no embedded solids.
+
+## V37 moving droplet cell crossing
+
+The droplet samples gas properties and deposits vapour, enthalpy and momentum in the pressure group containing its centre at the start of each step. The locator transforms world position into the grid frame. The crossing fixture starts 2 µm upstream of an interior face and checks that the droplet crosses once and exchanges with both cells. Dry air, water, enthalpy and momentum close at every step, including the signed boundary fluxes and pressure reactions.
+
+Both CPU runs passed at 0.2 ms and 0.1 ms. The 0.1 ms run deposited 2.7858871e-14 kg of vapour in the starting cell and 1.0718757e-13 kg in the receiving cell. The transfer uses start-of-step sampling, so the partition between the two cells depends on when the crossing falls within a step. Wall impacts, open-boundary droplet exit, coupled extinction and condensation remain open.

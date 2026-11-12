@@ -51,6 +51,19 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         internal static double Mass(double radius) => (4 * Math.PI / 3) * LiquidDensity * radius * radius * radius;
 
+        internal static int PressureGroupAt(VariableCoefficientProjection plan, D3 worldPosition)
+        {
+            var grid = plan.Grid;
+            D3 local = grid.Frame.ToLocal(worldPosition);
+            double x = local.X / grid.Spacing.X, y = local.Y / grid.Spacing.Y, z = local.Z / grid.Spacing.Z;
+            if (!(x >= 0 && x < grid.Cells.X && y >= 0 && y < grid.Cells.Y && z >= 0 && z < grid.Cells.Z))
+                throw new InvalidOperationException("Droplet centre is outside the gas grid.");
+            int group = plan.PressureGroup((int)x, (int)y, (int)z);
+            if (group < 0)
+                throw new InvalidOperationException("Droplet centre has no fluid pressure group.");
+            return group;
+        }
+
         internal static double GasVolumeM3(double dryAirKg, double vapourKg, double gasEnthalpyJ, double pressurePa)
         {
             double temperature = GasTemperature(dryAirKg, vapourKg, gasEnthalpyJ);
