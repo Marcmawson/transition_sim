@@ -46,8 +46,32 @@ internal static class IcePressureMain
         for (int group = 0; group < plan.GroupCount; group++)
             if (limited.Fields.LiquidEnergyJ[group] < volume[group] * rho * equilibrium.LiquidMeltingEnthalpyJkg - 1e-12)
                 throw new InvalidOperationException("Conduction cooled a donor below melting equilibrium.");
+        var liquid = new double[plan.GroupCount];
+        var gas = (double[])volume.Clone();
+        foreach (var patch in geometry.Patches)
+        {
+            if (patch.Role != SolidRole.Ice || patch.NormalLocal.X < 0.99 || patch.FluidExposedAreaM2 <= 0) continue;
+            int group = plan.GroupByCell[patch.Cell];
+            liquid[group] = volume[group];
+            gas[group] = 0;
+        }
+        var mixedEnergy = Array.ConvertAll(liquid, value => value * rho * warmH);
+        var mixed = new CutCellInventories(liquid, gas, mixedEnergy, zero, zero);
+        var flow = FlowCpuReference.Project(plan, new float[plan.FaceCount], dt, 16384);
+        var coupled = IceFaceMeltingStep.Advance(plan, mixed, flow, body, size, 0, 1, equilibrium,
+            1.2, conductivity, warm, patch => patch.FluidExposedAreaM2,
+            next => new VariableCoefficientProjection(next, BoundaryConditions3D.Closed, _ => rho, _ => 0),
+            grid.CellVolume);
+        double Sum(double[] values) => System.Linq.Enumerable.Sum(values);
+        Near(Math.Abs(coupled.HeatJ - expected), 1e-12);
+        Near(Math.Abs(coupled.Body.MassKg + (Sum(coupled.Fields.LiquidM3) - Sum(liquid)) * rho - body.MassKg), 1e-14);
+        Near(Math.Abs(Sum(coupled.Fields.LiquidEnergyJ) - Sum(mixedEnergy) +
+            (coupled.Body.MassKg - body.MassKg) * equilibrium.IceMeltingEnthalpyJkg), 1e-11);
+        Near(Math.Abs(Sum(coupled.Fields.GasM3) * coupled.GasDensityKgM3 - Sum(gas) * 1.2), 1e-15);
+        for (int group = 0; group < coupled.Topology.GroupCount; group++)
+            Near(Math.Abs(coupled.Fields.LiquidM3[group] + coupled.Fields.GasM3[group] - coupled.Topology.Volumes[group]), 1e-16);
         Console.WriteLine(FormattableString.Invariant(
-            $"S11 V26 ice face conduction passed: {transfer.HeatJ:G8} J transferred, {melted.Released.MassKg:G8} kg melted."));
+            $"S11 V26 coupled face melting passed: {coupled.HeatJ:G8} J transferred, {body.MassKg - coupled.Body.MassKg:G8} kg melted and remapped."));
     }
 
     private static void CheckMeltwaterSource()
