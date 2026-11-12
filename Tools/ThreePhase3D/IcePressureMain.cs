@@ -16,12 +16,12 @@ internal static class IcePressureMain
         Near((coarse.Body.Frame.Origin - refined.Body.Frame.Origin).Length, 2e-6);
     }
 
-    private static (IceBody Body, double HeatJ) RunMovingMelt(int steps, double substep)
+    private static (IceBody Body, double HeatJ) RunMovingMelt(int steps, double substep, int cellsPerAxis = 8)
     {
         var result = IceMovingMeltCheck.Run(steps, substep, (plan, velocity, dt, flux) =>
-            FlowCpuReference.Project(plan, velocity, dt, 32768, null, flux));
+            FlowCpuReference.Project(plan, velocity, dt, 32768, null, flux), cellsPerAxis);
         Console.WriteLine(FormattableString.Invariant(
-            $"S11 V26 moving melt passed: {steps} steps, heat {result.HeatJ:G8} J, ice loss {result.MassLossKg:G8} kg, centre displacement {result.DisplacementM:G8} m."));
+            $"S11 V26 moving melt passed: {cellsPerAxis}³ cells, {steps} steps, heat {result.HeatJ:G8} J, ice loss {result.MassLossKg:G8} kg, centre displacement {result.DisplacementM:G8} m."));
         return (result.Body, result.HeatJ);
     }
 
@@ -271,8 +271,13 @@ internal static class IcePressureMain
             $"S11 coupled resting ice passed: wall impulse {accepted.WallReactionNs.Y:G8} N s, mismatch {accepted.BoundaryVelocityMismatchMPerS:G6} m/s."));
     }
 
-    private static void Main()
+    private static void Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--melt-grid")
+        {
+            foreach (int cells in new[] { 8, 10, 12 }) RunMovingMelt(3, 0.001, cells);
+            return;
+        }
         CheckMovingMelt();
         CheckIceFaceConduction();
         CheckMeltwaterSource();

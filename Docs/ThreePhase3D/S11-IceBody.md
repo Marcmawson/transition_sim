@@ -220,3 +220,15 @@ The CPU fixture alternates a pressure-coupled rigid-body and transport substep w
 Over three pairs of 1 ms substeps, the ice lost 6.2225123e-9 kg and its centre moved 2.6307321e-6 m. Six pairs of 0.5 ms substeps at the same total duration transferred 0.0020744038 J, compared with 0.0020747506 J at 1 ms. Both runs conserved water mass, gas mass and thermal enthalpy within the fixture tolerances. The source closure check allows bounded cell-scale roundoff when differencing capacities for thin melt layers. This is a short CPU timestep-refinement check at fixed grid resolution, with one melting face and isothermal ice. Grid convergence, experimental comparison and GPU verification remain open.
 
 Unity exposes the shared three-step fixture under **Physics Sim → Three Phase 3D → Run S11 GPU moving melt check**. It runs both pressure stages through the GPU projection and uses the shared CPU geometry, heat transfer and remapping operators. The check applies the fixture's mass and enthalpy balances and compares heat, mass loss and centre displacement against the CPU run. GPU execution is pending.
+
+## V26 grid sensitivity
+
+Run `dotnet run --project Tools/ThreePhase3D/IcePressureChecks.csproj -- --melt-grid` to repeat the three-step CPU fixture at three grid resolutions. The domain stays 80 mm per side, and the initial ice pose, waterline and 1 ms substeps are identical.
+
+| Grid | Heat transferred (J) | Ice mass loss (kg) | Centre displacement (µm) |
+| --- | ---: | ---: | ---: |
+| 8³ | 0.0020747506 | 6.2225123e-9 | 2.6307321 |
+| 10³ | 0.0014816389 | 4.4436746e-9 | 2.4214096 |
+| 12³ | 0.0020725143 | 6.2158052e-9 | 2.3867571 |
+
+All three runs passed the water mass, gas mass and thermal enthalpy checks. Heat transfer varied non-monotonically with resolution. The melting face begins at 32.5 mm. The conduction stencil's initial absolute distance from that face to the geometric cell centre is 2.5 mm on the 8³ and 12³ grids and 3.5 mm on the 10³ grid. The inverse-distance ratio predicts a 28.6% drop, consistent with the measured 28.6% drop at 10³. The heat transfer has yet to demonstrate spatial convergence.

@@ -9,15 +9,19 @@ namespace PhysicsSim.ThreePhase3D.Verification
     public static class IceMovingMeltCheck
     {
         public static (IceBody Body, double HeatJ, double MassLossKg, double DisplacementM) Run(
-            int steps, double substep, Func<VariableCoefficientProjection, float[], double, double[], FlowStep> project)
+            int steps, double substep, Func<VariableCoefficientProjection, float[], double, double[], FlowStep> project,
+            int cellsPerAxis = 8)
         {
             if (project == null) throw new ArgumentNullException(nameof(project));
             if (steps <= 0) throw new ArgumentOutOfRangeException(nameof(steps));
+            if (cellsPerAxis <= 0) throw new ArgumentOutOfRangeException(nameof(cellsPerAxis));
             if (!SiUnits.IsFinite(substep) || substep <= 0) throw new ArgumentOutOfRangeException(nameof(substep));
             var equilibrium = new SolidLiquidInterface(101325, 250, 290);
             double rho = equilibrium.LiquidMeltingDensityKgM3, gasDensity = 1.2;
             var gravity = new D3(0, -9.81, 0);
-            var grid = new Grid3D(8, 8, 8, new D3(0.01, 0.01, 0.01), RigidFrame.Identity);
+            double spacing = 0.08 / cellsPerAxis;
+            var grid = new Grid3D(cellsPerAxis, cellsPerAxis, cellsPerAxis,
+                new D3(spacing, spacing, spacing), RigidFrame.Identity);
             var dimensions = new D3(0.018, 0.017, 0.016);
             var body = IceBody.Box(917, dimensions, RigidFrame.Euler(new D3(0.038, 0.041, 0.039), 0.14, 0, 0));
             var initial = body;
