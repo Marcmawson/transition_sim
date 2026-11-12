@@ -275,8 +275,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (useWaterRefractionPreview)
                 {
                     waterMaterial.SetFloat("_RefractiveIndex", waterIndex);
-                    // Pope and Fry (1997), pure water at 550 nm.
-                    waterMaterial.SetFloat("_AbsorptionPerM", 0.0565f);
+                    // Pope and Fry (1997), representative RGB wavelengths: 650, 550 and 450 nm.
+                    waterMaterial.SetVector("_AbsorptionPerM", new Vector4(0.34f, 0.0565f, 0.00922f, 0));
                     waterMaterial.SetVector("_WaterCylinder", new Vector4(0, 0, floor, radius));
                     waterMaterial.SetFloat("_WaterTopY", floor + depth);
                 }

@@ -4,7 +4,7 @@ Shader "PhysicsSim/BeakerRefraction"
     {
         _NormalReflectance ("Normal-incidence reflectance", Range(0,1)) = 0.03658
         _RefractiveIndex ("Refractive index", Float) = 1.473
-        _AbsorptionPerM ("Absorption per metre", Float) = 0
+        _AbsorptionPerM ("RGB absorption per metre", Vector) = (0,0,0,0)
         _WaterCylinder ("Water centre XZ, bottom Y, radius", Vector) = (0,0,0,0)
         _WaterTopY ("Water top Y", Float) = 0
     }
@@ -18,7 +18,7 @@ Shader "PhysicsSim/BeakerRefraction"
 
         sampler2D _BeakerOpticalBackground;
         float _RefractiveIndex;
-        float _AbsorptionPerM;
+        float4 _AbsorptionPerM;
         float4 _WaterCylinder;
         float _WaterTopY;
         half _NormalReflectance;
@@ -57,8 +57,9 @@ Shader "PhysicsSim/BeakerRefraction"
             output.Albedo = 0;
             output.Specular = _NormalReflectance;
             output.Smoothness = 1;
-            float transmission = _AbsorptionPerM > 0
-                ? exp(-_AbsorptionPerM * WaterPathM(input.worldPos, transmitted)) : 1;
+            float3 transmission = 1;
+            if (_WaterCylinder.w > 0)
+                transmission = exp(-_AbsorptionPerM.rgb * WaterPathM(input.worldPos, transmitted));
             output.Emission = tex2D(_BeakerOpticalBackground, uv).rgb * (1 - fresnel) * transmission;
             output.Alpha = 1;
         }
