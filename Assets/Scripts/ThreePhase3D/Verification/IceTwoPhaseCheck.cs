@@ -8,7 +8,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
 {
     public static class IceTwoPhaseCheck
     {
-        public static (double FirstSpeed, double SecondSpeed, double PressureChange, double SubmergedFraction) Run(
+        public static (double FirstSpeed, double SecondSpeed, double PressureChange, double SubmergedFraction, double FinalSpeed, double TailPeakVerticalSpeed) Run(
             Func<VariableCoefficientProjection, float[], double, double[], FlowStep> project, int steps = 2)
         {
             if (project == null) throw new ArgumentNullException(nameof(project));
@@ -84,6 +84,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 Near(Math.Abs(System.Linq.Enumerable.Sum(final.Fields.Planes[field]) -
                     System.Linq.Enumerable.Sum(inventory.Planes[field])), 1e-13);
             var currentBody = second.Body;
+            double tailPeak = steps <= 32 ? Math.Max(Math.Abs(moved.Body.VelocityMPerS.Y), Math.Abs(second.Body.VelocityMPerS.Y)) : 0;
             for (int step = 2; step < steps; step++)
             {
                 var currentPlan = WithPhaseDensity(finalTopology, final.Fields);
@@ -96,6 +97,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 final = MovingCutCellRemap.ApplyWithMomentum(currentPlan, finalTopology, final.Fields,
                     transfers, accepted.Fluid.VelocityMPerS, rhoWater, rhoAir);
                 currentBody = accepted.Body;
+                if (step >= steps - 32) tailPeak = Math.Max(tailPeak, Math.Abs(currentBody.VelocityMPerS.Y));
                 for (int field = 0; field < inventory.Planes.Length; field++)
                     Near(Math.Abs(System.Linq.Enumerable.Sum(final.Fields.Planes[field]) -
                         System.Linq.Enumerable.Sum(inventory.Planes[field])), 1e-13);
@@ -116,7 +118,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
             double fraction = submerged / (size.X * size.Y * size.Z);
             if (!(fraction > 0.5 && fraction <= 1 + 1e-10))
                 throw new InvalidOperationException("The sinking ice did not increase its submerged volume.");
-            return (moved.Body.VelocityMPerS.Y, second.Body.VelocityMPerS.Y, pressureChange, fraction);
+            return (moved.Body.VelocityMPerS.Y, second.Body.VelocityMPerS.Y, pressureChange, fraction, currentBody.VelocityMPerS.Y, tailPeak);
         }
 
         private static void Near(double error, double tolerance)
