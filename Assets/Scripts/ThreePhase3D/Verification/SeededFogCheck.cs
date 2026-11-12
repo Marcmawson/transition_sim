@@ -161,9 +161,21 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     double liquidOut = 0, liquidEnthalpyOut = 0;
                     D3 liquidMomentumOut = default;
                     (long Count, double Liquid, double Enthalpy, D3 Impulse) wall = default;
+                    double filmLiquid = 0, filmEnthalpy = 0, filmVapour = 0;
                     double upstreamExchange = 0, downstreamExchange = 0, boundaryThroughput = 0;
                     for (int step = 0; step < steps; step++)
                     {
+                        if (filmLiquid > 0)
+                        {
+                            var adjacent = gas[upstream];
+                            var film = DropletGasCellExchange.AdvanceWallFilm(filmLiquid, filmEnthalpy,
+                                adjacent.DryAirKg, adjacent.VapourKg, adjacent.EnthalpyJ,
+                                pressure, 1e-10, 2e-5, 0.026, 2.5e-5, dt);
+                            filmLiquid = film.LiquidKg;
+                            filmEnthalpy = film.LiquidEnthalpyJ;
+                            filmVapour += film.VapourKg - adjacent.VapourKg;
+                            gas[upstream] = (adjacent.DryAirKg, film.VapourKg, film.GasEnthalpyJ);
+                        }
                         double upstreamBefore = gas[upstream].VapourKg, downstreamBefore = gas[downstream].VapourKg;
                         if (moving)
                         {
@@ -180,6 +192,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
                             wall.Liquid += exchange.Wall.LiquidKg;
                             wall.Enthalpy += exchange.Wall.EnthalpyJ;
                             wall.Impulse += exchange.Wall.Momentum;
+                            filmLiquid += exchange.Wall.LiquidKg;
+                            filmEnthalpy += exchange.Wall.EnthalpyJ;
                         }
                         else
                             (parcels, gas) = SeededFogCell.AdvanceGrid(plan, parcels, gas, carrier,
@@ -232,8 +246,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
                                 (DropletGasCellExchange.Mass(parcels[index].Item2) * parcels[index].Item4);
                         }
                         if (dropletCount != 32 || Math.Abs(air - startingAir) > 1e-12 * startingAir ||
-                            Math.Abs(total.Water + vapourOut + liquidOut + wall.Liquid - initialTotals.Water) > 1e-12 * initialTotals.Water ||
-                            Math.Abs(total.Energy + energyOut + liquidEnthalpyOut + wall.Enthalpy - initialTotals.Energy) > 1e-12 * initialTotals.Energy ||
+                            Math.Abs(total.Water + vapourOut + liquidOut + filmLiquid - initialTotals.Water) > 1e-12 * initialTotals.Water ||
+                            Math.Abs(total.Energy + energyOut + liquidEnthalpyOut + filmEnthalpy - initialTotals.Energy) > 1e-12 * initialTotals.Energy ||
                             (totalMomentum - startingMomentum).Length > 1e-24)
                             throw new InvalidOperationException("V38 fog gas feedback failed conservation.");
                     }
@@ -244,6 +258,11 @@ namespace PhysicsSim.ThreePhase3D.Verification
                             throw new InvalidOperationException("V38 sticking wall did not receive the parcel inventories.");
                         log(FormattableString.Invariant(
                             $"S14 V38 fog deposition passed: {steps} steps, droplets {wall.Count}, liquid {wall.Liquid:G8} kg, enthalpy {wall.Enthalpy:G8} J, wall impulse X {wall.Impulse.X:G8} N s."));
+                        if (!(filmVapour > 0 && filmLiquid > 0 && filmEnthalpy < wall.Enthalpy) ||
+                            Math.Abs(filmLiquid + filmVapour - wall.Liquid) > 1e-12 * wall.Liquid)
+                            throw new InvalidOperationException("V38 wall film did not return deposited water to the gas.");
+                        log(FormattableString.Invariant(
+                            $"S14 V38 fog film re-evaporation passed: {steps} steps, vapour returned {filmVapour:G8} kg, net film enthalpy loss {wall.Enthalpy - filmEnthalpy:G8} J."));
                         return;
                     }
                     if (exitParcels)
