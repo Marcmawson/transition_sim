@@ -33,7 +33,42 @@ internal static class IceBodyMain
             RigidFrame.Euler(default, 0, 0, Math.PI / 2), default, new D3(0, 1e-5, 0));
         Near(rotated.AngularVelocityRadPerS.Y, 1e-5 / body.PrincipalInertiaKgM2.X, 1e-12);
         CheckWallImpact(body);
+        CheckWallSweep(body);
         Console.WriteLine("S11 rigid ice body passed: box inertia, force, torque, off-centre impulse, point velocity and free motion.");
+    }
+
+    private static void CheckWallSweep(IceBody box)
+    {
+        var vertices = new D3[8];
+        for (int i = 0; i < vertices.Length; i++)
+            vertices[i] = new D3((i & 1) == 0 ? -0.02 : 0.02,
+                (i & 2) == 0 ? -0.015 : 0.015, (i & 4) == 0 ? -0.01 : 0.01);
+
+        const double speed = 20, timestep = 0.02;
+        var frame = RigidFrame.Euler(new D3(0, 0.12, 0), 0.2, 0.25, 0.15);
+        var falling = new IceBody(box.MassKg, box.PrincipalInertiaKgM2, frame,
+            new D3(0, -speed * box.MassKg, 0), default);
+        var normal = new D3(0, 1, 0);
+        double supportDepth = 0.02 * Math.Abs(frame.U.Y) + 0.015 * Math.Abs(frame.V.Y) + 0.01 * Math.Abs(frame.W.Y);
+        double expectedTime = (frame.Origin.Y - supportDepth) / speed;
+        var sweep = IceWallContact.AdvanceTranslationToPlane(falling, vertices, default, normal, timestep);
+        if (!sweep.Hit) throw new InvalidOperationException("The fast ice drop missed the wall.");
+        Near(sweep.ElapsedSeconds, expectedTime, 1e-12);
+        Near(sweep.ContactPointM.Y, 0, 1e-12);
+        foreach (D3 vertex in vertices)
+            if (sweep.Body.Frame.ToWorld(vertex).Y < -1e-12)
+                throw new InvalidOperationException("The ice penetrated the plane at first contact.");
+
+        var rebound = IceWallContact.ResolveImpact(sweep.Body, sweep.ContactPointM, normal, 0.5, out _);
+        Near(rebound.VelocityAt(sweep.ContactPointM).Y, 0.5 * speed, 1e-12);
+        var shortSweep = IceWallContact.AdvanceTranslationToPlane(falling, vertices, default, normal, expectedTime / 2);
+        if (shortSweep.Hit) throw new InvalidOperationException("Reported contact before the impact time.");
+        Near(shortSweep.Body.Frame.Origin.Y, frame.Origin.Y - speed * expectedTime / 2, 1e-12);
+        var immediate = IceWallContact.AdvanceTranslationToPlane(sweep.Body, vertices, default, normal, timestep);
+        if (!immediate.Hit) throw new InvalidOperationException("Missed an approaching contact at the start of the step.");
+        Near(immediate.ElapsedSeconds, 0, 1e-12);
+        Console.WriteLine(FormattableString.Invariant(
+            $"S11 V25 translation sweep passed: impact at {sweep.ElapsedSeconds * 1000:F6} ms within a {timestep * 1000:G} ms step."));
     }
 
     private static void CheckWallImpact(IceBody box)
