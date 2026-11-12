@@ -19,6 +19,11 @@ internal static class FlowMain
             CheckSeededBubbleGrowth();
             return 0;
         }
+        if (args.Length == 1 && args[0] == "--bubble-condensation")
+        {
+            CheckBubbleCondensation();
+            return 0;
+        }
         if (args.Length == 1 && args[0] == "--humid-diffusion")
         {
             CheckHumidDiffusion();
@@ -45,6 +50,58 @@ internal static class FlowMain
             Console.WriteLine($"{passed}/{suite.Rows.Count} passed");
         }
         return suite.Passed ? 0 : 1;
+    }
+
+    private static void CheckBubbleCondensation()
+    {
+        const double pressure = 101325, seedRadius = 0.0005, cutoff = 0.00025, conductivity = 0.68, subcooling = 2;
+        var saturation = new PureWaterStefanInterface(pressure, 370, 377, 0, 0).Saturation;
+        double bulkK = saturation.Liquid.TemperatureK - subcooling;
+        double density = saturation.Vapour.DensityKgM3, latent = saturation.LatentEnthalpyJkg;
+        double recession = 2 * conductivity * subcooling / (density * latent);
+        double referenceTime = seedRadius * seedRadius / recession;
+        double resolvedTime = (seedRadius * seedRadius - cutoff * cutoff) / recession;
+        double originalMass = Mass(seedRadius);
+        double coarse = Resolve(32).Radius;
+        var fine = Resolve(128);
+        double error = Math.Abs(fine.Radius / cutoff - 1);
+        if (!(error < Math.Abs(coarse / cutoff - 1) / 12 && error < 1e-4))
+            throw new InvalidOperationException("The shrinking bubble radius did not refine to the spherical reference.");
+
+        var tail = Surface(fine.Radius).CondenseUnresolvedVapour(fine.Mass);
+        double tailHeat = -tail.WaterKg * latent;
+        double extinction = resolvedTime + fine.Radius * fine.Radius / recession;
+        if (fine.Mass + tail.WaterKg != 0 ||
+            Math.Abs(fine.LiquidKg + tail.LiquidM3 * saturation.Liquid.DensityKgM3 - originalMass) > 1e-20 ||
+            Math.Abs(fine.Heat + tailHeat - originalMass * latent) > 1e-14 ||
+            Math.Abs(tail.LiquidEnthalpyJ + tail.VapourEnthalpyJ) > 1e-15 ||
+            Math.Abs(extinction / referenceTime - 1) > 1e-4)
+            throw new InvalidOperationException("Bubble extinction failed its mass, enthalpy or time balance.");
+        Console.WriteLine(FormattableString.Invariant(
+            $"S13 V31 bubble condensation passed: cutoff radius {fine.Radius:G8} m, extinction {extinction:G8} s, condensed {originalMass:G8} kg, latent heat {fine.Heat + tailHeat:G8} J, final vapour 0 kg."));
+
+        PureWaterStefanInterface Surface(double radius) => PureWaterStefanInterface.SphericalConduction(
+            radius, pressure, 0, bulkK, conductivity, 370, 377);
+        double Area(double radius) => 4 * Math.PI * radius * radius;
+        double Mass(double radius) => Area(radius) * radius * density / 3;
+        double Radius(double mass) => Math.Pow(mass * 3 / (4 * Math.PI * density), 1.0 / 3);
+        (double Radius, double Mass, double LiquidKg, double Heat) Resolve(int steps)
+        {
+            double mass = originalMass, radius = seedRadius, liquid = 0, heat = 0, dt = resolvedTime / steps;
+            for (int step = 0; step < steps; step++)
+            {
+                double midpoint = Radius(mass + 0.5 * dt * Area(radius) * Surface(radius).MassFluxKgM2PerS);
+                var surface = Surface(midpoint);
+                var exchange = surface.Transfer(Area(midpoint), dt, 0, mass);
+                if (!(exchange.WaterKg < 0) || Math.Abs(exchange.LiquidEnthalpyJ + exchange.VapourEnthalpyJ) > 1e-14)
+                    throw new InvalidOperationException("The resolved condensation step did not conserve enthalpy.");
+                mass += exchange.WaterKg;
+                radius = Radius(mass);
+                liquid += exchange.LiquidM3 * saturation.Liquid.DensityKgM3;
+                heat -= surface.LiquidHeatWm2 * Area(midpoint) * dt;
+            }
+            return (radius, mass, liquid, heat);
+        }
     }
 
     private static void CheckSeededBubbleGrowth()

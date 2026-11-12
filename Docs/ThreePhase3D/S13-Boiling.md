@@ -15,3 +15,9 @@ The spherical interface uses the ambient liquid pressure plus the Young–Laplac
 Run `FlowMain --bubble-growth`. At 101325 Pa and 2 K superheat, the zero-capillarity, constant-density reference grew from 0.5 to 0.67207957 mm in 0.1 s and consumed 0.0010087517 J. The 64-step CPU midpoint result matched the analytical radius within 4.1e-7 relative error and closed latent heat against vapour mass gain. A separate capillary check found a 15.816147 µm zero-flux radius for the prescribed tension. Twice that radius grew at a reduced flux, while half condensed.
 
 This benchmark assumes a spherical seed and a quasi-steady prescribed liquid temperature field. The capillary check tests instantaneous rates. Time evolution with capillarity, resolved bubble motion and thermal fields, and GPU verification remain open.
+
+## V31 spherical bubble condensation
+
+Run `FlowMain --bubble-condensation`. The spherical CPU reference begins with a 0.5 mm radius at 101325 Pa in liquid 2 K below saturation. It uses constant vapour density, zero surface tension and quasi-steady spherical conduction. The analytical squared radius decreases linearly in time. The 128-step midpoint run reached 0.25000107 mm at the reference time for a 0.25 mm cutoff, improving on the 32-step run.
+
+The fixture advances the unresolved tail to its analytical extinction time and transfers the entire remaining vapour inventory to the liquid using the same phase enthalpy balance. Extinction occurred at 0.12395206 s. The run condensed 3.1293235e-10 kg, released 0.00070612296 J of latent heat and left zero vapour. A general grid-scale cutoff, capillary time evolution and resolved flow verification remain open.

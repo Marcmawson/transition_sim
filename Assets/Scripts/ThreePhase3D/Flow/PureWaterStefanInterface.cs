@@ -78,6 +78,27 @@ namespace PhysicsSim.ThreePhase3D.Flow
             double water = exposure * MassFluxKgM2PerS;
             if (!SiUnits.IsFinite(water) || water > liquidKg || -water > vapourKg)
                 throw new InvalidOperationException("Stefan transfer would overdraw the donor. Reduce the timestep.");
+            return Integrate(water, exposure);
+        }
+
+        // Use at the end of a subgrid condensation event, when the caller has
+        // accounted for the time required to condense the remaining vapour.
+        public (double WaterKg, double LiquidM3, double VapourM3, double LiquidEnthalpyJ, double VapourEnthalpyJ)
+            CondenseUnresolvedVapour(double vapourKg)
+        {
+            if (!SiUnits.IsFinite(vapourKg) || vapourKg < 0)
+                throw new ArgumentOutOfRangeException(nameof(vapourKg));
+            if (!(MassFluxKgM2PerS < 0))
+                throw new InvalidOperationException("Only a condensing interface can consume unresolved vapour.");
+            double exposure = -vapourKg / MassFluxKgM2PerS;
+            if (!SiUnits.IsFinite(exposure))
+                throw new InvalidOperationException("The unresolved condensation exposure is not finite.");
+            return Integrate(-vapourKg, exposure);
+        }
+
+        private (double WaterKg, double LiquidM3, double VapourM3, double LiquidEnthalpyJ, double VapourEnthalpyJ)
+            Integrate(double water, double exposure)
+        {
             var liquid = Saturation.Liquid;
             var vapour = Saturation.Vapour;
             return (water, -water / liquid.DensityKgM3, water / vapour.DensityKgM3,
