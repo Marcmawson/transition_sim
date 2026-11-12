@@ -8,6 +8,83 @@ namespace PhysicsSim.ThreePhase3D.Verification
 {
     public static class HumidPhaseExchangeCheck
     {
+        public static void RunSphericalFilm(Action<string> log)
+        {
+            if (log == null) throw new ArgumentNullException(nameof(log));
+            const double radius = 0.001, outer = 0.005, temperature = 293.15;
+            double surfaceArea = 4 * Math.PI * radius * radius;
+            double equivalentFilm = radius * (1 - radius / outer);
+            var humid = new HumidGas();
+            foreach (double pressure in new[] { 80000.0, 101325.0 })
+            {
+                var surface = humid.EquilibriumWithLiquid(temperature, pressure);
+                double diffusivity = HumidGas.ReferenceDiffusivity(temperature, pressure);
+                double rho = surface.Gas.DensityKgM3;
+                var cooled = HumidInterfaceFlux.SolveTemperature(pressure, 0.25 * surface.WaterMassFraction,
+                    equivalentFilm, temperature, temperature, 1000, 25, 283.15, 298.15);
+                if (!(cooled.Surface.TemperatureK < temperature && cooled.MassFluxKgM2PerS > 0))
+                    throw new InvalidOperationException("The spherical film did not cool during evaporation.");
+                Near(Math.Abs(cooled.LiquidHeatWm2 + cooled.GasHeatWm2 -
+                    cooled.MassFluxKgM2PerS * cooled.LatentHeatJkg), 1e-7);
+                foreach (double saturationRatio in new[] { 0.25, 0.75, 1.0 })
+                {
+                    double bulk = saturationRatio * surface.WaterMassFraction;
+                    double surfacePotential = -Math.Log(1 - surface.WaterMassFraction);
+                    double bulkPotential = -Math.Log(1 - bulk);
+                    double analyticRate = 4 * Math.PI * rho * diffusivity *
+                        (surfacePotential - bulkPotential) / (1 / radius - 1 / outer);
+                    double modelRate = surfaceArea *
+                        HumidInterfaceFlux.WaterFluxKgM2PerS(surface, bulk, equivalentFilm, diffusivity);
+                    Near(Math.Abs(modelRate - analyticRate), 1e-19);
+                    double coarseError = CheckShells(16);
+                    double fineError = CheckShells(64);
+                    if (analyticRate != 0 && !(fineError < coarseError / 12 && fineError < 0.001))
+                        throw new InvalidOperationException("Spherical film rate did not converge on radial refinement.");
+                    log(FormattableString.Invariant(
+                        $"S12 V27 spherical film passed: {pressure:G} Pa, Y/Ysat {saturationRatio:G}, evaporation {modelRate:G8} kg/s, 64-shell relative error {fineError:P4}."));
+
+                    double CheckShells(int count)
+                    {
+                        double dr = (outer - radius) / count;
+                        var resistance = new double[count];
+                        double total = 0;
+                        for (int shell = 0; shell < count; shell++)
+                        {
+                            double midpoint = radius + (shell + 0.5) * dr;
+                            resistance[shell] = dr / (4 * Math.PI * rho * diffusivity * midpoint * midpoint);
+                            total += resistance[shell];
+                        }
+                        double rate = (surfacePotential - bulkPotential) / total;
+                        double potential = surfacePotential;
+                        for (int shell = 0; shell < count; shell++)
+                        {
+                            double midpoint = radius + (shell + 0.5) * dr;
+                            double next = potential - rate * resistance[shell];
+                            double air = Math.Exp(-0.5 * (potential + next));
+                            double area = 4 * Math.PI * midpoint * midpoint;
+                            double velocity = rate / (rho * area);
+                            double speciesGradient = air * (next - potential) / dr;
+                            // Dry-air advection and diffusion cancel throughout the shell.
+                            Near(Math.Abs(area * rho * (velocity * air + diffusivity * speciesGradient)), 1e-19);
+                            double node = radius + (shell + 1) * dr;
+                            double exactPotential = surfacePotential - (surfacePotential - bulkPotential) *
+                                (1 / radius - 1 / node) / (1 / radius - 1 / outer);
+                            if (count == 64) Near(Math.Abs(Math.Exp(-next) - Math.Exp(-exactPotential)), 1e-5);
+                            potential = next;
+                        }
+                        Near(Math.Abs(potential - bulkPotential), 1e-14);
+                        return analyticRate == 0 ? Math.Abs(rate) : Math.Abs(rate / analyticRate - 1);
+                    }
+                }
+            }
+        }
+
+        private static void Near(double error, double tolerance)
+        {
+            if (!(error <= tolerance))
+                throw new InvalidOperationException($"Humid phase exchange error {error:G8} exceeds {tolerance:G8}.");
+        }
+
         public static void Run(Func<VariableCoefficientProjection, float[], double, double[], FlowStep> project,
             Action<string> log)
         {
