@@ -95,6 +95,34 @@ internal static class IcePressureMain
             }
             Near(Math.Abs(System.Linq.Enumerable.Sum(remapped.LiquidM3) - System.Linq.Enumerable.Sum(volumes)), 1e-15);
             Console.WriteLine($"S11 coupled volume and momentum remap passed at offset {offset:G} m.");
+            var previousBody = coupled.Body;
+            var currentPlan = nextPlan;
+            var currentFields = remapped;
+            var tentative = Array.ConvertAll(remap.Momentum.VelocityMPerS, value => (float)value);
+            double initialWater = System.Linq.Enumerable.Sum(volumes);
+            double initialHeat = System.Linq.Enumerable.Sum(thermal);
+            for (int step = 2; step <= 3; step++)
+            {
+                var continuation = IcePressureCoupling.Advance(previousBody, currentPlan, dt, new D3(0, -g, 0),
+                    boundary => FlowCpuReference.Project(currentPlan, tentative, dt, 16384, null, boundary),
+                    point => rho * g * (0.10 - point.Y));
+                var updatedGeometry = CutCellGeometry.Build(grid,
+                    iceSurface: SurfacePrimitives.Transform(box, continuation.Body.Frame));
+                var updatedPlan = new VariableCoefficientProjection(updatedGeometry, BoundaryConditions3D.Closed, _ => rho, _ => 0);
+                var sweeps = MovingCutCellRemap.Reconcile(currentPlan, updatedPlan, continuation.Fluid, 0.005 * grid.CellVolume);
+                var updated = MovingCutCellRemap.ApplyWithMomentum(currentPlan, updatedPlan, currentFields,
+                    sweeps, continuation.Fluid.VelocityMPerS, rho, 1);
+                Near(Math.Abs(System.Linq.Enumerable.Sum(updated.Fields.LiquidM3) - initialWater), 1e-15);
+                Near(Math.Abs(System.Linq.Enumerable.Sum(updated.Fields.LiquidEnergyJ) - initialHeat), 1e-13);
+                if (continuation.Body.Frame.Origin.Y <= previousBody.Frame.Origin.Y)
+                    throw new InvalidOperationException("The submerged ice stopped rising during continuation.");
+                previousBody = continuation.Body;
+                currentPlan = updatedPlan;
+                currentFields = updated.Fields;
+                tentative = Array.ConvertAll(updated.Momentum.VelocityMPerS, value => (float)value);
+            }
+            Console.WriteLine(FormattableString.Invariant(
+                $"S11 three-step continuation passed at offset {offset:G} m: rise {previousBody.Frame.Origin.Y - body.Frame.Origin.Y:G6} m."));
             var acceptedLoad = IcePressureLoad.FromProjection(body, plan, coupled.Fluid.GroupPressurePa,
                 point => rho * g * (0.10 - point.Y));
             Near((coupled.Body.MomentumKgMPerS - (acceptedLoad.ForceN + new D3(0, -g * body.MassKg, 0)) * dt).Length, 1e-12);

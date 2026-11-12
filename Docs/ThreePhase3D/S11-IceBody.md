@@ -42,4 +42,8 @@ The CPU fixture advances the submerged box using the coupled pressure step, rebu
 
 The remap gathers face momentum into old pressure groups using the existing aperture-weighted phase masses. It transports all three components using the same donor-volume fractions as the phase inventory, then distributes them to active faces on the new pose using the new apertures and phase masses. This is a first-order group-average remap and can smooth within-group velocity variation. It rejects a nonzero component that has no active receiving face.
 
-The coupled moving-box CPU test now also checks linear momentum in each direction to 1e-12 kg m/s at both grid offsets. The returned velocities are tentative for the new geometry. The next pressure projection must enforce its moving-wall constraint. Multi-step flotation and GPU runtime verification remain open.
+The coupled moving-box CPU test now also checks linear momentum in each direction to 1e-12 kg m/s at both grid offsets. The returned velocities are tentative for the new geometry. The next pressure projection must enforce its moving-wall constraint. The submerged continuation check below exercises that projection. Free-surface flotation and GPU runtime verification remain open.
+
+## Successive coupled steps
+
+The CPU fixture now advances three consecutive 10 ms steps at both grid offsets. After each geometry update it remaps volume, enthalpy and momentum, then uses the remapped velocities as the tentative input to the next moving-wall projection. Water volume and enthalpy stayed within 1e-15 m3 and 1e-13 J of the initial totals, respectively. The submerged body rose 0.257786 and 0.260333 mm at the two offsets. This fixture supplies a hydrostatic background pressure and checks submerged continuation. It does not exercise a free surface or equilibrium flotation.
