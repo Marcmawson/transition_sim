@@ -38,6 +38,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
         internal readonly float[] Diagonal;
         internal readonly int[] Rows, Incidence, GroupByCell, FaceOffsets;
         internal readonly bool HasEmbeddedSolid, HasVariableProperties;
+        internal readonly bool IsPeriodic;
         private readonly List<int[]> closedComponents = new List<int[]>();
         // Apertures at floating-point clipping roundoff cannot establish hydraulic
         // connectivity. Apply the same threshold when merging and assembling faces.
@@ -61,6 +62,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             Boundaries = boundaries;
             HasEmbeddedSolid = geometry.Patches.Count != 0;
             if (periodic && HasEmbeddedSolid) throw new NotSupportedException("Periodic pressure requires regular geometry.");
+            IsPeriodic = periodic;
             var merge = new TinyCellMergePlan(geometry, .05, RoundoffFaceFraction);
             var roots = new Dictionary<int, int>();
             var volumes = new List<double>();

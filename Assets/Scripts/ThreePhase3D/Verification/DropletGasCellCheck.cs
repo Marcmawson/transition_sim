@@ -35,9 +35,9 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     Math.Abs(coarseGrid.OutletVapourKg - referenceGrid.OutletVapourKg))
                 throw new InvalidOperationException("S14 coupled gas-grid results did not refine.");
             log(FormattableString.Invariant(
-                $"S14 V37 multi-step gas grid passed: 40 steps, radius {referenceGrid.RadiusM * 1e6:F6} um, outlet vapour {referenceGrid.OutletVapourKg:G8} kg, projected feedback {referenceGrid.FeedbackMps:G8} m/s."));
+                $"S14 V37 multi-step gas grid passed: 40 steps, radius {referenceGrid.RadiusM * 1e6:F6} um, outlet vapour {referenceGrid.OutletVapourKg:G8} kg, projected feedback {referenceGrid.FeedbackMps:G8} m/s, wall reaction X {referenceGrid.WallReactionX:G8} N s."));
 
-            (double RadiusM, double OutletVapourKg, double FeedbackMps) SimulateGrid(int steps)
+            (double RadiusM, double OutletVapourKg, double FeedbackMps, double WallReactionX) SimulateGrid(int steps)
             {
                 const double pressure = 101325;
                 double dt = duration / steps;
@@ -46,7 +46,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 var grid = new Grid3D(2, 2, 1, new D3(dx, dx, dx), RigidFrame.Identity);
                 var geometry = CutCellGeometry.Build(grid);
                 var sides = new FlowBoundary[6];
-                sides[1] = new FlowBoundary(FlowBoundaryKind.OpenPressure);
+                const double outletGaugePa = 0.002;
+                sides[1] = new FlowBoundary(FlowBoundaryKind.OpenPressure, outletGaugePa);
                 var boundaries = new BoundaryConditions3D(sides);
                 var seed = new VariableCoefficientProjection(geometry, boundaries,
                     _ => (dryAir + initialVapour) / cellVolume, _ => 0);
@@ -56,6 +57,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 double radius = initialRadius, liquidK = initialK, airOut = 0, vapourOut = 0, energyOut = 0;
                 var initialVelocity = new D3(0.005, 0, 0);
                 D3 velocity = initialVelocity, position = grid.Centre(0, 0, 0), momentumOut = default;
+                D3 wallReaction = default, openReaction = default;
                 double feedback = 0;
                 for (int step = 0; step < steps; step++)
                 {
@@ -100,6 +102,9 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         for (int face = 0; face < plan.FaceCount; face++)
                             feedback = Math.Max(feedback, Math.Abs(flow.VelocityMPerS[face] - control.VelocityMPerS[face]));
                     }
+                    var reactions = HumidGasAdvection.ApplyPressure(plan, flow, gas);
+                    wallReaction += reactions.WallReaction;
+                    openReaction += reactions.OpenBoundaryReaction;
                     var moved = HumidGasAdvection.Advance(plan, flow, volumes, gas,
                         (dryAir / cellVolume, initialVapour / cellVolume, initialGasEnergy / cellVolume, default));
                     gas = moved.Gas;
@@ -109,7 +114,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     momentumOut += moved.Outflow.MomentumKgMPerS;
                     double air = airOut, water = vapourOut + DropletGasCellExchange.Mass(radius);
                     double energy = energyOut + LiquidEnthalpy(DropletGasCellExchange.Mass(radius), liquidK);
-                    D3 momentum = momentumOut + velocity * DropletGasCellExchange.Mass(radius);
+                    D3 momentum = momentumOut + wallReaction + openReaction + velocity * DropletGasCellExchange.Mass(radius);
                     foreach (var state in gas)
                     {
                         air += state.DryAirKg;
@@ -125,7 +130,11 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 }
                 if (!(feedback > 1e-7))
                     throw new InvalidOperationException("Carried gas momentum did not change the projected face velocities.");
-                return (radius, vapourOut, feedback);
+                double expectedOpen = outletGaugePa * 2 * grid.FaceArea(0) * duration;
+                if ((openReaction - new D3(expectedOpen, 0, 0)).Length > expectedOpen * 1e-7 ||
+                    !(wallReaction.Length > 0))
+                    throw new InvalidOperationException("S14 wall or prescribed outlet pressure reaction did not balance.");
+                return (radius, vapourOut, feedback, wallReaction.X);
             }
 
             void CheckProjection()

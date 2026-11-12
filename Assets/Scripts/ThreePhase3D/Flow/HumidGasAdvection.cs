@@ -6,6 +6,46 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // First-order donor transport for gas-only groups. The outlet ledger is signed.
     internal static class HumidGasAdvection
     {
+        internal static (D3 WallReaction, D3 OpenBoundaryReaction) ApplyPressure(
+            VariableCoefficientProjection plan, FlowStep flow,
+            (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[] gas)
+        {
+            if (plan.HasEmbeddedSolid || plan.IsPeriodic ||
+                !flow.Diagnostics.Converged || flow.GroupPressurePa.Length != plan.GroupCount || gas.Length != plan.GroupCount)
+                throw new ArgumentException("Gas pressure impulses require a compatible Cartesian box projection.");
+
+            var impulse = new D3[gas.Length];
+            D3 wallReaction = default, openReaction = default;
+            var cells = plan.Grid.Cells;
+            for (int k = 0; k < cells.Z; k++)
+            for (int j = 0; j < cells.Y; j++)
+            for (int i = 0; i < cells.X; i++)
+            {
+                int group = plan.PressureGroup(i, j, k);
+                for (int axis = 0; axis < 3; axis++)
+                for (int side = 0; side < 2; side++)
+                {
+                    int index = plan.FaceIndex(axis, i + (axis == 0 ? side : 0),
+                        j + (axis == 1 ? side : 0), k + (axis == 2 ? side : 0));
+                    var face = plan.Faces[index];
+                    double pressure = flow.GroupPressurePa[group];
+                    bool open = face.Active != 0 && (face.Low < 0 || face.High < 0);
+                    if (open) pressure = face.BoundaryPressure;
+                    else if (face.Active != 0)
+                        pressure = 0.5 * (flow.GroupPressurePa[face.Low] + flow.GroupPressurePa[face.High]);
+                    // A rigid wall uses zero normal pressure gradient.
+                    double value = (side == 0 ? 1 : -1) * pressure * plan.Grid.FaceArea(axis) * flow.Diagnostics.Dt;
+                    var forceImpulse = new D3(axis == 0 ? value : 0, axis == 1 ? value : 0, axis == 2 ? value : 0);
+                    impulse[group] += forceImpulse;
+                    if (open) openReaction -= forceImpulse;
+                    else if (face.Active == 0) wallReaction -= forceImpulse;
+                }
+            }
+            for (int group = 0; group < gas.Length; group++)
+                gas[group].MomentumKgMPerS += impulse[group];
+            return (wallReaction, openReaction);
+        }
+
         internal static float[] PredictFaces(VariableCoefficientProjection plan,
             (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[] gas)
         {
