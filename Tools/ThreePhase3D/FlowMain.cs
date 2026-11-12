@@ -16,7 +16,12 @@ internal static class FlowMain
         }
         if (args.Length == 1 && args[0] == "--bubble-growth-rise")
         {
-            CheckResolvedBubbleRise(growing: true);
+            CheckResolvedBubbleRise(PureWaterBoilingCheck.BubbleCase.Evaporation);
+            return 0;
+        }
+        if (args.Length == 1 && args[0] == "--bubble-condensation-rise")
+        {
+            CheckResolvedBubbleRise(PureWaterBoilingCheck.BubbleCase.Condensation);
             return 0;
         }
         if (args.Length == 1 && args[0] == "--pure-stefan")
@@ -67,8 +72,8 @@ internal static class FlowMain
         return suite.Passed ? 0 : 1;
     }
 
-    private static void CheckResolvedBubbleRise(bool growing = false) =>
-        PureWaterBoilingCheck.RunBubbleRise(ProjectBoiling, Console.WriteLine, growing);
+    private static void CheckResolvedBubbleRise(PureWaterBoilingCheck.BubbleCase scenario = PureWaterBoilingCheck.BubbleCase.Buoyancy) =>
+        PureWaterBoilingCheck.RunBubbleRise(ProjectBoiling, Console.WriteLine, scenario);
 
     private static FlowStep ProjectBoiling(VariableCoefficientProjection plan, float[] velocity,
         double dt, int iterations, double[] source) =>

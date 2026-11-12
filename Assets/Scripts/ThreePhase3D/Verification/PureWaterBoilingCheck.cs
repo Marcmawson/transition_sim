@@ -7,21 +7,30 @@ namespace PhysicsSim.ThreePhase3D.Verification
 {
     public static class PureWaterBoilingCheck
     {
+        public enum BubbleCase { Buoyancy, Evaporation, Condensation }
+
         public static void RunBubbleRise(Func<VariableCoefficientProjection, float[], double, int, double[], FlowStep> project, Action<string> log,
-            bool growing = false)
+            BubbleCase scenario = BubbleCase.Buoyancy)
         {
             const double dx = 0.001, dt = 0.0004;
+            double heatFluxWm2 = scenario switch
+            {
+                BubbleCase.Buoyancy => 0,
+                BubbleCase.Evaporation => 10000,
+                BubbleCase.Condensation => -10000,
+                _ => throw new ArgumentOutOfRangeException(nameof(scenario))
+            };
             var grid = new Grid3D(8, 8, 8, new D3(dx, dx, dx), RigidFrame.Identity);
             var centre = new D3(0.004, 0.003, 0.004);
             var sphere = SurfacePrimitives.Transform(SurfacePrimitives.Sphere(0.0016, 12, 24),
                 RigidFrame.Euler(centre, 0, 0, 0));
             var seed = CutCellGeometry.Build(grid, iceSurface: sphere);
             var domain = CutCellGeometry.Build(grid);
-            var surface = new PureWaterStefanInterface(101325, 370, 377, growing ? 10000 : 0, 0);
+            var surface = new PureWaterStefanInterface(101325, 370, 377, heatFluxWm2, 0);
             var saturation = surface.Saturation;
             double rhoL = saturation.Liquid.DensityKgM3, rhoG = saturation.Vapour.DensityKgM3;
             var sides = new FlowBoundary[6];
-            if (growing) sides[3] = new FlowBoundary(FlowBoundaryKind.OpenPressure);
+            if (heatFluxWm2 != 0) sides[3] = new FlowBoundary(FlowBoundaryKind.OpenPressure);
             var boundaries = new BoundaryConditions3D(sides);
             var plan = new VariableCoefficientProjection(domain, boundaries,
                 cell => rhoL + (rhoG - rhoL) * seed.IceVolumeM3[cell] / grid.CellVolume, _ => 0);
@@ -44,20 +53,23 @@ namespace PhysicsSim.ThreePhase3D.Verification
             var transport = new CutCellVofTransport(plan);
             double volume = Sum(gas);
             D3 initial = Centre(gas);
-            if (growing)
+            if (heatFluxWm2 != 0)
             {
-                var noGravity = RunGrowing(0);
-                var withGravity = RunGrowing(-9.81);
+                var noGravity = RunWithPhaseExchange(0);
+                var withGravity = RunWithPhaseExchange(-9.81);
                 var rise = Centre(withGravity.GasM3) - initial;
                 double control = (Centre(noGravity.GasM3) - initial).Y;
                 double gained = Sum(withGravity.GasM3) - volume;
-                if (!(rise.Y - control > 1e-8 && gained > 0))
-                    throw new InvalidOperationException("The phase-changing vapour seed did not grow and rise.");
-                if (Math.Abs(rise.Y - 4.708612e-5) > 1e-6 || Math.Abs(control - 1.0661593e-5) > 1e-6 ||
-                    Math.Abs(gained / 5.8324244e-10 - 1) > 0.01)
-                    throw new InvalidOperationException($"The growing bubble differs from the CPU baseline. Rise {rise.Y:G8} m, control {control:G8} m, vapour gain {gained:G8} m3.");
+                if (!(rise.Y - control > 1e-8 && Math.Sign(gained) == Math.Sign(heatFluxWm2)))
+                    throw new InvalidOperationException("The phase-changing vapour seed did not exchange vapour in the expected direction and rise.");
+                var reference = heatFluxWm2 > 0
+                    ? (Rise: 4.708612e-5, Control: 1.0661593e-5, VolumeChange: 5.8324244e-10)
+                    : (Rise: 2.7708753e-5, Control: -1.047588e-5, VolumeChange: -5.6192099e-10);
+                if (Math.Abs(rise.Y - reference.Rise) > 1e-6 || Math.Abs(control - reference.Control) > 1e-6 ||
+                    Math.Abs(gained / reference.VolumeChange - 1) > 0.01)
+                    throw new InvalidOperationException($"The phase-changing bubble differs from the CPU baseline. Rise {rise.Y:G8} m, control {control:G8} m, vapour volume change {gained:G8} m3.");
                 log(FormattableString.Invariant(
-                    $"S13 growing bubble passed: 6 steps, rise {rise.Y:G8} m, no-gravity rise {control:G8} m, vapour gained {gained:G8} m3."));
+                    $"S13 {(heatFluxWm2 > 0 ? "growing" : "condensing")} bubble passed: 6 steps, rise {rise.Y:G8} m, no-gravity rise {control:G8} m, vapour volume change {gained:G8} m3."));
                 return;
             }
             var still = Run(default);
@@ -89,7 +101,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 return fields;
             }
 
-            CutCellInventories RunGrowing(double gravityY)
+            CutCellInventories RunWithPhaseExchange(double gravityY)
             {
                 var fields = state;
                 var velocity = new float[plan.FaceCount];
@@ -120,7 +132,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     for (int axis = 0; axis < 3; axis++)
                         if (Math.Abs(outgoingMomentum[axis] - Sum(incomingMomentum[axis]) -
                             result.Momentum.BoundaryMomentumKgMPerS[axis] - result.Momentum.WallImpulseKgMPerS[axis]) > 1e-15)
-                            throw new InvalidOperationException("The growing bubble failed its momentum balance.");
+                            throw new InvalidOperationException("The phase-changing bubble failed its momentum balance.");
                     fields = result.Transport.Fields;
                     velocity = Array.ConvertAll(result.Momentum.VelocityMPerS, value => (float)value);
                     var boundary = result.Transport.BoundaryInflow;
@@ -130,7 +142,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     if (Math.Abs(Sum(fields.GasM3) - volume - vapourProduced - gasIn) > 1e-16 ||
                         Math.Abs(Sum(fields.LiquidM3) * rhoL + Sum(fields.VapourKg) - water - waterIn) > 1e-13 ||
                         Math.Abs(Sum(fields.LiquidEnergyJ) + Sum(fields.GasEnergyJ) - energy - energyIn) > 1e-8)
-                        throw new InvalidOperationException($"The growing bubble failed its phase or outlet balance at step {step + 1}.");
+                        throw new InvalidOperationException($"The phase-changing bubble failed its phase or outlet balance at step {step + 1}.");
                 }
                 return fields;
             }

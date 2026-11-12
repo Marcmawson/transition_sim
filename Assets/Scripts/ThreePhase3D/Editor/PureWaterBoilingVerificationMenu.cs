@@ -16,7 +16,8 @@ namespace PhysicsSim.ThreePhase3D.Editor
                 throw new NotSupportedException("The S13 boiling checks require the GPU pressure solver.");
 
             PureWaterBoilingCheck.RunPlanarStefan(Project, Log);
-            PureWaterBoilingCheck.RunBubbleRise(Project, Log, growing: true);
+            PureWaterBoilingCheck.RunBubbleRise(Project, Log, PureWaterBoilingCheck.BubbleCase.Evaporation);
+            PureWaterBoilingCheck.RunBubbleRise(Project, Log, PureWaterBoilingCheck.BubbleCase.Condensation);
 
             FlowStep Project(VariableCoefficientProjection plan, float[] velocity,
                 double dt, int iterations, double[] source) =>

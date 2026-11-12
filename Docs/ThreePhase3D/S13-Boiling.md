@@ -54,6 +54,10 @@ The initially aligned and initially mixed planar fixtures now both pass four ste
 
 ## Unity pressure backend verification
 
+Unity DX11 passed the four planar cases and growing bubble after the trace-phase correction. The growing bubble rose 47.086119 µm with gravity and 10.661593 µm without, and gained 5.8324244e-10 m³ of vapour.
+
+The same menu now runs a resolved condensing bubble on the same 8³ grid. Run `FlowMain --bubble-condensation-rise` for the CPU reference. With a prescribed outward heat flux of 10000 W/m², the vapour volume fell by 5.6192099e-10 m³ over six 0.4 ms steps. Its centroid rose 27.708753 µm with gravity and fell 10.47588 µm without gravity. Both paths check water, enthalpy, and momentum balances each step, including the outlet ledger. The new GPU case uses the same 1 µm displacement and 1% vapour-volume tolerances as the growth case. Its device result is pending. This fixture prescribes heat flux and does not model a resolved subcooling field or apparatus nucleation.
+
 The first Unity run exposed sensitivity to pressure roundoff. Changing the CPU convergence check from every 16 iterations to every 31 reproduced a substantial change in bubble rise and growth. Pure-water heat exchange now excludes reconstructed sections where the smaller phase occupies at most 1e-10 of its pressure-group volume. The trace phase stays in the conserved inventories. The corrected CPU reference rises 47.08612 µm with gravity and 10.661593 µm without gravity, with a vapour volume gain of 5.8324244e-10 m³.
 
 In Unity, select **Physics Sim → Three Phase 3D → Run S13 GPU boiling checks**. The menu runs the shared planar Stefan and growing-bubble fixtures with GPU pressure projection and CPU interface reconstruction, phase transport and momentum remapping. The planar cases check the analytical front shift, velocity jump and boundary ledgers. The growing case also checks the CPU reference within 1 µm for both centroid displacements and 1% for vapour volume gain. The shared CPU fixtures passed and the changed scripts compiled against Unity 2022.3.46f1 assemblies. Device results are pending.
