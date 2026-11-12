@@ -19,6 +19,7 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
         public double IceMeltingEnthalpyJkg => meltingIce.EnthalpyJkg;
         public double LiquidMeltingEnthalpyJkg => meltingLiquid.EnthalpyJkg;
         public double LatentHeatJkg => LiquidMeltingEnthalpyJkg - IceMeltingEnthalpyJkg;
+        public double LiquidMeltingDensityKgM3 => meltingLiquid.DensityKgM3;
 
         public SolidLiquidInterface(double pressurePa, double minimumK, double maximumK)
         {

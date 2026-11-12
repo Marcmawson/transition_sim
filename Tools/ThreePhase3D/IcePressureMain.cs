@@ -2,11 +2,47 @@ using System;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
 using PhysicsSim.ThreePhase3D.Geometry;
+using PhysicsSim.ThreePhase3D.PhaseChange;
 using PhysicsSim.ThreePhase3D.Solids;
 using PhysicsSim.ThreePhase3D.Verification;
 
 internal static class IcePressureMain
 {
+    private static void CheckMeltingTransfer()
+    {
+        var equilibrium = new SolidLiquidInterface(101325, 250, 290);
+        var dimensions = new D3(0.04, 0.03, 0.02);
+        var frame = RigidFrame.Euler(new D3(0.06, 0.08, 0.04), 0.2, 0.3, 0.4);
+        var box = IceBody.Box(917, dimensions, frame);
+        var body = new IceBody(box.MassKg, box.PrincipalInertiaKgM2, frame,
+            new D3(0.002, -0.003, 0.001), new D3(0.00001, 0.00002, -0.00003));
+        double totalHeat = body.MassKg * equilibrium.LatentHeatJkg;
+        double heat = totalHeat / 4;
+        for (int axis = 0; axis < 3; axis++)
+        foreach (int side in new[] { -1, 1 })
+        {
+            var melt = IceBoxMelting.Apply(body, dimensions, axis, side, heat, equilibrium);
+            var ice = melt.Remaining;
+            var slab = melt.Released;
+            Near(Math.Abs(ice.MassKg + slab.MassKg - body.MassKg), 1e-15);
+            Near(Math.Abs(melt.DimensionsM[axis] - dimensions[axis] * 0.75), 1e-15);
+            Near(Math.Abs(frame.ToLocal(ice.Frame.Origin)[axis] + side * dimensions[axis] / 8), 1e-15);
+            Near((ice.MomentumKgMPerS + slab.MomentumKgMPerS - body.MomentumKgMPerS).Length, 1e-15);
+            D3 AboutOriginalCentre(IceBody part) => part.AngularMomentumKgM2PerS +
+                D3.Cross(part.Frame.Origin - frame.Origin, part.MomentumKgMPerS);
+            Near((AboutOriginalCentre(ice) + AboutOriginalCentre(slab) - body.AngularMomentumKgM2PerS).Length, 1e-15);
+            Near(Math.Abs(ice.KineticEnergyJ + slab.KineticEnergyJ - body.KineticEnergyJ), 1e-15);
+            Near(Math.Abs(melt.LiquidVolumeM3 * equilibrium.LiquidMeltingDensityKgM3 - slab.MassKg), 1e-15);
+            Near(Math.Abs(melt.LiquidEnthalpyJ - slab.MassKg * equilibrium.IceMeltingEnthalpyJkg - heat), 1e-10);
+        }
+        var dry = IceBoxMelting.Apply(body, dimensions, 0, 1, 0, equilibrium);
+        var complete = IceBoxMelting.Apply(body, dimensions, 0, 1, totalHeat * 2, equilibrium);
+        if (dry.Remaining != body || dry.Released != null || complete.Remaining != null || complete.Released != body)
+            throw new InvalidOperationException("Melting transfer failed at an endpoint.");
+        Near(Math.Abs(complete.UnusedHeatJ - totalHeat), 0);
+        Console.WriteLine("S11 V26 face melting passed: all six faces conserved mass, enthalpy, momentum and kinetic energy.");
+    }
+
     private static void CheckCoupledImpact()
     {
         var hit = IceImpactCheck.Run((plan, still, seconds, flux) =>
@@ -86,6 +122,7 @@ internal static class IcePressureMain
 
     private static void Main()
     {
+        CheckMeltingTransfer();
         CheckCoupledSupport();
         CheckCoupledImpact();
         CheckPartialWallPressure();
