@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Geometry;
 
@@ -120,6 +121,19 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         internal double WaterExcessAt(int cell, D3 point) =>
             (liquidSlope - gasSlope) * (WaterlinePlane(cell).Offset - grid.Frame.ToLocal(point).Y);
+
+        internal double WettedAreaM2(InterfacePatch patch)
+        {
+            var plane = WaterlinePlane(patch.Cell);
+            double area = ClipArea(patch.Polygon);
+            if (patch.CoveredPieces != null)
+                foreach (var piece in patch.CoveredPieces)
+                    area -= piece.Sign * ClipArea(piece.Polygon);
+            return Math.Max(0, Math.Min(area, patch.FluidExposedAreaM2));
+
+            double ClipArea(IReadOnlyList<D3> polygon) =>
+                PolyhedronClip.Area(PolyhedronClip.Polygon(new List<D3>(polygon), plane));
+        }
 
         internal ClipPlane WaterlinePlane(int cell)
         {

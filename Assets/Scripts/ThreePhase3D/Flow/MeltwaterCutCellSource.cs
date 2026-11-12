@@ -61,8 +61,12 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 totalVolume += vacated;
                 totalMoment += (centre - released.Frame.Origin) * vacated;
             }
-            if (Math.Abs(totalVolume - releasedIceM3) > releasedIceM3 * 1e-9 ||
-                totalMoment.Length > releasedIceM3 * grid.Spacing.Length * 1e-9)
+            // Subtracting two cell capacities loses precision as the melted layer thins.
+            // Allow cell-scale roundoff while still rejecting a material loss of source volume.
+            double closureTolerance = Math.Min(releasedIceM3 * 1e-6,
+                Math.Max(releasedIceM3 * 1e-9, tolerance));
+            if (Math.Abs(totalVolume - releasedIceM3) > closureTolerance ||
+                totalMoment.Length > closureTolerance * grid.Spacing.Length)
                 throw new InvalidOperationException("Receding grid geometry does not account for the released ice volume and centroid.");
             return sources;
 

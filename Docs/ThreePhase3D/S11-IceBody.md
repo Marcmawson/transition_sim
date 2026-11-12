@@ -212,3 +212,9 @@ For a fully wetted face with a 10 K temperature difference, the CPU check matche
 The face melting step takes an accepted pressure projection at the current ice pose. It applies conduction, recedes the face, rebuilds the ice cut cells while retaining the fixed vessel, and remaps cooled liquid and released meltwater together. It returns the new topology and inventories so the caller can assemble the next pressure coefficients from the updated phase fractions and gas density.
 
 The mixed liquid and gas CPU fixture transferred 0.01728 J and melted and deposited 5.1825512e-8 kg of ice in one step. Total water mass and enthalpy, gas mass and the new group volumes closed within tolerance. This check uses prescribed wet area and liquid temperature at a fixed rigid pose. Freely moving, repeated melting with reconstructed thermal and phase fields remains to be verified.
+
+## V26 repeated melting with rigid-body motion
+
+The CPU fixture alternates a pressure-coupled rigid-body and transport substep with a fixed-pose projection and thermal recession substep. It rebuilds phase density and the column waterline from the transported inventory. It clips the exposed ice face at that waterline and recovers the liquid temperature from group enthalpy. The ice starts submerged and is free to move under pressure and gravity.
+
+Over three pairs of 1 ms substeps, the ice lost 6.2225123e-9 kg and its centre moved 2.6307321e-6 m. Six pairs of 0.5 ms substeps at the same total duration transferred 0.0020744038 J, compared with 0.0020747506 J at 1 ms. Both runs conserved water mass, gas mass and thermal enthalpy within the fixture tolerances. The source closure check allows bounded cell-scale roundoff when differencing capacities for thin melt layers. This is a short CPU timestep-refinement check at fixed grid resolution, with one melting face and isothermal ice. Grid convergence, experimental comparison and GPU verification remain open.
