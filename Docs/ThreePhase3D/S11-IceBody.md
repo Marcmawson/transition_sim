@@ -120,3 +120,9 @@ The CPU rigid-body checks passed for central and off-centre impacts at restituti
 The plane sweep finds the first contact time from the hull's closest vertex and normal speed. It advances the rigid body only to that time and returns the contact point for impulse resolution. The sweep assumes constant translation velocity and orientation. Rotating sweeps, simultaneous contacts and resting support remain open.
 
 The CPU fixture translated a tilted box at 20 m/s toward the plane during a 20 ms step. It detected contact after 5.012981 ms, matching the analytic support distance divided by normal speed. No vertex penetrated at the returned pose. The contact point rebounded at 10 m/s with restitution 0.5. The fixture also verified an interval ending before impact and an approaching contact at the start of a step.
+
+## V25 principal-axis rotating sweep
+
+The rotating sweep handles constant translation and torque-free principal-axis spin against a fixed plane. It advances by the current clearance divided by a conservative normal vertex-speed bound. This prevents a clear endpoint from hiding an impact within the interval. It returns first contact within a 1e-10 m distance tolerance or rejects a sweep that cannot reach a safe result.
+
+The CPU fixture spins a box at 10 rad/s through a full revolution with both endpoint hulls clear. It detected first contact at 20 ms, agreeing with the analytic time to within 1 ns, and all hull vertices remained on the admissible side within the distance tolerance. A 10 ms sweep stayed clear. General tumbling, simultaneous and resting contacts, and coupled beaker-wall collision remain open.

@@ -59,6 +59,58 @@ namespace PhysicsSim.ThreePhase3D.Solids
             return new Sweep(atImpact, hitTime, true, support + body.VelocityMPerS * hitTime);
         }
 
+        // Torque-free rotation about a principal axis keeps angular velocity
+        // constant. A normal speed bound lets the sweep skip only clear time.
+        public static Sweep AdvancePrincipalRotationToPlane(IceBody body, IReadOnlyList<D3> verticesLocalM,
+            D3 planePointM, D3 planeNormal, double seconds)
+        {
+            if (body == null) throw new ArgumentNullException(nameof(body));
+            if (verticesLocalM == null || verticesLocalM.Count == 0)
+                throw new ArgumentException("A contact hull requires vertices.", nameof(verticesLocalM));
+            if (!SiUnits.IsFinite(seconds) || seconds <= 0)
+                throw new ArgumentOutOfRangeException(nameof(seconds));
+            var omega = body.AngularVelocityRadPerS;
+            if (omega.Length == 0)
+                return AdvanceTranslationToPlane(body, verticesLocalM, planePointM, planeNormal, seconds);
+            var angularMomentum = body.AngularMomentumKgM2PerS;
+            if (D3.Cross(omega.Unit(), angularMomentum.Unit()).Length > 1e-12)
+                throw new NotSupportedException("The rotating plane sweep requires principal-axis spin.");
+
+            D3 normal = planeNormal.Unit();
+            double radius = 0;
+            foreach (D3 vertex in verticesLocalM) radius = Math.Max(radius, vertex.Length);
+            double speedBound = Math.Abs(D3.Dot(body.VelocityMPerS, normal)) + omega.Length * radius;
+            if (!SiUnits.IsFinite(speedBound))
+                throw new ArgumentException("The hull speed bound must be finite.", nameof(body));
+            const double toleranceM = 1e-10;
+            double elapsed = 0;
+            for (int iteration = 0; iteration < 512; iteration++)
+            {
+                var pose = elapsed == 0 ? body : body.Advance(elapsed, default, default);
+                double gap = double.PositiveInfinity;
+                D3 support = default;
+                foreach (D3 vertex in verticesLocalM)
+                {
+                    D3 point = pose.Frame.ToWorld(vertex);
+                    double distance = D3.Dot(point - planePointM, normal);
+                    if (distance >= gap) continue;
+                    gap = distance;
+                    support = point;
+                }
+                if (gap < -toleranceM)
+                    throw new InvalidOperationException("The ice hull starts behind or crossed the contact plane.");
+                if (gap <= toleranceM)
+                    return new Sweep(pose, elapsed, true, support);
+                if (elapsed == seconds)
+                    return new Sweep(pose, seconds, false, default);
+
+                double next = Math.Min(seconds, elapsed + gap / speedBound);
+                if (next <= elapsed) break;
+                elapsed = next;
+            }
+            throw new InvalidOperationException("The rotating plane sweep did not converge to a safe result.");
+        }
+
         // Resolve one already detected point of impact against a fixed,
         // frictionless wall. The normal points into the admissible region.
         public static IceBody ResolveImpact(IceBody body, D3 pointM, D3 wallNormal,

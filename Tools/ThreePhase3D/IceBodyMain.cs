@@ -34,7 +34,40 @@ internal static class IceBodyMain
         Near(rotated.AngularVelocityRadPerS.Y, 1e-5 / body.PrincipalInertiaKgM2.X, 1e-12);
         CheckWallImpact(body);
         CheckWallSweep(body);
+        CheckRotatingSweep(body);
         Console.WriteLine("S11 rigid ice body passed: box inertia, force, torque, off-centre impulse, point velocity and free motion.");
+    }
+
+    private static void CheckRotatingSweep(IceBody box)
+    {
+        var vertices = new D3[8];
+        for (int i = 0; i < vertices.Length; i++)
+            vertices[i] = new D3((i & 1) == 0 ? -0.02 : 0.02,
+                (i & 2) == 0 ? -0.015 : 0.015, (i & 4) == 0 ? -0.01 : 0.01);
+
+        const double angleAtImpact = 0.2, spin = 10;
+        double height = 0.02 * Math.Sin(angleAtImpact) + 0.015 * Math.Cos(angleAtImpact);
+        var body = new IceBody(box.MassKg, box.PrincipalInertiaKgM2,
+            RigidFrame.Euler(new D3(0, height, 0), 0, 0, 0), default,
+            new D3(0, 0, spin * box.PrincipalInertiaKgM2.Z));
+        double interval = 2 * Math.PI / spin;
+        var end = body.Advance(interval, default, default);
+        foreach (D3 vertex in vertices)
+            if (body.Frame.ToWorld(vertex).Y <= 0 || end.Frame.ToWorld(vertex).Y <= 0)
+                throw new InvalidOperationException("The rotating fixture must have clear endpoints.");
+
+        var sweep = IceWallContact.AdvancePrincipalRotationToPlane(body, vertices, default, new D3(0, 1, 0), interval);
+        if (!sweep.Hit) throw new InvalidOperationException("The rotating hull missed an interior impact.");
+        Near(sweep.ElapsedSeconds, angleAtImpact / spin, 1e-9);
+        Near(sweep.ContactPointM.Y, 0, 1e-10);
+        foreach (D3 vertex in vertices)
+            if (sweep.Body.Frame.ToWorld(vertex).Y < -1e-10)
+                throw new InvalidOperationException("The spinning ice penetrated the plane.");
+        var clear = IceWallContact.AdvancePrincipalRotationToPlane(body, vertices, default, new D3(0, 1, 0), 0.01);
+        if (clear.Hit) throw new InvalidOperationException("Reported contact before the analytic time.");
+        Near(clear.ElapsedSeconds, 0.01, 0);
+        Console.WriteLine(FormattableString.Invariant(
+            $"S11 V25 rotating sweep passed: impact at {sweep.ElapsedSeconds * 1000:F6} ms with both endpoints clear."));
     }
 
     private static void CheckWallSweep(IceBody box)
