@@ -44,6 +44,15 @@ namespace PhysicsSim.ThreePhase3D.Verification
             SimulateGrid(40, depositAtWall: true);
             CheckFilmDryOut();
             CheckCondensation();
+            var coarseCondensation = SimulateGrid(16, condense: true);
+            var fineCondensation = SimulateGrid(32, condense: true);
+            var referenceCondensation = SimulateGrid(64, condense: true);
+            if (!(referenceCondensation.RadiusM > initialRadius && referenceCondensation.OutletVapourKg < 0) ||
+                Math.Abs(fineCondensation.RadiusM - referenceCondensation.RadiusM) >=
+                Math.Abs(coarseCondensation.RadiusM - referenceCondensation.RadiusM))
+                throw new InvalidOperationException("S14 grid condensation did not grow, draw vapour in or refine.");
+            log(FormattableString.Invariant(
+                $"S14 multi-cell condensation passed: radius {referenceCondensation.RadiusM * 1e6:F6} um, condensed {DropletGasCellExchange.Mass(referenceCondensation.RadiusM) - initialMass:G8} kg, boundary vapour inflow {-referenceCondensation.OutletVapourKg:G8} kg."));
 
             void CheckCondensation()
             {
@@ -129,11 +138,16 @@ namespace PhysicsSim.ThreePhase3D.Verification
             }
 
             (double RadiusM, double OutletVapourKg, double FeedbackMps, double WallReactionX) SimulateGrid(
-                int steps, bool crossCell = false, bool exitDomain = false, bool depositAtWall = false)
+                int steps, bool crossCell = false, bool exitDomain = false, bool depositAtWall = false,
+                bool condense = false)
             {
                 const double pressure = 101325;
-                double dt = duration / steps;
-                double cellVolume = DropletGasCellExchange.GasVolumeM3(dryAir, initialVapour, initialGasEnergy, pressure);
+                double elapsed = condense ? 0.001 : duration;
+                double dt = elapsed / steps;
+                double seedK = condense ? 290 : initialK;
+                double seedVapour = condense ? dryAir * 0.018 : initialVapour;
+                double seedGasEnergy = condense ? GasEnthalpy(seedK, seedVapour) : initialGasEnergy;
+                double cellVolume = DropletGasCellExchange.GasVolumeM3(dryAir, seedVapour, seedGasEnergy, pressure);
                 double dx = Math.Pow(cellVolume, 1.0 / 3);
                 var grid = new Grid3D(2, 2, 1, new D3(dx, dx, dx), RigidFrame.Identity);
                 var geometry = CutCellGeometry.Build(grid);
@@ -142,11 +156,12 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 sides[1] = new FlowBoundary(FlowBoundaryKind.OpenPressure, outletGaugePa);
                 var boundaries = new BoundaryConditions3D(sides);
                 var seed = new VariableCoefficientProjection(geometry, boundaries,
-                    _ => (dryAir + initialVapour) / cellVolume, _ => 0);
+                    _ => (dryAir + seedVapour) / cellVolume, _ => 0);
                 int firstGroup = seed.PressureGroup(0, 0, 0), secondGroup = seed.PressureGroup(1, 0, 0);
                 var gas = new (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[seed.GroupCount];
-                for (int group = 0; group < gas.Length; group++) gas[group] = (dryAir, initialVapour, initialGasEnergy, default);
-                double radius = initialRadius, liquidK = initialK, airOut = 0, vapourOut = 0, energyOut = 0;
+                for (int group = 0; group < gas.Length; group++) gas[group] = (dryAir, seedVapour, seedGasEnergy, default);
+                double startEnergy = gas.Length * seedGasEnergy + LiquidEnthalpy(initialMass, seedK);
+                double radius = initialRadius, liquidK = seedK, airOut = 0, vapourOut = 0, energyOut = 0;
                 var initialVelocity = new D3(depositAtWall ? -0.005 : 0.005, 0, 0);
                 D3 velocity = initialVelocity, position = grid.Centre(0, 0, 0), momentumOut = default;
                 if (crossCell) position += new D3(dx * 0.5 - 2e-6, 0, 0);
@@ -172,7 +187,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         previousGroup = dropletGroup;
                         var local = gas[dropletGroup];
                         var exchanged = DropletGasCellExchange.Advance(radius, liquidK, local.DryAirKg, local.VapourKg,
-                            local.EnthalpyJ, pressure, 0.026, 2.5e-5, dt);
+                            local.EnthalpyJ, pressure, 0.026, 2.5e-5, dt, allowCondensation: condense);
                         double localMass = local.DryAirKg + local.VapourKg;
                         double localVolume = DropletGasCellExchange.GasVolumeM3(local.DryAirKg, local.VapourKg, local.EnthalpyJ, pressure);
                         var motion = StokesDroplet.Advance(position, velocity, local.MomentumKgMPerS / localMass, default,
@@ -190,6 +205,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         gas[dropletGroup] = (local.DryAirKg, exchanged.VapourKg, exchanged.GasEnthalpyJ,
                             local.MomentumKgMPerS + motion.GasMomentumGain);
                         double depositedVapour = exchanged.VapourKg - local.VapourKg;
+                        if (condense && !(depositedVapour < 0))
+                            throw new InvalidOperationException("S14 seeded grid cell did not take up vapour.");
                         if (dropletGroup == firstGroup) firstVapour += depositedVapour;
                         else if (dropletGroup == secondGroup)
                         {
@@ -255,7 +272,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     wallReaction += reactions.WallReaction;
                     openReaction += reactions.OpenBoundaryReaction;
                     var moved = HumidGasAdvection.Advance(plan, flow, volumes, gas,
-                        (dryAir / cellVolume, initialVapour / cellVolume, initialGasEnergy / cellVolume, default));
+                        (dryAir / cellVolume, seedVapour / cellVolume, seedGasEnergy / cellVolume, default));
                     gas = moved.Gas;
                     airOut += moved.Outflow.DryAirKg;
                     vapourOut += moved.Outflow.VapourKg;
@@ -273,14 +290,14 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         momentum += state.MomentumKgMPerS;
                     }
                     if (Math.Abs(air - gas.Length * dryAir) > 1e-12 * dryAir ||
-                        Math.Abs(water - initialMass - gas.Length * initialVapour) > 1e-12 * initialMass ||
-                        Math.Abs(energy - initialTotalEnergy - (gas.Length - 1) * initialGasEnergy) > 1e-12 * initialTotalEnergy ||
+                        Math.Abs(water - initialMass - gas.Length * seedVapour) > 1e-12 * initialMass ||
+                        Math.Abs(energy - startEnergy) > 1e-12 * startEnergy ||
                         (momentum - initialVelocity * initialMass).Length > 1e-24)
                         throw new InvalidOperationException($"S14 gas-grid inventory mismatch at step {step + 1}.");
                 }
                 if (!(feedback > 1e-7))
                     throw new InvalidOperationException("Carried gas momentum did not change the projected face velocities.");
-                double expectedOpen = outletGaugePa * 2 * grid.FaceArea(0) * duration;
+                double expectedOpen = outletGaugePa * 2 * grid.FaceArea(0) * elapsed;
                 if ((openReaction - new D3(expectedOpen, 0, 0)).Length > expectedOpen * 1e-7 ||
                     !(wallReaction.Length > 0))
                     throw new InvalidOperationException("S14 wall or prescribed outlet pressure reaction did not balance.");
