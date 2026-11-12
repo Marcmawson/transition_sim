@@ -126,3 +126,9 @@ The CPU fixture translated a tilted box at 20 m/s toward the plane during a 20 m
 The rotating sweep handles constant translation and torque-free principal-axis spin against a fixed plane. It advances by the current clearance divided by a conservative normal vertex-speed bound. This prevents a clear endpoint from hiding an impact within the interval. It returns first contact within a 1e-10 m distance tolerance or rejects a sweep that cannot reach a safe result.
 
 The CPU fixture spins a box at 10 rad/s through a full revolution with both endpoint hulls clear. It detected first contact at 20 ms, agreeing with the analytic time to within 1 ns, and all hull vertices remained on the admissible side within the distance tolerance. A 10 ms sweep stayed clear. General tumbling, simultaneous and resting contacts, and coupled beaker-wall collision remain open.
+
+## V25 simultaneous wall impact
+
+The frictionless fixed-wall solver resolves a set of contact points at one impact pose. It holds restitution targets from the incident point speeds, iterates nonnegative normal impulses, and accepts only a converged contact velocity solution without kinetic-energy gain. It returns the total equal and opposite reaction on the wall.
+
+The CPU fixture hit the wall squarely at 0.4 m/s and resolved all four corners at once. At restitution 0, 0.5 and 1, all corners matched the analytic rebound speed, the body stayed spin-free within 1e-8 rad/s, and tangential translation, net impulse and energy loss matched the reference. The fixture uses both forward and reverse corner traversal. Sweep-to-manifold integration, sustained support and beaker-wall coupling remain open.

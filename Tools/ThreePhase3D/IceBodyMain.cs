@@ -35,7 +35,35 @@ internal static class IceBodyMain
         CheckWallImpact(body);
         CheckWallSweep(body);
         CheckRotatingSweep(body);
+        CheckSimultaneousImpact(body);
         Console.WriteLine("S11 rigid ice body passed: box inertia, force, torque, off-centre impulse, point velocity and free motion.");
+    }
+
+    private static void CheckSimultaneousImpact(IceBody box)
+    {
+        const double incident = 0.4;
+        var normal = new D3(0, 1, 0);
+        var body = new IceBody(box.MassKg, box.PrincipalInertiaKgM2,
+            RigidFrame.Euler(new D3(0, 0.015, 0), 0, 0, 0),
+            new D3(0.1, -incident, 0) * box.MassKg, default);
+        var corners = new[]
+        {
+            new D3(-0.02, 0, -0.01), new D3(0.02, 0, -0.01),
+            new D3(-0.02, 0, 0.01), new D3(0.02, 0, 0.01)
+        };
+        foreach (double restitution in new[] { 0.0, 0.5, 1.0 })
+        {
+            var updated = IceWallContact.ResolveSimultaneousImpact(body, corners, normal, restitution, out D3 reaction);
+            foreach (D3 corner in corners)
+                Near(updated.VelocityAt(corner).Y, restitution * incident, 2e-10);
+            Near(updated.AngularVelocityRadPerS.Length, 0, 1e-8);
+            Near(updated.VelocityMPerS.X, 0.1, 1e-12);
+            Near(reaction.Y, -body.MassKg * (1 + restitution) * incident, 1e-10);
+            Near(body.KineticEnergyJ - updated.KineticEnergyJ,
+                0.5 * body.MassKg * incident * incident * (1 - restitution * restitution), 1e-12);
+            Array.Reverse(corners);
+        }
+        Console.WriteLine("S11 V25 four-corner impact passed: common rebound, zero spin, wall impulse and energy loss.");
     }
 
     private static void CheckRotatingSweep(IceBody box)

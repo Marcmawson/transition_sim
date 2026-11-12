@@ -111,6 +111,60 @@ namespace PhysicsSim.ThreePhase3D.Solids
             throw new InvalidOperationException("The rotating plane sweep did not converge to a safe result.");
         }
 
+        // Contacts are supplied at the same impact pose. The restitution
+        // targets are fixed from the incident state for the entire solve.
+        public static IceBody ResolveSimultaneousImpact(IceBody body, IReadOnlyList<D3> pointsM,
+            D3 wallNormal, double restitution, out D3 wallReactionNs)
+        {
+            if (body == null) throw new ArgumentNullException(nameof(body));
+            if (pointsM == null || pointsM.Count == 0)
+                throw new ArgumentException("At least one impact point is required.", nameof(pointsM));
+            if (!SiUnits.IsFinite(restitution) || restitution < 0 || restitution > 1)
+                throw new ArgumentOutOfRangeException(nameof(restitution));
+
+            D3 normal = wallNormal.Unit();
+            int count = pointsM.Count;
+            var targets = new double[count];
+            var inverseMass = new double[count];
+            var impulses = new double[count];
+            for (int i = 0; i < count; i++)
+            {
+                targets[i] = -restitution * Math.Min(0, D3.Dot(body.VelocityAt(pointsM[i]), normal));
+                inverseMass[i] = NormalInverseMass(body, pointsM[i], normal);
+            }
+
+            var trial = body;
+            const double tolerance = 1e-10;
+            for (int iteration = 0; iteration < 256; iteration++)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    double speed = D3.Dot(trial.VelocityAt(pointsM[i]), normal);
+                    double next = Math.Max(0, impulses[i] + (targets[i] - speed) / inverseMass[i]);
+                    double delta = next - impulses[i];
+                    if (delta != 0) trial = trial.ApplyImpulse(normal * delta, pointsM[i]);
+                    impulses[i] = next;
+                }
+
+                double residual = 0;
+                for (int i = 0; i < count; i++)
+                {
+                    double speedError = D3.Dot(trial.VelocityAt(pointsM[i]), normal) - targets[i];
+                    residual = Math.Max(residual, impulses[i] > 0 ? Math.Abs(speedError) : Math.Max(0, -speedError));
+                }
+                if (residual > tolerance) continue;
+
+                double energyTolerance = 1e-10 * body.KineticEnergyJ + 1e-15;
+                if (trial.KineticEnergyJ - body.KineticEnergyJ > energyTolerance)
+                    throw new InvalidOperationException("The simultaneous restitution solve increased kinetic energy.");
+                double total = 0;
+                foreach (double impulse in impulses) total += impulse;
+                wallReactionNs = normal * -total;
+                return trial;
+            }
+            throw new InvalidOperationException("Simultaneous wall impact did not converge.");
+        }
+
         // Resolve one already detected point of impact against a fixed,
         // frictionless wall. The normal points into the admissible region.
         public static IceBody ResolveImpact(IceBody body, D3 pointM, D3 wallNormal,
@@ -124,16 +178,22 @@ namespace PhysicsSim.ThreePhase3D.Solids
             wallReactionNs = default;
             if (approach >= 0) return body;
 
-            D3 arm = pointM - body.Frame.Origin;
-            D3 angularImpulsePerNs = D3.Cross(arm, normal);
-            double inverseMass = 1 / body.MassKg +
-                D3.Dot(angularImpulsePerNs, body.InverseInertiaWorld(angularImpulsePerNs));
-            if (!SiUnits.IsFinite(inverseMass) || inverseMass <= 0)
-                throw new InvalidOperationException("The impact effective mass is invalid.");
+            double inverseMass = NormalInverseMass(body, pointM, normal);
             D3 impulse = normal * (-(1 + restitution) * approach / inverseMass);
             var updated = body.ApplyImpulse(impulse, pointM);
             wallReactionNs = -impulse;
             return updated;
+        }
+
+        private static double NormalInverseMass(IceBody body, D3 pointM, D3 normal)
+        {
+            D3 arm = pointM - body.Frame.Origin;
+            D3 angularImpulse = D3.Cross(arm, normal);
+            double inverseMass = 1 / body.MassKg +
+                D3.Dot(angularImpulse, body.InverseInertiaWorld(angularImpulse));
+            if (!SiUnits.IsFinite(inverseMass) || inverseMass <= 0)
+                throw new InvalidOperationException("The impact effective mass is invalid.");
+            return inverseMass;
         }
     }
 }
