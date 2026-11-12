@@ -38,8 +38,11 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 $"S14 V37 multi-step gas grid passed: 40 steps, radius {referenceGrid.RadiusM * 1e6:F6} um, outlet vapour {referenceGrid.OutletVapourKg:G8} kg, projected feedback {referenceGrid.FeedbackMps:G8} m/s, wall reaction X {referenceGrid.WallReactionX:G8} N s."));
             SimulateGrid(20, crossCell: true);
             SimulateGrid(40, crossCell: true);
+            SimulateGrid(20, exitDomain: true);
+            SimulateGrid(40, exitDomain: true);
 
-            (double RadiusM, double OutletVapourKg, double FeedbackMps, double WallReactionX) SimulateGrid(int steps, bool crossCell = false)
+            (double RadiusM, double OutletVapourKg, double FeedbackMps, double WallReactionX) SimulateGrid(
+                int steps, bool crossCell = false, bool exitDomain = false)
             {
                 const double pressure = 101325;
                 double dt = duration / steps;
@@ -60,39 +63,57 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 var initialVelocity = new D3(0.005, 0, 0);
                 D3 velocity = initialVelocity, position = grid.Centre(0, 0, 0), momentumOut = default;
                 if (crossCell) position += new D3(dx * 0.5 - 2e-6, 0, 0);
+                if (exitDomain) position = grid.Centre(1, 0, 0) + new D3(dx * 0.5 - 2e-6, 0, 0);
                 D3 wallReaction = default, openReaction = default;
                 double feedback = 0, firstVapour = 0, secondVapour = 0;
-                int crossings = 0;
-                int previousGroup = firstGroup;
+                double liquidOut = 0, liquidEnthalpyOut = 0;
+                D3 liquidMomentumOut = default;
+                int crossings = 0, exitStep = 0;
+                int previousGroup = exitDomain ? secondGroup : firstGroup;
                 for (int step = 0; step < steps; step++)
                 {
-                    int dropletGroup = DropletGasCellExchange.PressureGroupAt(seed, position);
-                    if (dropletGroup != previousGroup) crossings++;
-                    previousGroup = dropletGroup;
-                    var local = gas[dropletGroup];
-                    var exchanged = DropletGasCellExchange.Advance(radius, liquidK, local.DryAirKg, local.VapourKg,
-                        local.EnthalpyJ, pressure, 0.026, 2.5e-5, dt);
-                    double localMass = local.DryAirKg + local.VapourKg;
-                    double localVolume = DropletGasCellExchange.GasVolumeM3(local.DryAirKg, local.VapourKg, local.EnthalpyJ, pressure);
-                    var motion = StokesDroplet.Advance(position, velocity, local.MomentumKgMPerS / localMass, default,
-                        radius, DropletGasCellExchange.LiquidDensity, localMass / localVolume, 1.81e-5, dt,
-                        exchanged.VapourKg - local.VapourKg);
-                    velocity = motion.Velocity;
-                    position = motion.Position;
-                    DropletGasCellExchange.PressureGroupAt(seed, position);
-                    radius = exchanged.RadiusM;
-                    liquidK = exchanged.LiquidK;
-                    gas[dropletGroup] = (local.DryAirKg, exchanged.VapourKg, exchanged.GasEnthalpyJ,
-                        local.MomentumKgMPerS + motion.GasMomentumGain);
-                    double depositedVapour = exchanged.VapourKg - local.VapourKg;
-                    if (dropletGroup == firstGroup) firstVapour += depositedVapour;
-                    else if (dropletGroup == secondGroup)
+                    int dropletGroup = -1;
+                    D3 gasMomentumGain = default;
+                    if (radius > 0)
                     {
-                        secondVapour += depositedVapour;
-                        if (!(motion.GasMomentumGain.X > 0 && exchanged.GasEnthalpyJ != local.EnthalpyJ))
-                            throw new InvalidOperationException("S14 crossing did not exchange energy and momentum in the receiving cell.");
+                        dropletGroup = DropletGasCellExchange.PressureGroupAt(seed, position);
+                        if (dropletGroup != previousGroup) crossings++;
+                        previousGroup = dropletGroup;
+                        var local = gas[dropletGroup];
+                        var exchanged = DropletGasCellExchange.Advance(radius, liquidK, local.DryAirKg, local.VapourKg,
+                            local.EnthalpyJ, pressure, 0.026, 2.5e-5, dt);
+                        double localMass = local.DryAirKg + local.VapourKg;
+                        double localVolume = DropletGasCellExchange.GasVolumeM3(local.DryAirKg, local.VapourKg, local.EnthalpyJ, pressure);
+                        var motion = StokesDroplet.Advance(position, velocity, local.MomentumKgMPerS / localMass, default,
+                            radius, DropletGasCellExchange.LiquidDensity, localMass / localVolume, 1.81e-5, dt,
+                            exchanged.VapourKg - local.VapourKg);
+                        gasMomentumGain = motion.GasMomentumGain;
+                        bool exited = DropletGasCellExchange.ExitsOpenBoundary(seed, position, motion.Position);
+                        velocity = motion.Velocity;
+                        position = motion.Position;
+                        if (!exited) DropletGasCellExchange.PressureGroupAt(seed, position);
+                        radius = exchanged.RadiusM;
+                        liquidK = exchanged.LiquidK;
+                        gas[dropletGroup] = (local.DryAirKg, exchanged.VapourKg, exchanged.GasEnthalpyJ,
+                            local.MomentumKgMPerS + motion.GasMomentumGain);
+                        double depositedVapour = exchanged.VapourKg - local.VapourKg;
+                        if (dropletGroup == firstGroup) firstVapour += depositedVapour;
+                        else if (dropletGroup == secondGroup)
+                        {
+                            secondVapour += depositedVapour;
+                            if (!(motion.GasMomentumGain.X > 0 && exchanged.GasEnthalpyJ != local.EnthalpyJ))
+                                throw new InvalidOperationException("S14 crossing did not exchange energy and momentum in the receiving cell.");
+                        }
+                        else throw new InvalidOperationException("S14 droplet entered an unexpected cell.");
+                        if (exited)
+                        {
+                            exitStep = step + 1;
+                            liquidOut = DropletGasCellExchange.Mass(radius);
+                            liquidEnthalpyOut = LiquidEnthalpy(liquidOut, liquidK);
+                            liquidMomentumOut = velocity * liquidOut;
+                            radius = 0;
+                        }
                     }
-                    else throw new InvalidOperationException("S14 droplet entered an unexpected cell.");
                     var volumes = new double[gas.Length];
                     var source = new double[gas.Length];
                     for (int group = 0; group < gas.Length; group++)
@@ -112,7 +133,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     {
                         var controlGas = ((double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[])gas.Clone();
                         for (int group = 0; group < controlGas.Length; group++)
-                            controlGas[group].MomentumKgMPerS = group == dropletGroup ? motion.GasMomentumGain : default;
+                            controlGas[group].MomentumKgMPerS = group == dropletGroup ? gasMomentumGain : default;
                         var control = FlowCpuReference.Project(plan, HumidGasAdvection.PredictFaces(plan, controlGas),
                             dt, 4096, null, source);
                         for (int face = 0; face < plan.FaceCount; face++)
@@ -128,9 +149,10 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     vapourOut += moved.Outflow.VapourKg;
                     energyOut += moved.Outflow.EnthalpyJ;
                     momentumOut += moved.Outflow.MomentumKgMPerS;
-                    double air = airOut, water = vapourOut + DropletGasCellExchange.Mass(radius);
-                    double energy = energyOut + LiquidEnthalpy(DropletGasCellExchange.Mass(radius), liquidK);
-                    D3 momentum = momentumOut + wallReaction + openReaction + velocity * DropletGasCellExchange.Mass(radius);
+                    double remaining = DropletGasCellExchange.Mass(radius);
+                    double air = airOut, water = vapourOut + liquidOut + remaining;
+                    double energy = energyOut + liquidEnthalpyOut + LiquidEnthalpy(remaining, liquidK);
+                    D3 momentum = momentumOut + liquidMomentumOut + wallReaction + openReaction + velocity * remaining;
                     foreach (var state in gas)
                     {
                         air += state.DryAirKg;
@@ -159,6 +181,16 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 }
                 else if (crossings != 0)
                     throw new InvalidOperationException("S14 in-cell control unexpectedly crossed a face.");
+                if (exitDomain)
+                {
+                    if (!(exitStep > 0 && exitStep < steps && radius == 0 && liquidOut > 0 && liquidOut < initialMass &&
+                        liquidEnthalpyOut > 0 && liquidMomentumOut.X > 0 && secondVapour > 0))
+                        throw new InvalidOperationException("S14 open boundary did not export the droplet and its remaining inventories.");
+                    log(FormattableString.Invariant(
+                        $"S14 V37 droplet exit passed: {steps} steps, exit step {exitStep}, liquid {liquidOut:G8} kg, enthalpy {liquidEnthalpyOut:G8} J, momentum X {liquidMomentumOut.X:G8} N s."));
+                }
+                else if (exitStep != 0)
+                    throw new InvalidOperationException("S14 control droplet unexpectedly exited the domain.");
                 return (radius, vapourOut, feedback, wallReaction.X);
             }
 

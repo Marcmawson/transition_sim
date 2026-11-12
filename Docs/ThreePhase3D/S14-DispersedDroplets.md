@@ -48,4 +48,10 @@ The pressure-force update is for a nonperiodic Cartesian box with no embedded so
 
 The droplet samples gas properties and deposits vapour, enthalpy and momentum in the pressure group containing its centre at the start of each step. The locator transforms world position into the grid frame. The crossing fixture starts 2 µm upstream of an interior face and checks that the droplet crosses once and exchanges with both cells. Dry air, water, enthalpy and momentum close at every step, including the signed boundary fluxes and pressure reactions.
 
-Both CPU runs passed at 0.2 ms and 0.1 ms. The 0.1 ms run deposited 2.7858871e-14 kg of vapour in the starting cell and 1.0718757e-13 kg in the receiving cell. The transfer uses start-of-step sampling, so the partition between the two cells depends on when the crossing falls within a step. Wall impacts, open-boundary droplet exit, coupled extinction and condensation remain open.
+Both CPU runs passed at 0.2 ms and 0.1 ms. The 0.1 ms run deposited 2.7858871e-14 kg of vapour in the starting cell and 1.0718757e-13 kg in the receiving cell. The transfer uses start-of-step sampling, so the partition between the two cells depends on when the crossing falls within a step.
+
+## V37 open-boundary droplet exit
+
+The exit case starts the droplet centre 2 µm inside the open pressure boundary. The step identifies the first exterior face crossed by the centre trajectory. When it is open, the fixture removes the remaining liquid and records its mass, enthalpy and momentum separately from gas transport. Gas integration continues after the droplet leaves.
+
+Both CPU runs closed dry air, water, enthalpy and momentum at every step. At 0.1 ms, the droplet exited on step 5 carrying 4.1525538e-12 kg of liquid, 4.1608284e-7 J of liquid enthalpy and 1.3755498e-14 N·s of X momentum. Exchange and export are split at the end of the crossing step, so exit timing and inventory values have timestep dependence. Wall impacts, coupled extinction and condensation remain open.

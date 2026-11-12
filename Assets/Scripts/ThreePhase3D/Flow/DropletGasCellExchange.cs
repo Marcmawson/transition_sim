@@ -64,6 +64,31 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return group;
         }
 
+        internal static bool ExitsOpenBoundary(VariableCoefficientProjection plan, D3 start, D3 end)
+        {
+            var grid = plan.Grid;
+            D3 localStart = grid.Frame.ToLocal(start), localEnd = grid.Frame.ToLocal(end);
+            double first = double.PositiveInfinity;
+            bool open = false;
+            for (int axis = 0; axis < 3; axis++)
+            {
+                int count = axis == 0 ? grid.Cells.X : axis == 1 ? grid.Cells.Y : grid.Cells.Z;
+                double limit = grid.Spacing[axis] * count;
+                double target = localEnd[axis];
+                if (target >= 0 && target < limit) continue;
+                bool positive = target >= limit;
+                double fraction = ((positive ? limit : 0) - localStart[axis]) / (target - localStart[axis]);
+                bool sideOpen = plan.Boundaries.Side(axis, positive).Kind == FlowBoundaryKind.OpenPressure;
+                if (fraction < first)
+                {
+                    first = fraction;
+                    open = sideOpen;
+                }
+                else if (fraction == first) open &= sideOpen;
+            }
+            return open;
+        }
+
         internal static double GasVolumeM3(double dryAirKg, double vapourKg, double gasEnthalpyJ, double pressurePa)
         {
             double temperature = GasTemperature(dryAirKg, vapourKg, gasEnthalpyJ);
