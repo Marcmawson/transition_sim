@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="IceBodyMain.cs" />
+    <Compile Include="../../Assets/Scripts/ThreePhase3D/Core/SiUnits.cs" />
+    <Compile Include="../../Assets/Scripts/ThreePhase3D/Core/Grid3D.cs" />
+    <Compile Include="../../Assets/Scripts/ThreePhase3D/Solids/IceBody.cs" />
+  </ItemGroup>
+</Project>
