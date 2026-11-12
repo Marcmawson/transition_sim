@@ -10,6 +10,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     public sealed class Beaker3DSetup : MonoBehaviour
     {
         public ScenarioConfigSI scenario = new ScenarioConfigSI();
+        [SerializeField] bool useDielectricGlassPreview;
         readonly List<Object> ownedResources = new List<Object>();
         GameObject generated;
         string previewHash;
@@ -22,7 +23,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         void Update()
         {
             if (scenario == null) return;
-            string hash = RecordJson.Hash(RecordJson.Encode(scenario));
+            string hash = PreviewHash();
             if (hash != previewHash) Refresh();
         }
         void OnDisable() => Release();
@@ -32,13 +33,14 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             Release();
             if (scenario == null) { report = new ConfigurationReport(); report.Errors.Add("Scenario is missing."); return; }
             report = scenario.Validate();
-            previewHash = RecordJson.Hash(RecordJson.Encode(scenario));
+            previewHash = PreviewHash();
             if (transform.position != Vector3.zero || transform.rotation != Quaternion.identity || transform.lossyScale != Vector3.one)
                 report.Errors.Add("Apparatus transform must be identity: one Unity unit is one metre.");
             if (!report.CanPreview) return;
             generated = new GameObject("Generated apparatus (SI preview)") { hideFlags = HideFlags.HideAndDontSave };
             generated.transform.SetParent(transform, false);
-            var glass = NewMaterial("Glass preview (optics unvalidated)", new Color(0.55f, 0.82f, 0.92f, scenario.display.glassOpacity), true);
+            var glass = useDielectricGlassPreview ? NewDielectricGlass() :
+                NewMaterial("Glass preview (optics unvalidated)", new Color(0.55f, 0.82f, 0.92f, scenario.display.glassOpacity), true);
             var metal = NewMaterial("Tripod preview", new Color(0.2f, 0.23f, 0.27f, 1), false);
             var g = scenario.physical.geometry;
             AddSurface("Glass beaker", ApparatusSurface.Beaker(g, scenario.display.cylinderSegments), glass);
@@ -57,6 +59,20 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 leg.transform.localScale = new Vector3((float)(2 * g.tripodTubeRadiusM), (top - bottom).magnitude / 2, (float)(2 * g.tripodTubeRadiusM));
                 leg.GetComponent<Renderer>().sharedMaterial = metal;
             }
+        }
+
+        string PreviewHash() => RecordJson.Hash(RecordJson.Encode(scenario)) + (useDielectricGlassPreview ? ":dielectric" : ":tinted");
+
+        Material NewDielectricGlass()
+        {
+            var shader = Resources.Load<Shader>("ThreePhase3D/BeakerDielectric");
+            if (shader == null) throw new System.InvalidOperationException("Beaker dielectric shader unavailable.");
+            const float duranIndex = 1.473f; // MAT015, 587.6 nm, air approximated as n = 1.
+            float amplitude = (duranIndex - 1) / (duranIndex + 1);
+            var material = new Material(shader) { name = "DURAN dielectric preview", hideFlags = HideFlags.HideAndDontSave };
+            material.SetFloat("_NormalReflectance", amplitude * amplitude);
+            ownedResources.Add(material);
+            return material;
         }
 
         Material NewMaterial(string label, Color colour, bool transparent)

@@ -135,3 +135,9 @@ The six-cell CPU benchmark also projects the remapped velocity using density reb
 ## V38 visible extinction
 
 The CPU opacity check sums multiplicity times the extinction cross section of each droplet and divides by the sample volume. It uses the visible geometric-optics approximation Qext = 2 for radii of at least 5 micrometres and Beer-Lambert direct-beam attenuation. See [the effective-radius extinction relation, equation 10](https://amt.copernicus.org/articles/19/6607/2026/index.html). The 40-droplet reference gave 0.024630086 inverse metres and 99.97537295% transmission over 1 cm, with the same result for three weighted parcels. The check covers dilute independent-droplet extinction. Wavelength-resolved scattering and Unity rendering remain open.
+
+Unity DX11 passed the six GPU transmission samples, with 99.97538000% transmission over 1 cm and maximum absolute error 4.3742e-8.
+
+## Dielectric glass preview
+
+Enable Use Dielectric Glass Preview on Beaker3DSetup in the overhead-lit apparatus scene. The Built-in Render Pipeline material uses the MAT015 DURAN index of 1.473 at 587.6 nm to set normal-incidence specular reflectance to approximately 3.66%. It renders specular highlights with premultiplied transparency. Refraction, spectral absorption and water rendering are separate remaining work. Visual verification in Unity is pending.
