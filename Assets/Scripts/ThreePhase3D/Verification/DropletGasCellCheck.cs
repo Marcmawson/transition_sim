@@ -35,15 +35,15 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     Math.Abs(coarseGrid.OutletVapourKg - referenceGrid.OutletVapourKg))
                 throw new InvalidOperationException("S14 coupled gas-grid results did not refine.");
             log(FormattableString.Invariant(
-                $"S14 V37 multi-step gas grid passed: 40 steps, radius {referenceGrid.RadiusM * 1e6:F6} um, outlet vapour {referenceGrid.OutletVapourKg:G8} kg."));
+                $"S14 V37 multi-step gas grid passed: 40 steps, radius {referenceGrid.RadiusM * 1e6:F6} um, outlet vapour {referenceGrid.OutletVapourKg:G8} kg, projected feedback {referenceGrid.FeedbackMps:G8} m/s."));
 
-            (double RadiusM, double OutletVapourKg) SimulateGrid(int steps)
+            (double RadiusM, double OutletVapourKg, double FeedbackMps) SimulateGrid(int steps)
             {
                 const double pressure = 101325;
                 double dt = duration / steps;
                 double cellVolume = DropletGasCellExchange.GasVolumeM3(dryAir, initialVapour, initialGasEnergy, pressure);
                 double dx = Math.Pow(cellVolume, 1.0 / 3);
-                var grid = new Grid3D(2, 1, 1, new D3(dx, dx, dx), RigidFrame.Identity);
+                var grid = new Grid3D(2, 2, 1, new D3(dx, dx, dx), RigidFrame.Identity);
                 var geometry = CutCellGeometry.Build(grid);
                 var sides = new FlowBoundary[6];
                 sides[1] = new FlowBoundary(FlowBoundaryKind.OpenPressure);
@@ -54,14 +54,27 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 var gas = new (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[seed.GroupCount];
                 for (int group = 0; group < gas.Length; group++) gas[group] = (dryAir, initialVapour, initialGasEnergy, default);
                 double radius = initialRadius, liquidK = initialK, airOut = 0, vapourOut = 0, energyOut = 0;
+                var initialVelocity = new D3(0.005, 0, 0);
+                D3 velocity = initialVelocity, position = grid.Centre(0, 0, 0), momentumOut = default;
+                double feedback = 0;
                 for (int step = 0; step < steps; step++)
                 {
                     var local = gas[dropletGroup];
                     var exchanged = DropletGasCellExchange.Advance(radius, liquidK, local.DryAirKg, local.VapourKg,
                         local.EnthalpyJ, pressure, 0.026, 2.5e-5, dt);
+                    double localMass = local.DryAirKg + local.VapourKg;
+                    double localVolume = DropletGasCellExchange.GasVolumeM3(local.DryAirKg, local.VapourKg, local.EnthalpyJ, pressure);
+                    var motion = StokesDroplet.Advance(position, velocity, local.MomentumKgMPerS / localMass, default,
+                        radius, DropletGasCellExchange.LiquidDensity, localMass / localVolume, 1.81e-5, dt,
+                        exchanged.VapourKg - local.VapourKg);
+                    velocity = motion.Velocity;
+                    position = motion.Position;
+                    if (!(position.X >= 0 && position.X < dx))
+                        throw new InvalidOperationException("The S14 feedback fixture expects the droplet to stay in its initial cell.");
                     radius = exchanged.RadiusM;
                     liquidK = exchanged.LiquidK;
-                    gas[dropletGroup] = (local.DryAirKg, exchanged.VapourKg, exchanged.GasEnthalpyJ, local.MomentumKgMPerS);
+                    gas[dropletGroup] = (local.DryAirKg, exchanged.VapourKg, exchanged.GasEnthalpyJ,
+                        local.MomentumKgMPerS + motion.GasMomentumGain);
                     var volumes = new double[gas.Length];
                     var source = new double[gas.Length];
                     for (int group = 0; group < gas.Length; group++)
@@ -75,27 +88,44 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         int group = seed.GroupByCell[cell];
                         return (gas[group].DryAirKg + gas[group].VapourKg) / volumes[group];
                     }, _ => 0);
-                    var flow = FlowCpuReference.Project(plan, new float[plan.FaceCount], dt, 4096, null, source);
+                    var predicted = HumidGasAdvection.PredictFaces(plan, gas);
+                    var flow = FlowCpuReference.Project(plan, predicted, dt, 4096, null, source);
+                    if (step == 1)
+                    {
+                        var controlGas = ((double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[])gas.Clone();
+                        for (int group = 0; group < controlGas.Length; group++)
+                            controlGas[group].MomentumKgMPerS = group == dropletGroup ? motion.GasMomentumGain : default;
+                        var control = FlowCpuReference.Project(plan, HumidGasAdvection.PredictFaces(plan, controlGas),
+                            dt, 4096, null, source);
+                        for (int face = 0; face < plan.FaceCount; face++)
+                            feedback = Math.Max(feedback, Math.Abs(flow.VelocityMPerS[face] - control.VelocityMPerS[face]));
+                    }
                     var moved = HumidGasAdvection.Advance(plan, flow, volumes, gas,
                         (dryAir / cellVolume, initialVapour / cellVolume, initialGasEnergy / cellVolume, default));
                     gas = moved.Gas;
                     airOut += moved.Outflow.DryAirKg;
                     vapourOut += moved.Outflow.VapourKg;
                     energyOut += moved.Outflow.EnthalpyJ;
+                    momentumOut += moved.Outflow.MomentumKgMPerS;
                     double air = airOut, water = vapourOut + DropletGasCellExchange.Mass(radius);
                     double energy = energyOut + LiquidEnthalpy(DropletGasCellExchange.Mass(radius), liquidK);
+                    D3 momentum = momentumOut + velocity * DropletGasCellExchange.Mass(radius);
                     foreach (var state in gas)
                     {
                         air += state.DryAirKg;
                         water += state.VapourKg;
                         energy += state.EnthalpyJ;
+                        momentum += state.MomentumKgMPerS;
                     }
-                    if (Math.Abs(air - 2 * dryAir) > 1e-12 * dryAir ||
-                        Math.Abs(water - initialMass - 2 * initialVapour) > 1e-12 * initialMass ||
-                        Math.Abs(energy - initialTotalEnergy - initialGasEnergy) > 1e-12 * initialTotalEnergy)
+                    if (Math.Abs(air - gas.Length * dryAir) > 1e-12 * dryAir ||
+                        Math.Abs(water - initialMass - gas.Length * initialVapour) > 1e-12 * initialMass ||
+                        Math.Abs(energy - initialTotalEnergy - (gas.Length - 1) * initialGasEnergy) > 1e-12 * initialTotalEnergy ||
+                        (momentum - initialVelocity * initialMass).Length > 1e-24)
                         throw new InvalidOperationException($"S14 gas-grid inventory mismatch at step {step + 1}.");
                 }
-                return (radius, vapourOut);
+                if (!(feedback > 1e-7))
+                    throw new InvalidOperationException("Carried gas momentum did not change the projected face velocities.");
+                return (radius, vapourOut, feedback);
             }
 
             void CheckProjection()

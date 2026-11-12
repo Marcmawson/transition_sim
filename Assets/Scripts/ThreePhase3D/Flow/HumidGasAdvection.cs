@@ -6,6 +6,35 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // First-order donor transport for gas-only groups. The outlet ledger is signed.
     internal static class HumidGasAdvection
     {
+        internal static float[] PredictFaces(VariableCoefficientProjection plan,
+            (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[] gas)
+        {
+            if (gas.Length != plan.GroupCount)
+                throw new ArgumentException("Gas inventories must match the pressure groups.", nameof(gas));
+            var cellVelocity = new D3[gas.Length];
+            for (int group = 0; group < gas.Length; group++)
+            {
+                double mass = gas[group].DryAirKg + gas[group].VapourKg;
+                if (!(mass > 0) || !SiUnits.IsFinite(mass))
+                    throw new ArgumentException("Face prediction requires positive finite gas mass.", nameof(gas));
+                cellVelocity[group] = gas[group].MomentumKgMPerS / mass;
+            }
+
+            var predicted = new float[plan.FaceCount];
+            for (int index = 0; index < predicted.Length; index++)
+            {
+                var face = plan.Faces[index];
+                if (face.Active == 0) continue;
+                double velocity = face.Low < 0 ? cellVelocity[face.High][face.Axis] :
+                    face.High < 0 ? cellVelocity[face.Low][face.Axis] :
+                    0.5 * (cellVelocity[face.Low][face.Axis] + cellVelocity[face.High][face.Axis]);
+                predicted[index] = (float)velocity;
+                if (!SiUnits.IsFinite(predicted[index]))
+                    throw new ArgumentException("Gas face velocity exceeds the supported range.", nameof(gas));
+            }
+            return predicted;
+        }
+
         internal static ((double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[] Gas,
             (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS) Outflow) Advance(
             VariableCoefficientProjection plan, FlowStep flow, double[] gasVolumes,
