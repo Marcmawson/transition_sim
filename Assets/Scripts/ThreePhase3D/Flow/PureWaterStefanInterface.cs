@@ -17,11 +17,41 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         public PureWaterStefanInterface(double pressurePa, double lowerK, double upperK,
             double liquidHeatWm2, double vapourHeatWm2)
+            : this(FindSaturation(pressurePa, lowerK, upperK), liquidHeatWm2, vapourHeatWm2)
+        {
+        }
+
+        private PureWaterStefanInterface(SaturationState saturation, double liquidHeatWm2, double vapourHeatWm2)
+        {
+            if (!SiUnits.IsFinite(liquidHeatWm2) || !SiUnits.IsFinite(vapourHeatWm2))
+                throw new ArgumentException("Stefan heat fluxes must be finite.");
+            Saturation = saturation;
+            LiquidHeatWm2 = liquidHeatWm2;
+            VapourHeatWm2 = vapourHeatWm2;
+            MassFluxKgM2PerS = (liquidHeatWm2 + vapourHeatWm2) / saturation.LatentEnthalpyJkg;
+            if (!SiUnits.IsFinite(MassFluxKgM2PerS))
+                throw new ArgumentException("Heat fluxes must give a finite mass transfer.");
+        }
+
+        public static PureWaterStefanInterface SphericalConduction(double radiusM, double ambientPressurePa,
+            double surfaceTensionNm, double bulkLiquidK, double liquidConductivityWmK, double lowerK, double upperK)
+        {
+            if (!SiUnits.IsFinite(radiusM) || radiusM <= 0 ||
+                !SiUnits.IsFinite(ambientPressurePa) || ambientPressurePa <= 0 ||
+                !SiUnits.IsFinite(surfaceTensionNm) || surfaceTensionNm < 0 ||
+                !SiUnits.IsFinite(bulkLiquidK) || bulkLiquidK <= 0 ||
+                !SiUnits.IsFinite(liquidConductivityWmK) || liquidConductivityWmK <= 0)
+                throw new ArgumentException("Spherical conduction requires finite positive geometry and material properties.");
+            var saturation = FindSaturation(ambientPressurePa + 2 * surfaceTensionNm / radiusM, lowerK, upperK);
+            double heat = liquidConductivityWmK * (bulkLiquidK - saturation.Liquid.TemperatureK) / radiusM;
+            return new PureWaterStefanInterface(saturation, heat, 0);
+        }
+
+        private static SaturationState FindSaturation(double pressurePa, double lowerK, double upperK)
         {
             if (!SiUnits.IsFinite(pressurePa) || pressurePa <= 0 ||
-                !SiUnits.IsFinite(lowerK) || !SiUnits.IsFinite(upperK) || lowerK >= upperK ||
-                !SiUnits.IsFinite(liquidHeatWm2) || !SiUnits.IsFinite(vapourHeatWm2))
-                throw new ArgumentException("A planar Stefan interface requires finite heat fluxes and a pressure bracket.");
+                !SiUnits.IsFinite(lowerK) || !SiUnits.IsFinite(upperK) || lowerK >= upperK)
+                throw new ArgumentException("A Stefan interface requires a pressure bracket.");
             var water = new Water95();
             if (water.Saturation(lowerK).PressurePa > pressurePa || water.Saturation(upperK).PressurePa < pressurePa)
                 throw new ArgumentException("Saturation pressure is outside the temperature bracket.");
@@ -31,19 +61,11 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 var candidate = water.Saturation(middle);
                 double residual = candidate.PressurePa - pressurePa;
                 if (Math.Abs(residual) <= Math.Max(1e-5, pressurePa * 1e-10))
-                {
-                    Saturation = candidate;
-                    LiquidHeatWm2 = liquidHeatWm2;
-                    VapourHeatWm2 = vapourHeatWm2;
-                    MassFluxKgM2PerS = (liquidHeatWm2 + vapourHeatWm2) / candidate.LatentEnthalpyJkg;
-                    if (!SiUnits.IsFinite(MassFluxKgM2PerS))
-                        throw new ArgumentException("Heat fluxes must give a finite mass transfer.");
-                    return;
-                }
+                    return candidate;
                 if (residual < 0) lowerK = middle;
                 else upperK = middle;
             }
-            throw new InvalidOperationException("Planar interface saturation temperature did not converge.");
+            throw new InvalidOperationException("Stefan interface saturation temperature did not converge.");
         }
 
         public (double WaterKg, double LiquidM3, double VapourM3, double LiquidEnthalpyJ, double VapourEnthalpyJ)

@@ -14,6 +14,11 @@ internal static class FlowMain
             CheckPureWaterStefan();
             return 0;
         }
+        if (args.Length == 1 && args[0] == "--bubble-growth")
+        {
+            CheckSeededBubbleGrowth();
+            return 0;
+        }
         if (args.Length == 1 && args[0] == "--humid-diffusion")
         {
             CheckHumidDiffusion();
@@ -40,6 +45,66 @@ internal static class FlowMain
             Console.WriteLine($"{passed}/{suite.Rows.Count} passed");
         }
         return suite.Passed ? 0 : 1;
+    }
+
+    private static void CheckSeededBubbleGrowth()
+    {
+        const double pressure = 101325, initialRadius = 0.0005, conductivity = 0.68, duration = 0.1;
+        const double lower = 370, upper = 382, superheat = 2;
+        var ambient = new PureWaterStefanInterface(pressure, lower, upper, 0, 0);
+        double temperature = ambient.Saturation.Liquid.TemperatureK + superheat;
+        double density = ambient.Saturation.Vapour.DensityKgM3;
+        double latent = ambient.Saturation.LatentEnthalpyJkg;
+        double analyticRadius = Math.Sqrt(initialRadius * initialRadius +
+            2 * conductivity * superheat * duration / (density * latent));
+        var coarse = Run(16);
+        var fine = Run(64);
+        double error = Math.Abs(fine.Radius / analyticRadius - 1);
+        if (!(error < Math.Abs(coarse.Radius / analyticRadius - 1) / 10 && error < 0.001))
+            throw new InvalidOperationException("Spherical bubble growth did not converge to the quasi-steady radius.");
+        double referenceHeat = (Mass(analyticRadius) - Mass(initialRadius)) * latent;
+        if (Math.Abs(fine.Heat / referenceHeat - 1) > 0.002)
+            throw new InvalidOperationException("Bubble growth heat disagrees with the reference.");
+
+        var water = new Water95();
+        double tension = water.SurfaceTensionNm(ambient.Saturation.Liquid.TemperatureK);
+        double criticalRadius = 2 * tension / (water.Saturation(temperature).PressurePa - pressure);
+        var critical = AtRadius(criticalRadius, tension);
+        var large = AtRadius(2 * criticalRadius, tension);
+        var small = AtRadius(0.5 * criticalRadius, tension);
+        var flat = AtRadius(2 * criticalRadius, 0);
+        if (Math.Abs(critical.Saturation.Liquid.TemperatureK - temperature) > 1e-8 ||
+            !(large.MassFluxKgM2PerS > 0 && large.MassFluxKgM2PerS < flat.MassFluxKgM2PerS &&
+                small.MassFluxKgM2PerS < 0))
+            throw new InvalidOperationException("The capillary pressure did not give the expected growth threshold.");
+        Console.WriteLine(FormattableString.Invariant(
+            $"S13 V30 spherical growth passed: radius {fine.Radius:G8} m, heat {fine.Heat:G8} J, relative radius error {error:G6}, capillary threshold {criticalRadius:G8} m."));
+
+        PureWaterStefanInterface AtRadius(double radius, double sigma) =>
+            PureWaterStefanInterface.SphericalConduction(radius, pressure, sigma, temperature, conductivity, lower, upper);
+        double Mass(double radius) => 4 * Math.PI / 3 * radius * radius * radius * density;
+        (double Radius, double Heat) Run(int steps)
+        {
+            double mass = Mass(initialRadius), radius = initialRadius, heat = 0;
+            double dt = duration / steps;
+            for (int step = 0; step < steps; step++)
+            {
+                var start = AtRadius(radius, 0);
+                double midpointMass = mass + 0.5 * dt * 4 * Math.PI * radius * radius * start.MassFluxKgM2PerS;
+                double midpointRadius = Math.Pow(midpointMass * 3 / (4 * Math.PI * density), 1.0 / 3);
+                var surface = AtRadius(midpointRadius, 0);
+                double area = 4 * Math.PI * midpointRadius * midpointRadius;
+                var exchange = surface.Transfer(area, dt, 1, mass);
+                if (!(exchange.WaterKg > 0) || Math.Abs(exchange.LiquidEnthalpyJ + exchange.VapourEnthalpyJ) > 1e-14)
+                    throw new InvalidOperationException("Bubble growth did not close the phase enthalpy balance.");
+                mass += exchange.WaterKg;
+                radius = Math.Pow(mass * 3 / (4 * Math.PI * density), 1.0 / 3);
+                heat += surface.LiquidHeatWm2 * area * dt;
+            }
+            if (Math.Abs(heat - (Mass(radius) - Mass(initialRadius)) * latent) > 1e-13)
+                throw new InvalidOperationException("Bubble latent heat did not match its vapour inventory.");
+            return (radius, heat);
+        }
     }
 
     private static void CheckPureWaterStefan()
