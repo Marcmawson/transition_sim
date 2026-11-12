@@ -106,6 +106,91 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     log(FormattableString.Invariant(
                         $"S14 V38 spatial fog passed: {steps} steps, upstream evaporation {evaporated:G8} kg, downstream condensation {condensed:G8} kg."));
                 }
+                CheckGasFeedback(10);
+                CheckGasFeedback(20);
+
+                void CheckGasFeedback(int steps)
+                {
+                    const double pressure = 101325;
+                    double dt = duration / steps;
+                    var sides = new FlowBoundary[6];
+                    sides[1] = new FlowBoundary(FlowBoundaryKind.OpenPressure);
+                    var boundaries = new BoundaryConditions3D(sides);
+                    var gas = ((double DryAirKg, double VapourKg, double EnthalpyJ)[])initialGas.Clone();
+                    double startingAir = 0;
+                    for (int group = 0; group < gas.Length; group++)
+                    {
+                        var cell = gas[group];
+                        double scale = grid.CellVolume /
+                            DropletGasCellExchange.GasVolumeM3(cell.DryAirKg, cell.VapourKg, cell.EnthalpyJ, pressure);
+                        gas[group] = (cell.DryAirKg * scale, cell.VapourKg * scale, cell.EnthalpyJ * scale);
+                        startingAir += gas[group].DryAirKg;
+                    }
+                    var reservoir = gas[untouched];
+                    var initialTotals = Totals(initialParcels, gas);
+                    var parcels = initialParcels;
+                    var momentum = new D3[gas.Length];
+                    D3 reaction = default, momentumOut = default;
+                    double airOut = 0, vapourOut = 0, energyOut = 0;
+                    double upstreamExchange = 0, downstreamExchange = 0, boundaryThroughput = 0;
+                    for (int step = 0; step < steps; step++)
+                    {
+                        var exchange = SeededFogCell.AdvanceGrid(plan, parcels, gas, carrier,
+                            pressure, 0.026, 2.5e-5, dt);
+                        parcels = exchange.Parcels;
+                        upstreamExchange += exchange.Gas[upstream].VapourKg - gas[upstream].VapourKg;
+                        downstreamExchange += exchange.Gas[downstream].VapourKg - gas[downstream].VapourKg;
+                        gas = exchange.Gas;
+                        var volumes = new double[gas.Length];
+                        var source = new double[gas.Length];
+                        var inventory = new (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[gas.Length];
+                        for (int group = 0; group < gas.Length; group++)
+                        {
+                            var cell = gas[group];
+                            volumes[group] = DropletGasCellExchange.GasVolumeM3(cell.DryAirKg, cell.VapourKg, cell.EnthalpyJ, pressure);
+                            source[group] = (plan.Volumes[group] - volumes[group]) / dt;
+                            inventory[group] = (cell.DryAirKg, cell.VapourKg, cell.EnthalpyJ, momentum[group]);
+                        }
+                        var pressurePlan = new VariableCoefficientProjection(plan.Geometry, boundaries, cell =>
+                        {
+                            int group = plan.GroupByCell[cell];
+                            return (gas[group].DryAirKg + gas[group].VapourKg) / volumes[group];
+                        }, _ => 0);
+                        var flow = FlowCpuReference.Project(pressurePlan,
+                            HumidGasAdvection.PredictFaces(pressurePlan, inventory), dt, 4096, null, source);
+                        var pressureReaction = HumidGasAdvection.ApplyPressure(pressurePlan, flow, inventory);
+                        reaction += pressureReaction.WallReaction + pressureReaction.OpenBoundaryReaction;
+                        var moved = HumidGasAdvection.Advance(pressurePlan, flow, volumes, inventory,
+                            (reservoir.DryAirKg / grid.CellVolume, reservoir.VapourKg / grid.CellVolume,
+                                reservoir.EnthalpyJ / grid.CellVolume, default));
+                        airOut += moved.Outflow.DryAirKg;
+                        vapourOut += moved.Outflow.VapourKg;
+                        energyOut += moved.Outflow.EnthalpyJ;
+                        momentumOut += moved.Outflow.MomentumKgMPerS;
+                        boundaryThroughput += Math.Abs(moved.Outflow.DryAirKg);
+                        double air = airOut;
+                        D3 totalMomentum = momentumOut + reaction;
+                        for (int group = 0; group < gas.Length; group++)
+                        {
+                            var cell = moved.Gas[group];
+                            gas[group] = (cell.DryAirKg, cell.VapourKg, cell.EnthalpyJ);
+                            momentum[group] = cell.MomentumKgMPerS;
+                            air += cell.DryAirKg;
+                            totalMomentum += momentum[group];
+                        }
+                        var total = Totals(parcels, gas);
+                        if (Math.Abs(air - startingAir) > 1e-12 * startingAir ||
+                            Math.Abs(total.Water + vapourOut - initialTotals.Water) > 1e-12 * initialTotals.Water ||
+                            Math.Abs(total.Energy + energyOut - initialTotals.Energy) > 1e-12 * initialTotals.Energy ||
+                            totalMomentum.Length > 1e-24)
+                            throw new InvalidOperationException("V38 fog gas feedback failed conservation.");
+                    }
+                    if (!(upstreamExchange > 0 && downstreamExchange < 0 && boundaryThroughput > 0) ||
+                        gas[untouched] == reservoir)
+                        throw new InvalidOperationException("V38 fog exchange did not drive transport into the unseeded cell and boundary.");
+                    log(FormattableString.Invariant(
+                        $"S14 V38 fog gas feedback passed: {steps} steps, downstream condensation {-downstreamExchange:G8} kg, signed boundary vapour {vapourOut:G8} kg."));
+                }
             }
 
             (double Water, double Energy) Totals((D3, double, double, int)[] parcels,
