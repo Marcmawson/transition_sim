@@ -109,6 +109,39 @@ namespace PhysicsSim.ThreePhase3D.Geometry
             return FluidVolume(cell, lo, hi, plane);
         }
 
+        internal double GasFaceSection(int cell, int axis, bool upper, ClipPlane? gasA, ClipPlane? gasB)
+        {
+            Bounds(cell, out D3 lo, out D3 hi);
+            int u = (axis + 1) % 3, v = (axis + 2) % 3;
+            // Sample just inside the owning cell, as for the embedded face aperture.
+            double coordinate = upper ? hi[axis] - grid.Spacing[axis] * 1e-9 :
+                lo[axis] + grid.Spacing[axis] * 1e-9;
+            D3 Point(double a, double b) => axis == 0 ? new D3(coordinate, a, b) :
+                axis == 1 ? new D3(b, coordinate, a) : new D3(a, b, coordinate);
+            var polygon = new List<D3> { Point(lo[u], lo[v]), Point(hi[u], lo[v]),
+                Point(hi[u], hi[v]), Point(lo[u], hi[v]) };
+            if (gasA.HasValue) polygon = PolyhedronClip.Polygon(polygon, gasA.Value);
+            if (gasB.HasValue) polygon = PolyhedronClip.Polygon(polygon, gasB.Value);
+            double area = PolyhedronClip.Area(polygon);
+            if (area == 0 || solids[cell] == null) return area;
+            double blocked = 0;
+            foreach (var tetra in solids[cell])
+            {
+                var section = polygon;
+                foreach (var plane in tetra.Planes)
+                {
+                    section = PolyhedronClip.Polygon(section, plane);
+                    if (section.Count < 3) break;
+                }
+                blocked += tetra.Sign * PolyhedronClip.Area(section);
+            }
+            double open = area - blocked;
+            double tolerance = 1e-10 * grid.FaceArea(axis);
+            if (open < -tolerance || open > area + tolerance)
+                throw new InvalidOperationException("Solid clipping produced an invalid gas aperture.");
+            return Math.Max(0, Math.Min(area, open));
+        }
+
         internal double FluidNormalDistance(int cell, D3 point, D3 outward)
         {
             Bounds(cell, out D3 lo, out D3 hi);

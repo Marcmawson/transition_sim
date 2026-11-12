@@ -599,6 +599,61 @@ namespace PhysicsSim.ThreePhase3D.Flow
             }
         }
 
+        public double[] ReconstructGasFaceAreas(CutCellInventories fields)
+        {
+            if (fields == null) throw new ArgumentNullException(nameof(fields));
+            if (fields.LiquidM3.Length != plan.GroupCount || fields.GasM3.Length != plan.GroupCount)
+                throw new ArgumentException("Phase volumes must match the pressure groups.", nameof(fields));
+            for (int group = 0; group < plan.GroupCount; group++)
+                if (!SiUnits.IsFinite(fields.LiquidM3[group]) || !SiUnits.IsFinite(fields.GasM3[group]) ||
+                    fields.LiquidM3[group] < 0 || fields.GasM3[group] < 0 ||
+                    Math.Abs(fields.LiquidM3[group] + fields.GasM3[group] - plan.Volumes[group]) >
+                        1e-10 * plan.Grid.CellVolume)
+                    throw new ArgumentException("Phase volumes must fill the pressure groups.", nameof(fields));
+
+            var grid = plan.Grid;
+            var result = new double[plan.FaceCount];
+            var planes = new ClipPlane?[grid.Cells.Count];
+            for (int face = 0; face < result.Length; face++)
+            {
+                var metric = plan.Faces[face];
+                if (metric.Active == 0 || metric.Low == metric.High ||
+                    (metric.Low >= 0 && fields.GasM3[metric.Low] == 0) ||
+                    (metric.High >= 0 && fields.GasM3[metric.High] == 0)) continue;
+                if ((metric.Low < 0 || fields.LiquidM3[metric.Low] == 0) &&
+                    (metric.High < 0 || fields.LiquidM3[metric.High] == 0))
+                {
+                    result[face] = metric.Area;
+                    continue;
+                }
+                int axis = metric.Axis;
+                grid.Shape((GridLocation)(axis + 1)).Coordinates(face - plan.FaceOffsets[axis],
+                    out int i, out int j, out int k);
+                int x = i - (axis == 0 ? 1 : 0), y = j - (axis == 1 ? 1 : 0), z = k - (axis == 2 ? 1 : 0);
+                if ((metric.Low >= 0 && !grid.Cells.Interior(x, y, z)) ||
+                    (metric.High >= 0 && !grid.Cells.Interior(i, j, k)))
+                    throw new NotSupportedException("Mixed gas aperture reconstruction requires nonperiodic faces.");
+                int low = grid.Cells.Index(x, y, z);
+                int high = grid.Cells.Index(i, j, k);
+                var gasLow = GasPlane(low, metric.Low);
+                var gasHigh = GasPlane(high, metric.High);
+                double area = metric.Area;
+                if (metric.Low >= 0) area = Math.Min(area, geometry.GasFaceSection(low, axis, true, gasLow, gasHigh));
+                if (metric.High >= 0) area = Math.Min(area, geometry.GasFaceSection(high, axis, false, gasLow, gasHigh));
+                result[face] = area;
+            }
+            return result;
+
+            ClipPlane? GasPlane(int cell, int group)
+            {
+                if (group < 0 || fields.LiquidM3[group] == 0) return null;
+                if (planes[cell].HasValue) return planes[cell];
+                var liquid = geometry.Reconstruct(cell, EstimateNormal(cell, group, fields.LiquidM3),
+                    fields.LiquidM3[group] / plan.Volumes[group] * plan.Geometry.FluidVolumeM3[cell]);
+                return planes[cell] = new ClipPlane(-liquid.N, liquid.N * liquid.Offset);
+            }
+        }
+
         internal D3 EstimateNormal(int cell, int group, double[] liquid)
         {
             plan.Grid.Cells.Coordinates(cell, out int i, out int j, out int k);

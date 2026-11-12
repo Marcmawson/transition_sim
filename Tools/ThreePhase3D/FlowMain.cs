@@ -12,6 +12,8 @@ internal static class FlowMain
         if (args.Length == 1 && args[0] == "--humid-diffusion")
         {
             CheckHumidDiffusion();
+            CheckReconstructedGasDiffusion();
+            CheckOpenGasDiffusion();
             CheckHumidLowMach();
             CheckHumidInterface();
             return 0;
@@ -51,6 +53,71 @@ internal static class FlowMain
             throw new InvalidOperationException("Humid low Mach source or buoyancy failed its limiting checks.");
         Console.WriteLine(FormattableString.Invariant(
             $"S12 humid low Mach passed: thermal buoyancy {thermal:G8} m/s2, species buoyancy {species:G8} m/s2, projection source {expansion:G8} m3/s."));
+    }
+
+    private static void CheckReconstructedGasDiffusion()
+    {
+        CheckReconstructedGasDiffusion(null, 0.01);
+        CheckReconstructedGasDiffusion(SurfacePrimitives.Box(new D3(0, 0, 0.008),
+            new D3(0.02, 0.02, 0.01)), 0.008);
+    }
+
+    private static void CheckReconstructedGasDiffusion(TriangleSurface solid, double openWidth)
+    {
+        const double dx = 0.01, rho = 1.2, dt = 0.1, diffusivity = 2.5e-5;
+        var grid = new Grid3D(2, 2, 1, new D3(dx, dx, dx), RigidFrame.Identity);
+        var plan = new VariableCoefficientProjection(CutCellGeometry.Build(grid, solid), BoundaryConditions3D.Closed,
+            _ => rho, _ => 0);
+        var fields = PlanarLiquidInventory.Create(plan, new D3(0, 0.015, 0), new D3(0, 1, 0), 0, 10, 0);
+        var gasMass = Array.ConvertAll(fields.GasM3, volume => volume * rho);
+        int left = plan.GroupByCell[grid.Cells.Index(0, 1, 0)];
+        int right = plan.GroupByCell[grid.Cells.Index(1, 1, 0)];
+        fields.VapourKg[left] = gasMass[left] * 0.02;
+        fields.VapourKg[right] = gasMass[right] * 0.01;
+        var areas = new CutCellVofTransport(plan).ReconstructGasFaceAreas(fields);
+        double area = areas[plan.FaceIndex(0, 1, 1, 0)];
+        if (Math.Abs(area - 0.5 * dx * openWidth) > 1e-12 || areas[plan.FaceIndex(0, 1, 0, 0)] != 0)
+            throw new InvalidOperationException("The reconstructed aperture does not match the half-wetted face.");
+        var vapourH = Array.ConvertAll(gasMass, _ => 2.5e6);
+        var airH = new double[gasMass.Length];
+        var result = HumidGasDiffusion.AdvanceReconstructed(plan, fields, dt, gasMass, vapourH, airH,
+            _ => diffusivity);
+        double expected = dt * rho * diffusivity * area / dx * 0.01;
+        if (Math.Abs(fields.VapourKg[left] - result.VapourKg[left] - expected) > 1e-16 ||
+            Math.Abs(result.VapourKg[right] - fields.VapourKg[right] - expected) > 1e-16)
+            throw new InvalidOperationException("Vapour transfer did not use the reconstructed gas aperture.");
+        Console.WriteLine(FormattableString.Invariant(
+            $"S12 reconstructed gas diffusion passed: aperture {area:G8} m2, vapour transferred {expected:G8} kg."));
+    }
+
+    private static void CheckOpenGasDiffusion()
+    {
+        const double dx = 0.01, rho = 1.2, dt = 0.1, diffusivity = 2.5e-5;
+        var grid = new Grid3D(1, 1, 1, new D3(dx, dx, dx), RigidFrame.Identity);
+        double gasMass = rho * grid.CellVolume;
+        foreach (bool positive in new[] { false, true })
+        {
+            var sides = new FlowBoundary[6];
+            sides[positive ? 1 : 0] = new FlowBoundary(FlowBoundaryKind.OpenPressure);
+            var plan = new VariableCoefficientProjection(CutCellGeometry.Build(grid), new BoundaryConditions3D(sides),
+                _ => rho, _ => 0);
+            var zero = new double[1];
+            var fields = new CutCellInventories(zero, (double[])plan.Volumes.Clone(), zero,
+                new[] { 1.0 }, new[] { 0.01 * gasMass });
+            double boundaryFraction = positive ? 0.005 : 0.02;
+            var update = HumidGasDiffusion.AdvanceOpen(plan, fields, dt, new[] { gasMass },
+                new[] { 2.5e6 }, new[] { 20000.0 }, _ => diffusivity,
+                _ => new HumidGasDiffusion.Reservoir(rho, boundaryFraction, 2.6e6, 30000));
+            double expected = dt * rho * diffusivity * dx * 2 * (boundaryFraction - 0.01);
+            double expectedHeat = expected * (expected > 0 ? 2.6e6 - 20000 : 2.5e6 - 30000);
+            if (Math.Abs(update.VapourInKg - expected) > 1e-16 ||
+                Math.Abs(update.EnthalpyInJ - expectedHeat) > 1e-9 ||
+                Math.Abs(update.Fields.VapourKg[0] - fields.VapourKg[0] - update.VapourInKg) > 1e-16 ||
+                Math.Abs(update.Fields.GasEnergyJ[0] - fields.GasEnergyJ[0] - update.EnthalpyInJ) > 1e-14)
+                throw new InvalidOperationException("Open gas diffusion disagrees with the reservoir balance.");
+            Console.WriteLine(FormattableString.Invariant(
+                $"S12 open gas diffusion passed: vapour in {update.VapourInKg:G8} kg, enthalpy in {update.EnthalpyInJ:G8} J."));
+        }
     }
 
     private static void CheckHumidInterface()

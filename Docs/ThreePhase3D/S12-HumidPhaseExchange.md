@@ -6,4 +6,8 @@ The low Mach helpers derive the projection source from the fixed-mass change in 
 
 The planar film solve uses the S02 chemical-equilibrium composition and a Stefan correction for zero net dry-air flux. It balances conductive heat from the liquid and gas against latent heat at the interface. The dilute approximation uses pure saturated vapour enthalpy and prescribed gas-film thickness and thermal conductances. The CPU fixtures returned 292.931469 K for an evaporating interface between 293.15 K reservoirs and 283.370361 K for a condensing interface between 283.15 K reservoirs. The integrated inventory source closed liquid and vapour mass, enthalpy, and phase-change volume. At matched equilibrium composition, the isothermal flux was zero.
 
-The reference executable entry point is `FlowMain --humid-diffusion`. Gas-open area reconstruction, open-boundary diffusion, integration into pressure and transport, and V27–V28 benchmark comparisons remain open.
+The VOF transport reconstructs the gas side of mixed cells and clips both phase planes on each shared face. The shared gas aperture is bounded by the embedded solid aperture and the two one-sided solid sections. The CPU fixture recovered 5e-5 m² on a half-wetted face and 4e-5 m² when a fixed slab blocked one fifth of that opening. The corresponding vapour transfers matched the analytical gradients.
+
+Open gas faces accept a prescribed reservoir state and use the cell-to-boundary distance for the diffusion gradient. The boundary ledger records signed vapour and enthalpy exchange. CPU fixtures passed for both inward and outward vapour flux, with equal dry-air counterflow. This is diffusive exchange at fixed gas mass. Advective backflow remains part of the flow transport.
+
+The reference executable entry point is `FlowMain --humid-diffusion`. Integration of interfacial volume sources into pressure and phase transport, and V27–V28 benchmark comparisons, remain open.
