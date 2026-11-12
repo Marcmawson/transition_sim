@@ -66,26 +66,55 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 var zero = new double[plan.GroupCount];
                 var status = new uint[plan.GroupCount];
 
+                var water = new Water95();
+                var pressureCorrection = transport.MeasurePressureCorrection(dt);
+                double worstVelocityError = 0, worstEnthalpyDrift = 0;
+
                 float Check(float ambientK, float columnK, int direction)
                 {
                     var energy = plan.Volumes.Select(v => enthalpy.EnergyJ(v, ambientK)).ToArray();
+                    var temperatures = Enumerable.Repeat((double)ambientK, plan.GroupCount).ToArray();
                     for (int k = 0; k < grid.Cells.Z; k++)
                         for (int j = 0; j < grid.Cells.Y; j++)
                         {
                             int group = plan.PressureGroup(1, j, k);
                             energy[group] = enthalpy.EnergyJ(plan.Volumes[group], columnK);
+                            temperatures[group] = columnK;
                         }
 
-                    transport.AdvanceWithTemperature(new CutCellInventories(plan.Volumes, zero, energy, zero, zero),
-                        zeroFlow, dt, recovery);
+                    var inventory = new CutCellInventories(plan.Volumes, zero, energy, zero, zero);
+                    transport.AdvanceWithTemperature(inventory, zeroFlow, dt, recovery);
                     recovery.Status.GetData(status);
                     if (status.Any(value => value != 0)) throw new InvalidOperationException("S09 cavity contains invalid liquid state.");
                     float rho = table.EvaluateFloat(ambientK, 101325)[0];
                     shader.SetFloat("ReferenceDensity", rho);
                     shader.Dispatch(kernel, (plan.FaceCount + 63) / 64, 1, 1);
                     tentative.GetData(velocity);
-                    var projected = FlowGpuSolver.Project(plan, pressure, velocity, dt, 4096);
-                    float actual = projected.VelocityMPerS[plan.FaceIndex(1, 1, 2, 0)];
+                    var projected = FlowGpuSolver.Project(plan, pressure, velocity, dt, 4096, pressureCorrection);
+                    int sample = plan.FaceIndex(1, 1, 2, 0);
+                    float actual = projected.VelocityMPerS[sample];
+
+                    // Evaluate the EOS directly in double precision, bypassing the GPU density table.
+                    double referenceDensity = WaterPropertyTable.EvaluateReference(water, ambientK, table.PressurePa, WaterBranch.Liquid)[0];
+                    double columnDensity = WaterPropertyTable.EvaluateReference(water, columnK, table.PressurePa, WaterBranch.Liquid)[0];
+                    var referenceTentative = new float[vertical.Length];
+                    for (int face = 0; face < vertical.Length; face++)
+                    {
+                        var pair = vertical[face];
+                        if (pair.x < 0) continue;
+                        double low = temperatures[pair.x] == columnK ? columnDensity : referenceDensity;
+                        double high = temperatures[pair.y] == columnK ? columnDensity : referenceDensity;
+                        referenceTentative[face] = (float)(dt * gravity * (referenceDensity - 0.5 * (low + high)) / referenceDensity);
+                    }
+                    var reference = FlowCpuReference.Project(plan, referenceTentative, dt, 4096);
+                    double velocityError = Math.Abs(actual - reference.VelocityMPerS[sample]);
+                    var moved = transport.AdvanceProjectedWithTemperature(inventory, projected, recovery);
+                    double enthalpyDrift = Math.Abs(moved.Fields.LiquidEnergyJ.Sum() - energy.Sum());
+                    recovery.Status.GetData(status);
+                    if (velocityError > 2e-7 || enthalpyDrift > 1e-8 || status.Any(value => value != 0))
+                        throw new InvalidOperationException($"V20 reference or energy mismatch at {ambientK:G6} to {columnK:G6} K: velocity error {velocityError:G6} m/s, enthalpy drift {enthalpyDrift:G6} J.");
+                    worstVelocityError = Math.Max(worstVelocityError, velocityError);
+                    worstEnthalpyDrift = Math.Max(worstEnthalpyDrift, enthalpyDrift);
                     if (!projected.Diagnostics.Converged || float.IsNaN(actual) ||
                         (direction == 0 ? Math.Abs(actual) > 1e-8 : direction * actual <= 1e-7))
                         throw new InvalidOperationException($"S09 unexpected projected velocity {actual:G6} m/s.");
@@ -96,6 +125,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 float sinking = Check(274f, 277.125f, -1);
                 float rising = Check(277.125f, 283f, 1);
                 Debug.Log($"S09 buoyancy check passed: uniform {uniform:G5} m/s, warmed below 4 °C {sinking:G5} m/s, warmed above 4 °C {rising:G5} m/s.");
+                Debug.Log($"S09 V20 GPU density anomaly passed: maximum reference velocity error {worstVelocityError:G6} m/s, maximum enthalpy drift {worstEnthalpyDrift:G6} J.");
                 CheckCirculation(false);
                 CheckCirculation(true);
 

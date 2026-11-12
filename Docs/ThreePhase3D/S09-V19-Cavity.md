@@ -38,3 +38,7 @@ Run **Physics Sim → Three Phase 3D → Run S09 V19 3D GPU cavity check**. This
 The check requires a steady solution, hot/cold wall Nusselt numbers within 0.001 of each other, mean Nusselt number above the conductive limit of 1, and a nonzero interior spanwise speed above 0.001 in thermal-diffusion units. These checks exercise three-dimensional coupling. Quantitative published-reference and refinement checks apply to the separate square benchmark.
 
 The runtime and Editor entry point compiled separately against Unity 2022.3.46f1 assemblies. GPU execution remains pending.
+
+## GPU results
+
+Unity reported a square-cavity pass with 2.51% maximum fine-grid reference error and a timestep change rounded to 0.00%. The 8 cubed cavity also passed with mean Nu 1.14270, peak spanwise speed 0.13605 and hot/cold wall Nu difference reported as zero. Both runs used the corrected fixed timesteps.
