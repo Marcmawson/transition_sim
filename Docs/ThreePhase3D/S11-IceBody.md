@@ -59,3 +59,9 @@ The run checks rise against the CPU result to within 1 micrometre and repeats th
 The prescribed flat-waterline reference clips each exposed ice polygon against the submerged half-space and integrates gauge pressure over the clipped polygon. Air gauge pressure is zero in this fixture. The normal is determined by gravity in world space, including when the computational grid is tilted.
 
 The CPU fixture passed at both grid offsets for dry, half-submerged, 91.7% submerged, and fully submerged states. The lift agreed with displaced water weight to 1e-10 N, and the symmetric box torque was within 1e-11 N m. At 91.7% immersion, the integrated pressure balanced the ice weight. The waterline is prescribed here. Advancing the liquid interface and testing transient flotation against this reference remain open.
+
+## Initial coupled two-phase motion
+
+The CPU fixture seeds liquid and gas by clipping the planar interface against the ice and the grid cells. It initializes group densities from the two phase inventories, then runs a coupled moving-wall pressure step from rest and remaps both phases into the new geometry.
+
+The half-submerged box sank at 0.00747123 m/s after the first 2 ms step. Water, gas, both enthalpies and vapour inventories remained conserved to the test tolerance. The sum of absolute liquid volume differences against a freshly seeded flat surface at the new pose was 2.15171e-9 m3. This run uses first-order phase transport and the initial planar hydrostatic background for its one pressure step. Updating the pressure background from the evolving interface and verifying long-time flotation remain open.
