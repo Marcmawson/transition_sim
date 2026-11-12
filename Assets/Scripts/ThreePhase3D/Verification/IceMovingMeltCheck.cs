@@ -10,7 +10,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
     {
         public static (IceBody Body, double HeatJ, double MassLossKg, double DisplacementM) Run(
             int steps, double substep, Func<VariableCoefficientProjection, float[], double, double[], FlowStep> project,
-            int cellsPerAxis = 8)
+            int cellsPerAxis = 8, bool transient = false)
         {
             if (project == null) throw new ArgumentNullException(nameof(project));
             if (steps <= 0) throw new ArgumentOutOfRangeException(nameof(steps));
@@ -39,10 +39,12 @@ namespace PhysicsSim.ThreePhase3D.Verification
             double Sum(double[] values) => System.Linq.Enumerable.Sum(values);
 
             var water = new PhysicsSim.ThreePhase3D.Materials.Water95();
-            double warmH = water.Evaluate(equilibrium.MeltingTemperatureK + 10, 101325,
-                PhysicsSim.ThreePhase3D.Materials.WaterBranch.Liquid).EnthalpyJkg;
+            double warmK = equilibrium.MeltingTemperatureK + 10;
+            var warm = water.Evaluate(warmK, 101325, PhysicsSim.ThreePhase3D.Materials.WaterBranch.Liquid);
+            const double conductivity = 0.6;
+            double diffusivity = conductivity / (rho * warm.CpJkgK);
             var topology = Topology(Geometry(body, dimensions));
-            var fields = PlanarLiquidInventory.Create(topology, new D3(0, 0.055, 0), new D3(0, 1, 0), warmH * rho, 12, 0);
+            var fields = PlanarLiquidInventory.Create(topology, new D3(0, 0.055, 0), new D3(0, 1, 0), warm.EnthalpyJkg * rho, 12, 0);
             var velocity = new float[topology.FaceCount];
             double initialWater = Sum(fields.LiquidM3) * rho + body.MassKg;
             double initialGas = Sum(fields.GasM3) * gasDensity;
@@ -61,8 +63,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     moved.Fluid.VelocityMPerS, rho, gasDensity);
                 plan = WithDensity(topology, advected.Fields);
                 column = new ColumnHydrostaticPressure(plan, advected.Fields, gravity, rho, gasDensity);
-                var temperature = new double[plan.GroupCount];
-                for (int group = 0; group < temperature.Length; group++)
+                var temperature = transient ? null : new double[plan.GroupCount];
+                for (int group = 0; group < (temperature?.Length ?? 0); group++)
                 {
                     double mass = advected.Fields.LiquidM3[group] * rho;
                     temperature[group] = mass > 0
@@ -71,9 +73,11 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 }
                 var projected = project(plan,
                     Array.ConvertAll(advected.Momentum.VelocityMPerS, value => (float)value), substep, null);
+                IceFaceConduction.TransientLayer? layer = transient
+                    ? new IceFaceConduction.TransientLayer(step * substep, warmK, diffusivity) : null;
                 var melted = IceFaceMeltingStep.Advance(plan, advected.Fields, projected, moved.Body, dimensions,
-                    1, -1, equilibrium, gasDensity, 0.6, temperature, column.WettedAreaM2,
-                    Topology, grid.CellVolume * 0.005);
+                    1, -1, equilibrium, gasDensity, conductivity, temperature, column.WettedAreaM2,
+                    Topology, grid.CellVolume * 0.005, layer);
                 if (!(melted.HeatJ > 0 && melted.Body.MassKg < body.MassKg))
                     throw new InvalidOperationException("The moving ice did not melt on the submerged face.");
                 totalHeat += melted.HeatJ;
@@ -86,6 +90,12 @@ namespace PhysicsSim.ThreePhase3D.Verification
             }
             if ((body.Frame.Origin - initial.Frame.Origin).Length <= 1e-8)
                 throw new InvalidOperationException("The melting body did not move.");
+            if (transient)
+            {
+                double expected = 2 * conductivity * 10 * dimensions.X * dimensions.Z *
+                    Math.Sqrt(steps * substep / (Math.PI * diffusivity));
+                Near(Math.Abs(totalHeat / expected - 1), 0.01);
+            }
             return (body, totalHeat, initial.MassKg - body.MassKg,
                 (body.Frame.Origin - initial.Frame.Origin).Length);
         }

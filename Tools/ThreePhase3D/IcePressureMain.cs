@@ -16,10 +16,11 @@ internal static class IcePressureMain
         Near((coarse.Body.Frame.Origin - refined.Body.Frame.Origin).Length, 2e-6);
     }
 
-    private static (IceBody Body, double HeatJ) RunMovingMelt(int steps, double substep, int cellsPerAxis = 8)
+    private static (IceBody Body, double HeatJ) RunMovingMelt(int steps, double substep, int cellsPerAxis = 8,
+        bool transient = false)
     {
         var result = IceMovingMeltCheck.Run(steps, substep, (plan, velocity, dt, flux) =>
-            FlowCpuReference.Project(plan, velocity, dt, 32768, null, flux), cellsPerAxis);
+            FlowCpuReference.Project(plan, velocity, dt, 32768, null, flux), cellsPerAxis, transient);
         Console.WriteLine(FormattableString.Invariant(
             $"S11 V26 moving melt passed: {cellsPerAxis}³ cells, {steps} steps, heat {result.HeatJ:G8} J, ice loss {result.MassLossKg:G8} kg, centre displacement {result.DisplacementM:G8} m."));
         return (result.Body, result.HeatJ);
@@ -273,6 +274,13 @@ internal static class IcePressureMain
 
     private static void Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--melt-grid-transient")
+        {
+            var baseline = RunMovingMelt(3, 0.001, 8, transient: true);
+            foreach (int cells in new[] { 10, 12 })
+                Near(Math.Abs(RunMovingMelt(3, 0.001, cells, transient: true).HeatJ / baseline.HeatJ - 1), 0.01);
+            return;
+        }
         if (args.Length == 1 && args[0] == "--melt-grid")
         {
             foreach (int cells in new[] { 8, 10, 12 }) RunMovingMelt(3, 0.001, cells);

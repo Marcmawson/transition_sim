@@ -244,3 +244,9 @@ The stencil clips the cut cell to the exposed half-space of the ice face, subtra
 | 12³ | 0.0017769663 | 5.3294091e-9 | 2.3850789 |
 
 All three cases passed the inventory checks. The 10³ face lies just 0.5 mm from the lower cell boundary, leaving a liquid-side centroid distance of 0.25 mm at the start. The resulting large gradient shows that coupling a group-average temperature directly to a very thin cut-cell sample still leaves the melt rate strongly dependent on grid alignment. Spatial convergence remains open. The Unity check now compares against the revised 8³ CPU baseline and awaits a GPU run.
+
+## V26 transient liquid-layer benchmark
+
+Run `dotnet run --project Tools/ThreePhase3D/IcePressureChecks.csproj -- --melt-grid-transient`. This opt-in closure assumes a continuously wetted face, initially uniform liquid, constant thermal diffusivity and a prescribed bulk temperature over the short exposure. It integrates the semi-infinite diffusion flux over each thermal substep. For a wetted area A, the heat over the interval from t₀ to t₁ is 2 k A ΔT (√t₁ − √t₀) / √(π α). The existing donor enthalpy and ice latent capacity limits still apply.
+
+The 8³, 10³ and 12³ CPU runs each transferred 0.28237338 J and released 8.468834e-7 kg of ice to the reported precision. All three matched the analytical heat integral within the fixture tolerance and passed the inventory balances. Centre displacements were 4.2222345, 4.0124532 and 3.9783096 µm, respectively. The prescribed thermal history makes this a verification of the transient closure for the benchmark. General moving contact, changing bulk temperature, and coupling to a resolved thermal layer require further validation. The Unity moving-melt check continues to use the exposed-side stencil baseline.

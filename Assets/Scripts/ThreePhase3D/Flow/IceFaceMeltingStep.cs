@@ -15,7 +15,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 IceBody body, D3 dimensionsM, int axis, int side, SolidLiquidInterface equilibrium,
                 double gasDensityKgM3, double conductivityWmK, double[] liquidTemperatureK,
                 Func<InterfacePatch, double> wettedAreaM2,
-                Func<CutCellGeometry, VariableCoefficientProjection> buildTopology, double maxCorrectionM3)
+                Func<CutCellGeometry, VariableCoefficientProjection> buildTopology, double maxCorrectionM3,
+                IceFaceConduction.TransientLayer? transientLayer = null)
         {
             if (plan == null || body == null || flow == null || equilibrium == null || buildTopology == null)
                 throw new ArgumentNullException();
@@ -27,7 +28,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             double rhoLiquid = equilibrium.LiquidMeltingDensityKgM3;
             D3 normal = (axis == 0 ? body.Frame.U : axis == 1 ? body.Frame.V : body.Frame.W) * side;
             var conducted = IceFaceConduction.Transfer(plan, fields, body, equilibrium, normal,
-                flow.Diagnostics.Dt, rhoLiquid, conductivityWmK, liquidTemperatureK, wettedAreaM2);
+                flow.Diagnostics.Dt, rhoLiquid, conductivityWmK, liquidTemperatureK, wettedAreaM2, transientLayer);
             var melt = IceBoxMelting.Apply(body, dimensionsM, axis, side, conducted.HeatJ, equilibrium);
             if (melt.Released == null)
             {
