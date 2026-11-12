@@ -57,6 +57,19 @@ internal static class IcePressureMain
                 throw new InvalidOperationException("Moving ice did not produce an opposing pressure reaction.");
             Console.WriteLine(FormattableString.Invariant(
                 $"S11 moving boundary passed at offset {offset:G} m: pressure power {workRate:G6} W."));
+            var still = new float[plan.FaceCount];
+            var coupled = IcePressureCoupling.Advance(body, plan, dt, new D3(0, -g, 0),
+                boundary => FlowCpuReference.Project(plan, still, dt, 16384, null, boundary),
+                point => rho * g * (0.10 - point.Y));
+            if (!(coupled.Body.VelocityMPerS.Y > 0 && coupled.Body.VelocityMPerS.Y < moved.VelocityMPerS.Y) ||
+                coupled.Iterations < 2 || coupled.BoundaryVelocityMismatchMPerS > 1e-8)
+                throw new InvalidOperationException("The implicit fluid reaction did not reduce the ice rise speed.");
+            var acceptedLoad = IcePressureLoad.FromProjection(body, plan, coupled.Fluid.GroupPressurePa,
+                point => rho * g * (0.10 - point.Y));
+            Near((coupled.Body.MomentumKgMPerS - (acceptedLoad.ForceN + new D3(0, -g * body.MassKg, 0)) * dt).Length, 1e-12);
+            Near((coupled.Body.AngularMomentumKgM2PerS - acceptedLoad.TorqueNm * dt).Length, 1e-12);
+            Console.WriteLine(FormattableString.Invariant(
+                $"S11 coupled step at offset {offset:G} m: {coupled.Iterations} iterations, rise {coupled.Body.VelocityMPerS.Y:G6} m/s, mismatch {coupled.BoundaryVelocityMismatchMPerS:G6} m/s."));
             Console.WriteLine(FormattableString.Invariant(
                 $"S11 ice pressure passed at grid offset {offset:G} m: lift {load.ForceN.Y:G8} N, applied torque {topLoad.TorqueNm.Z:G8} N m."));
         }
