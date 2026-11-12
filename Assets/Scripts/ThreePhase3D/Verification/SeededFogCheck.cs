@@ -57,6 +57,33 @@ namespace PhysicsSim.ThreePhase3D.Verification
             CheckConversion();
             CheckDetachedLiquid();
             CheckSwitchThreshold();
+            CheckOpacity();
+
+            void CheckOpacity()
+            {
+                const double volume = 1e-6, path = 0.01;
+                double weighted = SeededFogCell.VisibleExtinctionPerM(seeds, volume);
+                double individual = SeededFogCell.VisibleExtinctionPerM(expanded, volume);
+                var empty = Array.Empty<(double, double, int)>();
+                double massMoment = 0, areaMoment = 0;
+                foreach (var seed in seeds)
+                {
+                    massMoment += DropletGasCellExchange.Mass(seed.Item1) * seed.Item3;
+                    areaMoment += seed.Item1 * seed.Item1 * seed.Item3;
+                }
+                double density = DropletGasCellExchange.LiquidDensity;
+                double effectiveRadius = massMoment / (density * (4 * Math.PI / 3) * areaMoment);
+                double reference = 3 * (massMoment / volume) / (2 * density * effectiveRadius);
+                double transmission = Math.Exp(-weighted * path);
+                double doubledPath = Math.Exp(-weighted * 2 * path);
+                if (Math.Abs(weighted / reference - 1) > 1e-13 || Math.Abs(individual / weighted - 1) > 1e-13 ||
+                    SeededFogCell.VisibleExtinctionPerM(empty, volume) != 0 ||
+                    !(transmission > 0 && transmission < 1) ||
+                    Math.Abs(doubledPath - transmission * transmission) > 1e-15)
+                    throw new InvalidOperationException("S14 fog opacity did not match the analytical extinction or parcel regrouping.");
+                log(FormattableString.Invariant(
+                    $"S14 V38 fog opacity passed: extinction {weighted:G8} 1/m, 1 cm transmission {transmission:P8}."));
+            }
 
             void CheckSwitchThreshold()
             {

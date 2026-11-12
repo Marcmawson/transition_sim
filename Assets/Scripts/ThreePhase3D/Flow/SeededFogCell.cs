@@ -7,6 +7,24 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // Each parcel represents identical seeded droplets sharing one gas inventory.
     internal static class SeededFogCell
     {
+        // Independent-droplet extinction in the visible geometric-optics limit.
+        internal static double VisibleExtinctionPerM(
+            (double RadiusM, double TemperatureK, int Multiplicity)[] parcels, double volumeM3)
+        {
+            if (!(volumeM3 > 0) || !SiUnits.IsFinite(volumeM3))
+                throw new ArgumentOutOfRangeException(nameof(volumeM3));
+            double crossSection = 0;
+            foreach (var parcel in parcels)
+            {
+                if (!(parcel.RadiusM >= 5e-6) || !SiUnits.IsFinite(parcel.RadiusM) || parcel.Multiplicity <= 0)
+                    throw new ArgumentException("Visible geometric-optics extinction requires radii of at least 5 micrometres and positive multiplicities.");
+                crossSection += 2 * Math.PI * parcel.RadiusM * parcel.RadiusM * parcel.Multiplicity;
+            }
+            double extinction = crossSection / volumeM3;
+            if (!SiUnits.IsFinite(extinction)) throw new ArgumentException("Fog extinction exceeds the supported range.");
+            return extinction;
+        }
+
         internal static (CutCellInventories Fields, CutCellMomentumResult Momentum) ReinsertWithFaceMomentum(
             VariableCoefficientProjection plan, CutCellInventories state, double[] displacement,
             float[] faceVelocity, double gasDensity, double radiusM, double temperatureK, int multiplicity, D3 velocity)
