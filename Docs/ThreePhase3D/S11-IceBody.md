@@ -47,3 +47,9 @@ The coupled moving-box CPU test now also checks linear momentum in each directio
 ## Successive coupled steps
 
 The CPU fixture now advances three consecutive 10 ms steps at both grid offsets. After each geometry update it remaps volume, enthalpy and momentum, then uses the remapped velocities as the tentative input to the next moving-wall projection. Water volume and enthalpy stayed within 1e-15 m3 and 1e-13 J of the initial totals, respectively. The submerged body rose 0.257786 and 0.260333 mm at the two offsets. This fixture supplies a hydrostatic background pressure and checks submerged continuation. It does not exercise a free surface or equilibrium flotation.
+
+## Unity GPU pressure verification
+
+Run **Physics Sim > Three Phase 3D > Run S11 GPU submerged ice check**. This repeats the three-step submerged continuation at both grid offsets using the Unity compute shader for pressure projection. It reuses pressure buffers during each coupling solve and seeds each trial with the previous pressure. Geometry rebuilds, swept-volume reconciliation, and remapping run on the host in this fixture.
+
+The run checks rise against the CPU result to within 1 micrometre and repeats the water and enthalpy conservation checks. The runtime and Editor entry point compiled separately against Unity 2022.3.46f1 assemblies. Device execution and free-surface flotation remain open.

@@ -43,7 +43,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
         internal FlowGpuSolver(MomentumPredictor3D predictor, ComputeShader shader, bool thermalBuoyancy)
             : this(predictor.Plan, predictor, shader, thermalBuoyancy) { }
 
-        private FlowGpuSolver(VariableCoefficientProjection plan, MomentumPredictor3D predictor, ComputeShader shader,
+        internal FlowGpuSolver(VariableCoefficientProjection plan, MomentumPredictor3D predictor, ComputeShader shader,
             bool thermalBuoyancy = false)
         {
             this.plan = plan;
@@ -138,7 +138,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return SolvePressure(dt, maxIterations, initialPressure: initialPressure);
         }
 
-        private FlowStep Project(float[] tentative, double dt, int maxIterations,
+        internal FlowStep Project(float[] tentative, double dt, int maxIterations,
             Func<float[], double> measureTransportCorrection = null, double[] initialPressure = null, double[] boundaryFlux = null)
         {
             if (disposed) throw new ObjectDisposedException(nameof(FlowGpuSolver));
