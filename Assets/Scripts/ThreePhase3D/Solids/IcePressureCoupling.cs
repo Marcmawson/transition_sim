@@ -9,7 +9,8 @@ namespace PhysicsSim.ThreePhase3D.Solids
     public static class IcePressureCoupling
     {
         public static Result Advance(IceBody body, VariableCoefficientProjection plan, double dt,
-            D3 gravityMPerS2, Func<double[], FlowStep> project, Func<D3, double> backgroundPressurePa = null)
+            D3 gravityMPerS2, Func<double[], FlowStep> project, Func<D3, double> backgroundPressurePa = null,
+            ColumnHydrostaticPressure columnPressure = null)
         {
             if (body == null) throw new ArgumentNullException(nameof(body));
             if (plan == null) throw new ArgumentNullException(nameof(plan));
@@ -28,7 +29,7 @@ namespace PhysicsSim.ThreePhase3D.Solids
                     fluid.VelocityMPerS.Length != plan.FaceCount || fluid.GroupPressurePa.Length != plan.GroupCount)
                     throw new InvalidOperationException("Ice coupling requires a converged pressure step on the same grid and timestep.");
 
-                var load = IcePressureLoad.FromProjection(body, plan, fluid.GroupPressurePa, backgroundPressurePa);
+                var load = IcePressureLoad.FromProjection(body, plan, fluid.GroupPressurePa, backgroundPressurePa, columnPressure);
                 D3 momentum = body.MomentumKgMPerS + (load.ForceN + gravityMPerS2 * body.MassKg) * dt;
                 D3 angular = body.AngularMomentumKgM2PerS + load.TorqueNm * dt;
                 var corrected = new IceBody(body.MassKg, body.PrincipalInertiaKgM2, body.Frame, momentum, angular);

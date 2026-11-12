@@ -1,0 +1,87 @@
+using System;
+using PhysicsSim.ThreePhase3D.Core;
+using PhysicsSim.ThreePhase3D.Geometry;
+
+namespace PhysicsSim.ThreePhase3D.Flow
+{
+    // Piecewise-linear hydrostatic reconstruction from the current phase
+    // inventory. The top of each column is the zero gauge reference.
+    public sealed class ColumnHydrostaticPressure
+    {
+        private readonly Grid3D grid;
+        private readonly double[] waterline;
+        private readonly double liquidSlope, gasSlope;
+
+        public ColumnHydrostaticPressure(VariableCoefficientProjection plan, CutCellInventories inventory,
+            D3 gravityMPerS2, double liquidDensityKgM3, double gasDensityKgM3)
+        {
+            if (plan == null) throw new ArgumentNullException(nameof(plan));
+            if (inventory == null) throw new ArgumentNullException(nameof(inventory));
+            if (!SiUnits.IsFinite(liquidDensityKgM3) || liquidDensityKgM3 <= 0 ||
+                !SiUnits.IsFinite(gasDensityKgM3) || gasDensityKgM3 <= 0)
+                throw new ArgumentException("Positive finite phase densities are required.");
+            if (inventory.LiquidM3.Length != plan.GroupCount || inventory.GasM3.Length != plan.GroupCount)
+                throw new ArgumentException("Inventory does not match the pressure groups.", nameof(inventory));
+
+            grid = plan.Grid;
+            double gravity = -D3.Dot(gravityMPerS2, grid.Frame.V);
+            if (!(gravity > 0) || (gravityMPerS2 + grid.Frame.V * gravity).Length > 1e-12 * gravity)
+                throw new ArgumentException("Column pressure requires gravity along the negative grid Y axis.", nameof(gravityMPerS2));
+
+            liquidSlope = gravity * liquidDensityKgM3;
+            gasSlope = gravity * gasDensityKgM3;
+            waterline = new double[grid.Cells.X * grid.Cells.Z];
+            var fractions = new double[plan.GroupCount];
+            for (int group = 0; group < plan.GroupCount; group++)
+            {
+                double liquid = inventory.LiquidM3[group], gas = inventory.GasM3[group];
+                if (!SiUnits.IsFinite(liquid) || liquid < 0 || !SiUnits.IsFinite(gas) || gas < 0 ||
+                    Math.Abs(liquid + gas - plan.Volumes[group]) > 1e-10 * grid.CellVolume)
+                    throw new ArgumentException("Invalid phase volumes for column pressure.", nameof(inventory));
+                fractions[group] = liquid / (liquid + gas);
+            }
+
+            var clipping = new CutCellVofGeometry(plan.Geometry);
+            for (int z = 0; z < grid.Cells.Z; z++)
+            for (int x = 0; x < grid.Cells.X; x++)
+            {
+                double remaining = 0;
+                for (int y = 0; y < grid.Cells.Y; y++)
+                {
+                    int cell = grid.Cells.Index(x, y, z);
+                    int group = plan.GroupByCell[cell];
+                    if (group >= 0) remaining += fractions[group] * plan.Geometry.FluidVolumeM3[cell];
+                }
+
+                double height = 0;
+                for (int y = 0; y < grid.Cells.Y && remaining > 0; y++)
+                {
+                    int cell = grid.Cells.Index(x, y, z);
+                    double capacity = plan.Geometry.FluidVolumeM3[cell];
+                    if (remaining < capacity)
+                    {
+                        height = clipping.Reconstruct(cell, new D3(0, 1, 0), remaining).Offset;
+                        break;
+                    }
+                    remaining -= capacity;
+                    height = (y + 1) * grid.Spacing.Y;
+                }
+                waterline[z * grid.Cells.X + x] = height;
+            }
+        }
+
+
+        // Sample using the patch's fluid-side cell so an ice surface on
+        // a grid face never selects the adjacent solid cell by rounding.
+        public double At(int cell, D3 worldPointM)
+        {
+            grid.Cells.Coordinates(cell, out int x, out int y, out int z);
+            if (!grid.Cells.Interior(x, y, z)) throw new ArgumentOutOfRangeException(nameof(cell));
+            double height = waterline[z * grid.Cells.X + x];
+            double pointY = grid.Frame.ToLocal(worldPointM).Y;
+            double waterDepth = Math.Max(0, height - pointY);
+            double airDepth = grid.Cells.Y * grid.Spacing.Y - Math.Max(pointY, height);
+            return liquidSlope * waterDepth + gasSlope * airDepth;
+        }
+    }
+}

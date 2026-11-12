@@ -85,7 +85,7 @@ namespace PhysicsSim.ThreePhase3D.Solids
         // Use the accepted group pressure as a piecewise-constant sample on
         // each patch. An optional background restores a hydrostatic split.
         public static IcePressureLoad FromProjection(IceBody body, VariableCoefficientProjection plan,
-            IReadOnlyList<double> groupPressurePa, Func<D3, double> backgroundPressurePa = null)
+            IReadOnlyList<double> groupPressurePa, Func<D3, double> backgroundPressurePa = null, ColumnHydrostaticPressure columnPressure = null)
         {
             if (plan == null) throw new ArgumentNullException(nameof(plan));
             if (groupPressurePa == null || groupPressurePa.Count != plan.GroupCount)
@@ -94,7 +94,7 @@ namespace PhysicsSim.ThreePhase3D.Solids
             {
                 int group = plan.GroupByCell[patch.Cell];
                 if (group < 0) throw new InvalidOperationException("An exposed ice patch has no fluid pressure group.");
-                return groupPressurePa[group] + (backgroundPressurePa?.Invoke(point) ?? 0);
+                return groupPressurePa[group] + (backgroundPressurePa?.Invoke(point) ?? 0) + (columnPressure?.At(patch.Cell, point) ?? 0);
             });
         }
 
