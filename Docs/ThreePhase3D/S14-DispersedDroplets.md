@@ -12,4 +12,10 @@ Run `FlowMain --droplet-heating`. This fixture uses the quasi-steady spherical c
 
 All nine CPU cases passed across radii 5, 10 and 15 µm and initial gas temperatures 285, 300 and 315 K. Results agreed with the analytical temperature within 1e-10 K for one, ten and one hundred steps over 5 ms, and the combined sensible energy balanced at every step. The 10 µm droplet warmed from 300 K to 308.757759 K in initially 315 K gas, which cooled to 314.124224 K.
 
-Evaporation, gas-grid coupling and mass closure remain open.
+## V37 isolated evaporation
+
+Run `FlowMain --droplet-evaporation`. The model uses the stagnant-gas Spalding limit with fixed density, diffusivity and surface and ambient vapour mass fractions. The [diameter-squared law, equations 51–55](https://www.mdpi.com/1099-4300/25/8/1232) gives the exact radius update under these assumptions. The routine returns the vapour mass and enthalpy and the heat required to hold the droplet isothermal. It caps transfer at the initial liquid inventory when the step crosses extinction.
+
+CPU checks covered 5, 10 and 15 µm initial radii, drying and saturation, and one, ten and one hundred steps. The drying slope was -3.6529456e-9 m²/s. Partial evaporation and extinction matched the reference, and the mass and enthalpy ledgers closed at each step. The saturated control transferred zero mass.
+
+This benchmark prescribes humidity and uses an external heat ledger. Evolving droplet temperature during evaporation and coupling the transfers to the gas grid remain open.
