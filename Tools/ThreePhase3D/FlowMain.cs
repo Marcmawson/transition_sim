@@ -9,6 +9,11 @@ internal static class FlowMain
 {
     public static int Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--bubble-rise")
+        {
+            CheckResolvedBubbleRise();
+            return 0;
+        }
         if (args.Length == 1 && args[0] == "--pure-stefan")
         {
             CheckPureWaterStefan();
@@ -55,6 +60,76 @@ internal static class FlowMain
             Console.WriteLine($"{passed}/{suite.Rows.Count} passed");
         }
         return suite.Passed ? 0 : 1;
+    }
+
+    private static void CheckResolvedBubbleRise()
+    {
+        const double dx = 0.001, dt = 0.0004;
+        var grid = new Grid3D(8, 8, 8, new D3(dx, dx, dx), RigidFrame.Identity);
+        var centre = new D3(0.004, 0.003, 0.004);
+        var sphere = SurfacePrimitives.Transform(SurfacePrimitives.Sphere(0.0016, 12, 24),
+            RigidFrame.Euler(centre, 0, 0, 0));
+        var seed = CutCellGeometry.Build(grid, iceSurface: sphere);
+        var domain = CutCellGeometry.Build(grid);
+        var saturation = new PureWaterStefanInterface(101325, 370, 377, 0, 0).Saturation;
+        double rhoL = saturation.Liquid.DensityKgM3, rhoG = saturation.Vapour.DensityKgM3;
+        var plan = new VariableCoefficientProjection(domain, BoundaryConditions3D.Closed,
+            cell => rhoL + (rhoG - rhoL) * seed.IceVolumeM3[cell] / grid.CellVolume, _ => 0);
+        var gas = new double[plan.GroupCount];
+        var centres = new D3[plan.GroupCount];
+        for (int cell = 0; cell < plan.GroupByCell.Length; cell++)
+        {
+            int group = plan.GroupByCell[cell];
+            if (group < 0) continue;
+            grid.Cells.Coordinates(cell, out int x, out int y, out int z);
+            gas[group] = seed.IceVolumeM3[cell];
+            centres[group] = grid.Centre(x, y, z);
+        }
+        var liquid = new double[gas.Length];
+        for (int group = 0; group < gas.Length; group++) liquid[group] = plan.Volumes[group] - gas[group];
+        var state = new CutCellInventories(liquid, gas,
+            Array.ConvertAll(liquid, v => v * rhoL * saturation.Liquid.EnthalpyJkg),
+            Array.ConvertAll(gas, v => v * rhoG * saturation.Vapour.EnthalpyJkg),
+            Array.ConvertAll(gas, v => v * rhoG));
+        var transport = new CutCellVofTransport(plan);
+        double volume = Sum(gas);
+        D3 initial = Centre(gas);
+        var still = Run(default);
+        var rising = Run(new D3(0, -9.81, 0));
+        var displacement = Centre(rising.GasM3) - initial;
+        if ((Centre(still.GasM3) - initial).Length > 1e-12 || displacement.Y <= 1e-8 ||
+            Math.Sqrt(displacement.X * displacement.X + displacement.Z * displacement.Z) > 0.02 * displacement.Y)
+            throw new InvalidOperationException($"The resolved vapour seed did not rise symmetrically: {displacement.Y:G8} m.");
+        Console.WriteLine(FormattableString.Invariant(
+            $"S13 resolved bubble rise passed: 6 steps, vertical centre displacement {displacement.Y:G8} m, vapour volume {volume:G8} m3."));
+
+        CutCellInventories Run(D3 gravity)
+        {
+            var fields = state;
+            var pressure = FlowCpuReference.Project(plan, new float[plan.FaceCount], dt, 32768);
+            for (int step = 0; step < 6; step++)
+            {
+                var result = transport.AdvanceCoupledWithAcceleration(fields, pressure, rhoL, rhoG,
+                    gravity, maxIterations: 32768);
+                fields = result.Transport.Fields;
+                pressure = result.Pressure;
+                for (int field = 0; field < state.Planes.Length; field++)
+                {
+                    double before = Sum(state.Planes[field]);
+                    if (Math.Abs(Sum(fields.Planes[field]) - before) > Math.Abs(before) * 1e-9)
+                        throw new InvalidOperationException("The closed bubble fixture failed an inventory balance.");
+                }
+            }
+            return fields;
+        }
+
+        D3 Centre(double[] volumes)
+        {
+            D3 firstMoment = default;
+            for (int group = 0; group < volumes.Length; group++) firstMoment += centres[group] * volumes[group];
+            return firstMoment / Sum(volumes);
+        }
+        double Sum(double[] values) => System.Linq.Enumerable.Sum(values);
     }
 
     private static void CheckCapillaryBubble()

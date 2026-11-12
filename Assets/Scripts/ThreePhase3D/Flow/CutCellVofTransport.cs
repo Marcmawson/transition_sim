@@ -608,8 +608,12 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 if (next[0][c] < -Tolerance * volume || next[1][c] < -Tolerance * volume ||
                     Math.Abs(next[0][c] + next[1][c] - volume) > 4 * Tolerance * volume)
                     throw new InvalidOperationException("Cut-cell phase volume closure failed.");
-                double liquid = next[1][c] <= 0 ? volume : Math.Max(0, Math.Min(volume, next[0][c]));
-                double gas = volume - liquid;
+                // Close the larger phase by subtraction to preserve a trace phase
+                // and its advected enthalpy when the complement rounds to the cell volume.
+                bool liquidIsSmaller = next[0][c] <= next[1][c];
+                double smaller = Math.Max(0, Math.Min(volume, liquidIsSmaller ? next[0][c] : next[1][c]));
+                double liquid = liquidIsSmaller ? smaller : volume - smaller;
+                double gas = liquidIsSmaller ? volume - smaller : smaller;
                 roundoff += Math.Abs(liquid - next[0][c]) + Math.Abs(gas - next[1][c]);
                 next[0][c] = liquid;
                 next[1][c] = gas;
@@ -642,7 +646,12 @@ namespace PhysicsSim.ThreePhase3D.Flow
             var reservoir = work.Reservoir;
             int faces = plan.FaceCount;
             var next = new double[5][];
-            for (int field = 0; field < 5; field++) next[field] = (double[])fields[field].Clone();
+            var remaining = new double[5][];
+            for (int field = 0; field < 5; field++)
+            {
+                next[field] = new double[plan.GroupCount];
+                remaining[field] = (double[])fields[field].Clone();
+            }
             var boundary = new double[5];
             var liquidFace = new double[faces];
             var gasFace = new double[faces];
@@ -658,20 +667,46 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 {
                     double delta = correction[f], volume = plan.Volumes[donor];
                     double fraction = fields[0][donor] / volume;
-                    double capacity = (delta < 0 ? 1 - fraction : fraction) * (volume - outgoing[donor]);
+                    double gasFraction = fields[1][donor] / volume;
+                    double capacity = (delta < 0 ? gasFraction : fraction) * (volume - outgoing[donor]);
                     double demand = delta < 0 ? decrease[donor] : increase[donor];
                     double accepted = demand > capacity ? delta * (capacity / demand) : delta;
                     limited += Math.Abs(delta - accepted);
                     double proposed = fraction * Math.Abs(q) + accepted;
                     if (proposed < -Tolerance * volume || proposed > Math.Abs(q) + Tolerance * volume)
                         throw new InvalidOperationException("Cut-cell limiter exceeded the swept volume.");
-                    double bounded = Math.Max(0, Math.Min(Math.Abs(q), proposed));
-                    roundoff += Math.Abs(bounded - proposed);
-                    l = Math.Sign(q) * bounded;
-                    g = q - l;
-                    el = Scale(l, fields[0][donor], fields[2][donor]);
-                    eg = Scale(g, fields[1][donor], fields[3][donor]);
-                    vapour = Scale(g, fields[1][donor], fields[4][donor]);
+                    double proposedGas = gasFraction * Math.Abs(q) - accepted;
+                    double width = Math.Abs(q);
+                    double liquid = proposed <= proposedGas ? Math.Max(0, Math.Min(width, proposed)) : 0;
+                    double gas = proposed <= proposedGas ? width - liquid : Math.Max(0, Math.Min(width, proposedGas));
+                    if (proposed > proposedGas) liquid = width - gas;
+                    if (liquid > remaining[0][donor])
+                    {
+                        liquid = remaining[0][donor];
+                        gas = width - liquid;
+                    }
+                    if (gas > remaining[1][donor])
+                    {
+                        gas = remaining[1][donor];
+                        liquid = width - gas;
+                    }
+                    if (liquid > remaining[0][donor] || Math.Abs(liquid - proposed) > Tolerance * volume)
+                        throw new InvalidOperationException("Cut-cell transport overdraws a phase donor.");
+                    roundoff += Math.Abs(liquid - proposed);
+                    l = Math.Sign(q) * liquid;
+                    g = Math.Sign(q) * gas;
+                    el = Take(2, l, remaining[0][donor]);
+                    eg = Take(3, g, remaining[1][donor]);
+                    vapour = Take(4, g, remaining[1][donor]);
+                    remaining[0][donor] -= liquid;
+                    remaining[1][donor] -= gas;
+
+                    double Take(int field, double amount, double available)
+                    {
+                        double value = Scale(Math.Abs(amount), available, remaining[field][donor]);
+                        remaining[field][donor] -= value;
+                        return Math.Sign(q) * value;
+                    }
                 }
                 else
                 {
@@ -688,12 +723,15 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
                 void Transfer(int field, double amount)
                 {
-                    if (metric.Low >= 0) next[field][metric.Low] -= amount;
-                    else boundary[field] += amount;
-                    if (metric.High >= 0) next[field][metric.High] += amount;
-                    else boundary[field] -= amount;
+                    int receiver = q > 0 ? metric.High : metric.Low;
+                    if (receiver >= 0) next[field][receiver] += Math.Sign(q) * amount;
+                    if (metric.Low < 0) boundary[field] += amount;
+                    if (metric.High < 0) boundary[field] -= amount;
                 }
             }
+            for (int field = 0; field < next.Length; field++)
+            for (int group = 0; group < plan.GroupCount; group++)
+                next[field][group] += remaining[field][group];
 
             return new CutCellScalarOutput(next, liquidFace, gasFace, boundary, roundoff, limited);
         }
@@ -861,7 +899,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     Math.Abs(fields[0][c] + fields[1][c] - plan.Volumes[c]) > Tolerance * plan.Volumes[c] ||
                     (fields[0][c] == 0 && fields[2][c] != 0) ||
                     (fields[1][c] == 0 && (fields[3][c] != 0 || fields[4][c] != 0)))
-                    throw new ArgumentException("Invalid cut-cell phase inventory.");
+                    throw new ArgumentException($"Invalid cut-cell phase inventory in group {c}: liquid {fields[0][c]:G17}, gas {fields[1][c]:G17}, liquid enthalpy {fields[2][c]:G17}, gas enthalpy {fields[3][c]:G17}, vapour {fields[4][c]:G17}.");
             }
         }
     }
