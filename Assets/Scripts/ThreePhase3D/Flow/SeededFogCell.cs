@@ -7,6 +7,22 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // Each parcel represents identical seeded droplets sharing one gas inventory.
     internal static class SeededFogCell
     {
+        internal static (CutCellInventories Fields, CutCellMomentumResult Momentum) ReinsertWithFaceMomentum(
+            VariableCoefficientProjection plan, CutCellInventories state, double[] displacement,
+            float[] faceVelocity, double gasDensity, double radiusM, double temperatureK, int multiplicity, D3 velocity)
+        {
+            if (!(gasDensity > 0) || !SiUnits.IsFinite(gasDensity))
+                throw new ArgumentOutOfRangeException(nameof(gasDensity));
+            var reinserted = ReinsertResolvedLiquid(plan, state, displacement, radiusM, temperatureK, multiplicity, velocity);
+            var remap = new CutCellMomentum(plan);
+            double liquidDensity = DropletGasCellExchange.LiquidDensity;
+            var momentum = remap.GatherGroupMomentum(state, faceVelocity, liquidDensity, gasDensity);
+            for (int axis = 0; axis < 3; axis++)
+            for (int group = 0; group < plan.GroupCount; group++)
+                momentum[axis][group] += reinserted.LiquidMomentum[group][axis];
+            return (reinserted.Fields, remap.ScatterGroupMomentum(reinserted.Fields, momentum, liquidDensity, gasDensity));
+        }
+
         // Deposit unresolved occupancy in the pressure group containing the centre.
         // Mixed groups and footprints that would fill the group require a different remap.
         internal static double[] SelectParcelFootprint(VariableCoefficientProjection plan,

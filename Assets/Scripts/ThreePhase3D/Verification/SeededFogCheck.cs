@@ -196,6 +196,27 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         throw new InvalidOperationException("S14 parcel reinsertion failed its liquid or gas inventory check.");
                 }
                 new CutCellVofTransport(plan).Advance(reinserted.Fields, new double[plan.FaceCount], dt);
+                const double gasDensity = 1.2;
+                var incomingVelocity = new float[plan.FaceCount];
+                incomingVelocity[face] = -0.02f;
+                var existing = new CutCellMomentum(plan).GatherGroupMomentum(moved.Fields, incomingVelocity,
+                    DropletGasCellExchange.LiquidDensity, gasDensity);
+                var staggered = SeededFogCell.ReinsertWithFaceMomentum(plan, moved.Fields, displaced,
+                    incomingVelocity, gasDensity, parcel.RadiusM, parcel.TemperatureK, parcel.Multiplicity, parcel.Velocity);
+                var faceTotals = new double[3];
+                for (int index = 0; index < plan.FaceCount; index++)
+                    faceTotals[plan.Faces[index].Axis] += staggered.Momentum.MomentumKgMPerS[index];
+                for (int axis = 0; axis < 3; axis++)
+                {
+                    double prior = 0;
+                    foreach (double value in existing[axis]) prior += value;
+                    if (Math.Abs(faceTotals[axis] - prior - momentum[axis]) > 1e-26)
+                        throw new InvalidOperationException("S14 reinsertion did not conserve staggered momentum.");
+                }
+                if (staggered.Momentum.VelocityMPerS[face] <= 0)
+                    throw new InvalidOperationException("S14 reinserted momentum did not drive the destination face.");
+                log(FormattableString.Invariant(
+                    $"S14 staggered reinsertion passed: destination face {staggered.Momentum.VelocityMPerS[face]:G8} m/s."));
                 log(FormattableString.Invariant(
                     $"S14 parcel reinsertion passed: restored {reinserted.Fields.LiquidM3[destination]:G8} m3 to the destination VOF group."));
             }
