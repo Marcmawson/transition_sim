@@ -141,3 +141,7 @@ Unity DX11 passed the six GPU transmission samples, with 99.97538000% transmissi
 ## Dielectric glass preview
 
 Enable Use Dielectric Glass Preview on Beaker3DSetup in the overhead-lit apparatus scene. The Built-in Render Pipeline material uses the MAT015 DURAN index of 1.473 at 587.6 nm to set normal-incidence specular reflectance to approximately 3.66%. It renders specular highlights with premultiplied transparency. Refraction, spectral absorption and water rendering are separate remaining work. Visual verification in Unity is pending.
+
+## Dielectric water preview
+
+On Solid Beaker Thermal Preview, enable Use Dielectric Water Preview before entering Play Mode. The existing water mesh uses the same Built-in Render Pipeline dielectric shader as the optional glass material. The representative visible water index of 1.333 (O01) sets normal-incidence reflectance to approximately 2.04%. The default temperature-coloured mode remains available through the Inspector. The dielectric mode displays surface reflection under the scene lights. Refraction, absorption and visual verification in Unity remain open.
