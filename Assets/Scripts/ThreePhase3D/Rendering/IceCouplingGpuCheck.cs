@@ -93,6 +93,49 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
         }
 
+        public static void RunMovingMelt(Func<string, float, bool> cancel)
+        {
+            var shader = Resources.Load<ComputeShader>("ThreePhase3D/SinglePhaseFlow");
+            if (!SystemInfo.supportsComputeShaders || shader == null)
+                throw new NotSupportedException("The S11 moving melt check requires the GPU pressure solver.");
+
+            const int steps = 3;
+            FlowGpuSolver solver = null;
+            VariableCoefficientProjection activePlan = null;
+            double[] pressureSeed = null;
+            int stage = 0, trial = 0;
+            try
+            {
+                var result = IceMovingMeltCheck.Run(steps, 0.001, (plan, velocity, dt, flux) =>
+                {
+                    if (activePlan != plan)
+                    {
+                        solver?.Dispose();
+                        solver = new FlowGpuSolver(plan, null, shader);
+                        activePlan = plan;
+                        pressureSeed = null;
+                        stage++;
+                        trial = 0;
+                    }
+                    if (cancel?.Invoke($"Moving melt stage {stage}/{2 * steps}, projection {++trial}",
+                        (stage - 1f) / (2 * steps)) == true)
+                        throw new OperationCanceledException();
+                    var flow = solver.Project(velocity, dt, 32768, initialPressure: pressureSeed, boundaryFlux: flux);
+                    pressureSeed = flow.GroupPressurePa;
+                    return flow;
+                });
+                if (Math.Abs(result.HeatJ / 0.0020747506 - 1) > 0.01 ||
+                    Math.Abs(result.MassLossKg / 6.2225123e-9 - 1) > 0.01 ||
+                    Math.Abs(result.DisplacementM - 2.6307321e-6) > 1e-6)
+                    throw new InvalidOperationException($"S11 GPU moving melt differs from the CPU baseline: heat {result.HeatJ:G8} J, ice loss {result.MassLossKg:G8} kg, centre displacement {result.DisplacementM:G8} m.");
+                Debug.Log($"S11 GPU moving melt passed: heat {result.HeatJ:G8} J, ice loss {result.MassLossKg:G8} kg, centre displacement {result.DisplacementM:G8} m.");
+            }
+            finally
+            {
+                solver?.Dispose();
+            }
+        }
+
         private static void Check(ComputeShader shader, double offset, double referenceRise,
             Func<string, float, bool> cancel)
         {
