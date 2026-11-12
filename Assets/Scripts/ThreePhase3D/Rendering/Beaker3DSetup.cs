@@ -10,7 +10,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     public sealed class Beaker3DSetup : MonoBehaviour
     {
         public ScenarioConfigSI scenario = new ScenarioConfigSI();
-        [SerializeField] bool useDielectricGlassPreview;
+        [SerializeField] bool useDielectricGlassPreview = false;
+        [SerializeField] bool useGlassRefractionPreview = false;
         readonly List<Object> ownedResources = new List<Object>();
         GameObject generated;
         string previewHash;
@@ -61,16 +62,19 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
         }
 
-        string PreviewHash() => RecordJson.Hash(RecordJson.Encode(scenario)) + (useDielectricGlassPreview ? ":dielectric" : ":tinted");
+        string PreviewHash() => RecordJson.Hash(RecordJson.Encode(scenario)) +
+            (useDielectricGlassPreview ? (useGlassRefractionPreview ? ":refractive" : ":dielectric") : ":tinted");
 
         Material NewDielectricGlass()
         {
-            var shader = Resources.Load<Shader>("ThreePhase3D/BeakerDielectric");
+            var shader = Resources.Load<Shader>(useGlassRefractionPreview
+                ? "ThreePhase3D/BeakerRefraction" : "ThreePhase3D/BeakerDielectric");
             if (shader == null) throw new System.InvalidOperationException("Beaker dielectric shader unavailable.");
             const float duranIndex = 1.473f; // MAT015, 587.6 nm, air approximated as n = 1.
             float amplitude = (duranIndex - 1) / (duranIndex + 1);
             var material = new Material(shader) { name = "DURAN dielectric preview", hideFlags = HideFlags.HideAndDontSave };
             material.SetFloat("_NormalReflectance", amplitude * amplitude);
+            if (useGlassRefractionPreview) material.SetFloat("_RefractiveIndex", duranIndex);
             ownedResources.Add(material);
             return material;
         }

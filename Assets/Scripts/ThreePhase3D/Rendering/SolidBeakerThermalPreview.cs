@@ -19,6 +19,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         [SerializeField] private bool largerBeaker = false;
         [SerializeField] private bool includeWater = true;
         [SerializeField] private bool useDielectricWaterPreview = false;
+        [SerializeField] private bool useWaterRefractionPreview = false;
         [SerializeField, Range(21f, 100f)] private float hotWaterColourC = 30f;
         [SerializeField, Range(0f, 100f)] private float absorbedBurnerPowerW = 10f;
         [SerializeField, Range(0f, 30f), Tooltip("Synthetic film coefficient to a 20 °C room, in W/(m² K).")]
@@ -167,8 +168,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void SpawnWaterDisplay(double radiusM, double floorM, int segments)
         {
-            var shaderAsset = Resources.Load<Shader>(useDielectricWaterPreview
-                ? "ThreePhase3D/BeakerDielectric" : "ThreePhase3D/WaterTemperatureSurface");
+            string shaderName = useDielectricWaterPreview
+                ? (useWaterRefractionPreview ? "BeakerRefraction" : "BeakerDielectric")
+                : "WaterTemperatureSurface";
+            var shaderAsset = Resources.Load<Shader>("ThreePhase3D/" + shaderName);
             if (shaderAsset == null)
                 throw new InvalidOperationException("The selected water surface shader is unavailable.");
 
@@ -269,6 +272,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 const float waterIndex = 1.333f; // O01, representative visible index.
                 float amplitude = (waterIndex - 1) / (waterIndex + 1);
                 waterMaterial.SetFloat("_NormalReflectance", amplitude * amplitude);
+                if (useWaterRefractionPreview) waterMaterial.SetFloat("_RefractiveIndex", waterIndex);
             }
             waterDisplay.AddComponent<MeshRenderer>().sharedMaterial = waterMaterial;
             RefreshWaterColours();
