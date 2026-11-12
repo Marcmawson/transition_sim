@@ -162,3 +162,9 @@ The CPU fixture places a slab edge across an ice face. The exposed strip produce
 The translation sweep uses the glass floor and the inner side planes at the same angular resolution as the polygonal beaker mesh. At the first hit it collects touching hull vertices across all active planes and resolves their normal impulses together. It returns the impact pose, elapsed time and total wall reaction. This step assumes a non-spinning hull below the rim and leaves the rest of the timestep to the caller.
 
 The CPU fixture used a 24-facet beaker and a 0.4 m/s side approach, both with and without a simultaneous 0.4 m/s floor approach. Both impacts arrived at 5 ms. At restitution 0.5, the normal velocities rebounded at 0.2 m/s, the wall impulse balanced the ice momentum change, and all vertices stayed inside the vessel within 1e-12 m. The shorter clear sweep and existing plane impact and support checks passed. Rotating beaker sweeps, coupled pressure and impact stepping, and Unity GPU verification remain open.
+
+## V25 principal-axis spin inside the beaker
+
+The beaker sweep now uses the conservative rotating plane sweep for the floor and each side facet, then resolves the earliest contact manifold. A centre-height and hull-radius bound keeps the full rotating arc below the rim. The supported motion is constant translation with torque-free principal-axis spin.
+
+In separate CPU fixtures a box spinning at 10 rad/s hit the floor and a side facet after 20 ms, within 1 ns of the analytic contact times. Both sweeps had clear start and end poses over a full revolution. The wall reactions balanced the linear impulse, and the translational beaker and resting-support checks passed again. General tumbling, coupled pressure and impact stepping, and Unity GPU verification remain open.

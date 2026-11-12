@@ -137,9 +137,9 @@ namespace PhysicsSim.ThreePhase3D.Solids
             return new Sweep(rebound, sweep.ElapsedSeconds, true, sweep.ContactPointM);
         }
 
-        // First impact for a non-spinning hull wholly inside the beaker below its rim.
+        // First impact for a translating or principal-axis-spinning hull inside the beaker.
         // The side planes coincide with the facets of ApparatusSurface.Beaker.
-        public static Sweep AdvanceAndResolveBeakerTranslation(IceBody body, IReadOnlyList<D3> verticesLocalM,
+        public static Sweep AdvanceAndResolveBeakerImpact(IceBody body, IReadOnlyList<D3> verticesLocalM,
             GeometryInputs glass, int segments, RigidFrame beakerFrame, double seconds, double restitution,
             out D3 wallReactionNs)
         {
@@ -155,9 +155,6 @@ namespace PhysicsSim.ThreePhase3D.Solids
                 throw new ArgumentOutOfRangeException(nameof(seconds));
             if (!SiUnits.IsFinite(restitution) || restitution < 0 || restitution > 1)
                 throw new ArgumentOutOfRangeException(nameof(restitution));
-            if (body.AngularMomentumKgM2PerS.Length != 0)
-                throw new NotSupportedException("The beaker translation sweep requires constant orientation.");
-
             double floorY = glass.externalBaseHeightM + glass.baseThicknessM;
             double apothem = glass.innerRadiusM * Math.Cos(Math.PI / segments);
             var planes = new (D3 Point, D3 Normal)[segments + 1];
@@ -172,19 +169,24 @@ namespace PhysicsSim.ThreePhase3D.Solids
             var earliest = new Sweep(body, seconds, false, default);
             foreach (var plane in planes)
             {
-                var candidate = AdvanceTranslationToPlane(body, verticesLocalM, plane.Point, plane.Normal, seconds);
+                var candidate = AdvancePrincipalRotationToPlane(body, verticesLocalM, plane.Point, plane.Normal, seconds);
                 if (candidate.Hit && (!earliest.Hit || candidate.ElapsedSeconds < earliest.ElapsedSeconds))
                     earliest = candidate;
             }
 
             var atEnd = earliest.Hit ? earliest.Body : body.Advance(seconds, default, default);
+            bool spinning = body.AngularMomentumKgM2PerS.Length != 0;
+            double highestCentre = Math.Max(beakerFrame.ToLocal(body.Frame.Origin).Y,
+                beakerFrame.ToLocal(atEnd.Frame.Origin).Y);
             var points = new List<D3>();
             var normals = new List<D3>();
             foreach (D3 vertex in verticesLocalM)
             {
                 D3 point = atEnd.Frame.ToWorld(vertex);
-                if (beakerFrame.ToLocal(body.Frame.ToWorld(vertex)).Y > glass.RimHeightM ||
-                    beakerFrame.ToLocal(point).Y > glass.RimHeightM)
+                // For spin, bound the whole arc, including excursions between endpoints.
+                double highest = spinning ? highestCentre + vertex.Length : Math.Max(
+                    beakerFrame.ToLocal(body.Frame.ToWorld(vertex)).Y, beakerFrame.ToLocal(point).Y);
+                if (highest > glass.RimHeightM)
                     throw new NotSupportedException("The beaker sweep requires the hull to stay below the rim.");
                 if (!earliest.Hit) continue;
                 foreach (var plane in planes)

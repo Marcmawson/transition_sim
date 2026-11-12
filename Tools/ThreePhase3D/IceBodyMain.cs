@@ -66,12 +66,12 @@ internal static class IceBodyMain
             var box = IceBody.Box(917, new D3(2 * half, 2 * half, 2 * half), frame);
             var velocity = outward * 0.4 - up * downwardSpeed;
             var body = new IceBody(box.MassKg, box.PrincipalInertiaKgM2, frame, velocity * box.MassKg, default);
-            var clear = IceWallContact.AdvanceAndResolveBeakerTranslation(body, hull, glass, segments,
+            var clear = IceWallContact.AdvanceAndResolveBeakerImpact(body, hull, glass, segments,
                 RigidFrame.Identity, impactTime / 2, restitution, out D3 clearReaction);
             if (clear.Hit) throw new InvalidOperationException("The short beaker sweep should stay clear.");
             Near(clearReaction.Length, 0, 0);
 
-            var hit = IceWallContact.AdvanceAndResolveBeakerTranslation(body, hull, glass, segments,
+            var hit = IceWallContact.AdvanceAndResolveBeakerImpact(body, hull, glass, segments,
                 RigidFrame.Identity, 2 * impactTime, restitution, out D3 reaction);
             if (!hit.Hit) throw new InvalidOperationException("The beaker sweep missed the wall.");
             Near(hit.ElapsedSeconds, impactTime, 1e-12);
@@ -228,6 +228,38 @@ internal static class IceBodyMain
         var clear = IceWallContact.AdvancePrincipalRotationToPlane(body, vertices, default, new D3(0, 1, 0), 0.01);
         if (clear.Hit) throw new InvalidOperationException("Reported contact before the analytic time.");
         Near(clear.ElapsedSeconds, 0.01, 0);
+        var glass = new GeometryInputs();
+        double floor = glass.externalBaseHeightM + glass.baseThicknessM;
+        var inBeaker = new IceBody(body.MassKg, body.PrincipalInertiaKgM2,
+            RigidFrame.Euler(new D3(0, floor + height, 0), 0, 0, 0), default, body.AngularMomentumKgM2PerS);
+        var beakerHit = IceWallContact.AdvanceAndResolveBeakerImpact(inBeaker, vertices, glass, 24,
+            RigidFrame.Identity, interval, 0.5, out D3 wallReaction);
+        if (!beakerHit.Hit || wallReaction.Y >= 0)
+            throw new InvalidOperationException("The rotating ice missed the beaker floor impulse.");
+        Near(beakerHit.ElapsedSeconds, angleAtImpact / spin, 1e-9);
+        Near(beakerHit.ContactPointM.Y, floor, 1e-10);
+        Near((wallReaction + beakerHit.Body.MomentumKgMPerS).Length, 0, 1e-12);
+        foreach (D3 vertex in vertices)
+            if (beakerHit.Body.Frame.ToWorld(vertex).Y < floor - 1e-10)
+                throw new InvalidOperationException("The rotating ice penetrated the beaker floor.");
+
+        const int segments = 24;
+        double facetAngle = Math.PI / segments;
+        double apothem = glass.innerRadiusM * Math.Cos(facetAngle);
+        double reach = 0.02 * Math.Cos(angleAtImpact) + 0.015 * Math.Sin(angleAtImpact);
+        var narrowHull = Array.ConvertAll(vertices, vertex => new D3(vertex.X, vertex.Y, vertex.Z * 0.4));
+        var sideBox = IceBody.Box(917, new D3(0.04, 0.03, 0.008),
+            RigidFrame.Euler(new D3(apothem - reach, floor + 0.04, 0), 0, 0, 0));
+        var againstSide = new IceBody(sideBox.MassKg, sideBox.PrincipalInertiaKgM2, sideBox.Frame,
+            default, new D3(0, 0, spin * sideBox.PrincipalInertiaKgM2.Z));
+        var sideHit = IceWallContact.AdvanceAndResolveBeakerImpact(againstSide, narrowHull, glass, segments,
+            RigidFrame.Euler(default, facetAngle, 0, 0), interval, 0.5, out D3 sideReaction);
+        if (!sideHit.Hit || sideReaction.X <= 0)
+            throw new InvalidOperationException("The rotating ice missed the beaker side impulse.");
+        Near(sideHit.ElapsedSeconds, angleAtImpact / spin, 1e-9);
+        Near(sideHit.ContactPointM.X, apothem, 1e-10);
+        Near((sideReaction + sideHit.Body.MomentumKgMPerS).Length, 0, 1e-12);
+        Console.WriteLine("S11 V25 rotating beaker impacts passed: separate floor and side hits at 20 ms between clear endpoints.");
         Console.WriteLine(FormattableString.Invariant(
             $"S11 V25 rotating sweep passed: impact at {sweep.ElapsedSeconds * 1000:F6} ms with both endpoints clear."));
     }
