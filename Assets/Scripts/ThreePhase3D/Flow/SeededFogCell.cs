@@ -7,6 +7,30 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // Each parcel represents identical seeded droplets sharing one gas inventory.
     internal static class SeededFogCell
     {
+        internal static (double RadiusM, double TemperatureK, int Multiplicity, D3 Velocity) FromResolvedLiquid(
+            double liquidM3, double enthalpyJ, D3 momentum, int multiplicity)
+        {
+            if (!(liquidM3 > 0) || !SiUnits.IsFinite(liquidM3) || multiplicity <= 0)
+                throw new ArgumentException("Conversion requires positive liquid volume and multiplicity.");
+            double mass = liquidM3 * DropletGasCellExchange.LiquidDensity;
+            double temperature = DropletGasCellExchange.ReferenceK + enthalpyJ / (mass * DropletGasCellExchange.LiquidCp);
+            if (!(temperature >= DropletGasCellExchange.ReferenceK && temperature <= 320))
+                throw new ArgumentException("Resolved liquid enthalpy is outside the parcel model range.");
+            return (Math.Pow(liquidM3 / multiplicity * (3 / (4 * Math.PI)), 1.0 / 3),
+                temperature, multiplicity, momentum / mass);
+        }
+
+        internal static (double LiquidM3, double EnthalpyJ, D3 Momentum) ToResolvedLiquid(
+            double radiusM, double temperatureK, int multiplicity, D3 velocity)
+        {
+            if (!(radiusM > 0) || !SiUnits.IsFinite(radiusM) || multiplicity <= 0 ||
+                !(temperatureK >= DropletGasCellExchange.ReferenceK && temperatureK <= 320))
+                throw new ArgumentException("Conversion requires a valid liquid parcel.");
+            double mass = DropletGasCellExchange.Mass(radiusM) * multiplicity;
+            return (mass / DropletGasCellExchange.LiquidDensity, mass * DropletGasCellExchange.LiquidCp *
+                (temperatureK - DropletGasCellExchange.ReferenceK), velocity * mass);
+        }
+
         internal static ((D3 Position, double RadiusM, double TemperatureK, int Multiplicity)[] Parcels,
             (double DryAirKg, double VapourKg, double EnthalpyJ)[] Gas, D3[] ParcelVelocity, D3[] GasMomentum,
             (long Droplets, double LiquidKg, double EnthalpyJ, D3 Momentum) Outlet,

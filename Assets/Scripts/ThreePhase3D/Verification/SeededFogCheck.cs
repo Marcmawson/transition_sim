@@ -54,6 +54,31 @@ namespace PhysicsSim.ThreePhase3D.Verification
 
             CheckSampling();
             CheckSpatialTransport();
+            CheckConversion();
+
+            void CheckConversion()
+            {
+                double maxResidual = 0;
+                foreach (double fraction in new[] { 0.001, 0.01, 0.1 })
+                foreach (int multiplicity in new[] { 1, 8, 32 })
+                {
+                    double volume = 1e-12 * fraction;
+                    double mass = volume * DropletGasCellExchange.LiquidDensity;
+                    double enthalpy = mass * DropletGasCellExchange.LiquidCp * (temperature - referenceK);
+                    var momentum = new D3(0.01, -0.02, 0.03) * mass;
+                    var parcel = SeededFogCell.FromResolvedLiquid(volume, enthalpy, momentum, multiplicity);
+                    var restored = SeededFogCell.ToResolvedLiquid(parcel.RadiusM, parcel.TemperatureK,
+                        parcel.Multiplicity, parcel.Velocity);
+                    double residual = Math.Max(Math.Abs(restored.LiquidM3 / volume - 1),
+                        Math.Max(Math.Abs(restored.EnthalpyJ / enthalpy - 1),
+                            (restored.Momentum - momentum).Length / momentum.Length));
+                    maxResidual = Math.Max(maxResidual, residual);
+                    if (residual > 1e-13 || parcel.Multiplicity != multiplicity)
+                        throw new InvalidOperationException("S14 resolved-liquid conversion did not preserve its inventories.");
+                }
+                log(FormattableString.Invariant(
+                    $"S14 resolved/parcel inventory conversion passed: 9 round trips, maximum relative residual {maxResidual:G5}."));
+            }
 
             void CheckSpatialTransport()
             {
