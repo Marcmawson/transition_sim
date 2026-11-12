@@ -18,4 +18,12 @@ Run `FlowMain --droplet-evaporation`. The model uses the stagnant-gas Spalding l
 
 CPU checks covered 5, 10 and 15 µm initial radii, drying and saturation, and one, ten and one hundred steps. The drying slope was -3.6529456e-9 m²/s. Partial evaporation and extinction matched the reference, and the mass and enthalpy ledgers closed at each step. The saturated control transferred zero mass.
 
-This benchmark prescribes humidity and uses an external heat ledger. Evolving droplet temperature during evaporation and coupling the transfers to the gas grid remain open.
+The isolated benchmark prescribes humidity and uses an external heat ledger.
+
+## V37 coupled evaporation in one gas cell
+
+Run `FlowMain --droplet-gas-cell`. The local CPU step updates the droplet temperature, gas vapour mass and gas enthalpy. Spherical conduction exchanges sensible heat, then stagnant-film evaporation draws latent heat from the droplet. Surface humidity uses the ideal-mixture conversion of the [IAPWS supplementary saturation pressure](https://www.iapws.org/relguide/Supp-sat.html), equation 1. The fixture assumes prescribed pressure, uniform phase temperatures, constant heat capacities and fixed film transport properties.
+
+Over 4 ms, a 10 µm droplet cooled from 300 K to 292.017231 K, shrank to 9.896270 µm, and transferred 1.2874597e-13 kg of vapour. The 16, 32 and 64 step runs approached the 128 step reference. Each step conserved total water mass and enthalpy within 1e-12 relative to the initial inventories. The isolated evaporation, sensible-heat and settling regressions passed.
+
+This local exchange is evaporation-only. Coupled extinction, condensation, momentum deposition, gas-grid transport and pressure coupling remain open.
