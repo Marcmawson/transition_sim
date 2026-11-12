@@ -42,6 +42,29 @@ namespace PhysicsSim.ThreePhase3D.Verification
             SimulateGrid(40, exitDomain: true);
             SimulateGrid(20, depositAtWall: true);
             SimulateGrid(40, depositAtWall: true);
+            CheckFilmDryOut();
+
+            void CheckFilmDryOut()
+            {
+                const double filmMass = 1e-17, filmTemperature = 290;
+                double filmEnergy = LiquidEnthalpy(filmMass, filmTemperature);
+                var dry = DropletGasCellExchange.AdvanceWallFilm(filmMass, filmEnergy, dryAir, initialVapour,
+                    initialGasEnergy, 101325, 1e-10, 2e-5, 0.026, 2.5e-5, 0.0001);
+                var unchanged = DropletGasCellExchange.AdvanceWallFilm(dry.LiquidKg, dry.LiquidEnthalpyJ,
+                    dryAir, dry.VapourKg, dry.GasEnthalpyJ, 101325, 1e-10, 2e-5, 0.026, 2.5e-5, 0.0001);
+                double coolGas = GasEnthalpy(filmTemperature, initialVapour);
+                var limited = DropletGasCellExchange.AdvanceWallFilm(filmMass, filmEnergy, dryAir, initialVapour,
+                    coolGas, 101325, 1e-10, 2e-5, 0.026, 2.5e-5, 0.0001);
+                if (dry.LiquidKg != 0 || dry.LiquidEnthalpyJ != 0 || unchanged != dry ||
+                    Math.Abs(dry.VapourKg - initialVapour - filmMass) > 1e-11 * filmMass ||
+                    Math.Abs(dry.GasEnthalpyJ - initialGasEnergy - filmEnergy) > 1e-15 * initialGasEnergy ||
+                    !(limited.LiquidKg > 0 && limited.LiquidKg < filmMass && limited.LiquidEnthalpyJ >= 0) ||
+                    Math.Abs(limited.LiquidKg + (limited.VapourKg - initialVapour) - filmMass) > 1e-11 * filmMass ||
+                    Math.Abs(limited.LiquidEnthalpyJ + (limited.GasEnthalpyJ - coolGas) - filmEnergy) > 1e-15 * coolGas)
+                    throw new InvalidOperationException("S14 wall-film dry-out or heat-limited conservation failed.");
+                log(FormattableString.Invariant(
+                    $"S14 V37 wall-film dry-out passed: vapour returned {dry.VapourKg - initialVapour:G8} kg, heat-limited liquid {limited.LiquidKg:G8} kg."));
+            }
 
             (double RadiusM, double OutletVapourKg, double FeedbackMps, double WallReactionX) SimulateGrid(
                 int steps, bool crossCell = false, bool exitDomain = false, bool depositAtWall = false)

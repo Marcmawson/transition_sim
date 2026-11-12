@@ -56,29 +56,39 @@ namespace PhysicsSim.ThreePhase3D.Flow
             double liquidKg, double liquidEnthalpyJ, double dryAirKg, double vapourKg, double gasEnthalpyJ,
             double pressurePa, double areaM2, double thicknessM, double conductivity, double diffusivity, double dt)
         {
-            if (!Positive(liquidKg) || !Positive(dryAirKg) || !SiUnits.IsFinite(vapourKg) || vapourKg < 0 ||
+            if (!SiUnits.IsFinite(liquidKg) || liquidKg < 0 || !Positive(dryAirKg) ||
+                !SiUnits.IsFinite(vapourKg) || vapourKg < 0 ||
                 !(pressurePa >= 80000 && pressurePa <= 101325) || !Positive(areaM2) ||
                 !Positive(thicknessM) || !Positive(conductivity) || !Positive(diffusivity) || !Positive(dt))
                 throw new ArgumentException("Invalid wall-film inventory or transport properties.");
 
-            double liquidK = ReferenceK + liquidEnthalpyJ / (liquidKg * LiquidCp);
             double gasK = GasTemperature(dryAirKg, vapourKg, gasEnthalpyJ);
-            CheckTemperature(liquidK);
             CheckTemperature(gasK);
+            if (liquidKg == 0)
+            {
+                if (liquidEnthalpyJ != 0) throw new ArgumentException("An empty wall film cannot hold liquid enthalpy.");
+                return (0, 0, vapourKg, gasEnthalpyJ);
+            }
+            double liquidK = ReferenceK + liquidEnthalpyJ / (liquidKg * LiquidCp);
+            CheckTemperature(liquidK);
             double surface = HumidGas.WaterMassFraction(SaturationPressurePa(liquidK) / pressurePa);
             double ambient = vapourKg / (dryAirKg + vapourKg);
             double density = (dryAirKg + vapourKg) / GasVolumeM3(dryAirKg, vapourKg, gasEnthalpyJ, pressurePa);
             double areaTimePerThickness = areaM2 * dt / thicknessM;
-            double evaporated = density * diffusivity * areaTimePerThickness *
+            double potential = density * diffusivity * areaTimePerThickness *
                 Math.Max(0, Math.Log((1 - ambient) / (1 - surface)));
             double sensible = conductivity * areaTimePerThickness * (gasK - liquidK);
-            double transfer = evaporated * (VapourReferenceEnthalpy + VapourCp * (liquidK - ReferenceK)) - sensible;
+            double vapourH = VapourReferenceEnthalpy + VapourCp * (liquidK - ReferenceK);
+            double availableEnthalpy = liquidEnthalpyJ + sensible;
+            if (availableEnthalpy < 0)
+                throw new InvalidOperationException("Wall-film heat transfer exceeded its sensible inventory. Reduce the timestep.");
+            double evaporated = Math.Min(liquidKg, Math.Min(potential, availableEnthalpy / vapourH));
             double remaining = liquidKg - evaporated;
-            if (!(remaining > 0))
-                throw new InvalidOperationException("The wall film would run dry in one step. Reduce the timestep.");
-            double remainingEnthalpy = liquidEnthalpyJ - transfer;
-            double updatedVapour = vapourKg + evaporated, updatedGasEnthalpy = gasEnthalpyJ + transfer;
-            CheckTemperature(ReferenceK + remainingEnthalpy / (remaining * LiquidCp));
+            // Once the film is gone, any unused sensible heat stays in the gas.
+            double remainingEnthalpy = remaining == 0 ? 0 : Math.Max(0, availableEnthalpy - evaporated * vapourH);
+            double updatedVapour = vapourKg + evaporated;
+            double updatedGasEnthalpy = gasEnthalpyJ + (liquidEnthalpyJ - remainingEnthalpy);
+            if (remaining > 0) CheckTemperature(ReferenceK + remainingEnthalpy / (remaining * LiquidCp));
             CheckTemperature(GasTemperature(dryAirKg, updatedVapour, updatedGasEnthalpy));
             return (remaining, remainingEnthalpy, updatedVapour, updatedGasEnthalpy);
         }

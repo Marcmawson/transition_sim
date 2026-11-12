@@ -66,4 +66,8 @@ CPU runs at 0.2 and 0.1 ms closed the dry-air, water, enthalpy and momentum ledg
 
 From the step after impact, the stationary deposit exchanges sensible heat and vapour with the adjacent gas cell. It uses the same saturation pressure and enthalpy conventions as the isolated droplet, with planar stagnant-film transfer over a prescribed 1e-10 m² wet area and 20 µm gas film. The enthalpy update debits the deposit by exactly what the gas gains, and gas projection and transport use the updated inventories.
 
-The 0.1 ms run returned 6.2842125e-15 kg to the gas, with a net film enthalpy loss of 1.0235465e-8 J. Both timesteps passed the coupled conservation checks. This fixture uses a fixed wet area and an insulated wall. Apparatus wetting, rebound, wall heat conduction, film dry-out, coupled droplet extinction and condensation remain open.
+The 0.1 ms run returned 6.2842125e-15 kg to the gas, with a net film enthalpy loss of 1.0235465e-8 J. Both timesteps passed the coupled conservation checks. This fixture uses a fixed wet area and an insulated wall.
+
+The wall-film step caps the frozen-rate mass transfer at both the remaining water mass and the enthalpy available above the liquid reference temperature, including sensible heat from the gas. At dry-out it exports the remaining liquid inventory and leaves unused sensible heat in the gas. Later steps with zero film mass and enthalpy leave the gas inventories unchanged.
+
+In the CPU dry-out fixture, 310 K gas evaporated the entire 1e-17 kg film over one 0.1 ms step. With the gas initially at the film temperature of 290 K, the heat-limited control retained 9.7218851e-18 kg. Both checks conserved water and enthalpy. Apparatus wetting, rebound, wall heat conduction, coupled droplet extinction and condensation remain open.
