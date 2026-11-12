@@ -54,6 +54,30 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     throw new InvalidOperationException($"S14 droplet-cell pressure mismatch: source {source[donor]:G8}, internal flux {internalFlux:G8}, outlet flux {netFlux:G8} m3/s.");
                 log(FormattableString.Invariant(
                     $"S14 V37 gas-cell pressure projection passed: source {source[donor]:G8} m3/s, outlet flux {netFlux:G8} m3/s."));
+
+                var gas = new (double DryAirKg, double VapourKg, double EnthalpyJ)[plan.GroupCount];
+                var gasVolumes = new double[plan.GroupCount];
+                gas[donor] = (dryAir, trial.VapourKg, trial.GasEnthalpyJ);
+                gas[downstream] = (dryAir, initialVapour, initialGasEnergy);
+                gasVolumes[donor] = DropletGasCellExchange.GasVolumeM3(dryAir, trial.VapourKg, trial.GasEnthalpyJ, pressure);
+                gasVolumes[downstream] = volume;
+                var moved = HumidGasAdvection.Advance(plan, projected, gasVolumes, gas);
+                var first = moved.Gas[donor];
+                var second = moved.Gas[downstream];
+                var outlet = moved.Outflow;
+                double initialWater = initialMass + 2 * initialVapour;
+                double water = DropletGasCellExchange.Mass(trial.RadiusM) + first.VapourKg + second.VapourKg + outlet.VapourKg;
+                double enthalpy = LiquidEnthalpy(DropletGasCellExchange.Mass(trial.RadiusM), trial.LiquidK) +
+                    first.EnthalpyJ + second.EnthalpyJ + outlet.EnthalpyJ;
+                double outletFraction = netFlux * dt / volume;
+                if (!(second.VapourKg > initialVapour && outlet.VapourKg > 0) ||
+                    Math.Abs(outlet.VapourKg / initialVapour - outletFraction) > 1e-5 * outletFraction ||
+                    Math.Abs(first.DryAirKg + second.DryAirKg + outlet.DryAirKg - 2 * dryAir) > 1e-12 * dryAir ||
+                    Math.Abs(water - initialWater) > 1e-12 * initialWater ||
+                    Math.Abs(enthalpy - initialTotalEnergy - initialGasEnergy) > 1e-12 * initialTotalEnergy)
+                    throw new InvalidOperationException("S14 projected gas advection failed transport or conservation.");
+                log(FormattableString.Invariant(
+                    $"S14 V37 gas transport passed: downstream vapour gain {second.VapourKg - initialVapour:G8} kg, outlet vapour {outlet.VapourKg:G8} kg, outlet enthalpy {outlet.EnthalpyJ:G8} J."));
             }
 
             (double RadiusM, double LiquidK, double VapourKg, double GasEnthalpyJ) Simulate(int steps)

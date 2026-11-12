@@ -28,4 +28,6 @@ Over 4 ms, a 10 µm droplet cooled from 300 K to 292.017231 K, shrank to 9.89627
 
 The same command checks the volume source on a two-cell gas grid with one pressure outlet. The ideal-mixture volume at prescribed pressure includes both the change in gas temperature and the added vapour moles. One 0.4 ms exchange step produced a source of -1.4191307e-12 m³/s in the droplet cell. CPU pressure projection returned an outlet flux of +1.4191304e-12 m³/s and matched the internal and outlet volume budgets within 1e-5 relative.
 
-This is a one-step, dilute-volume pressure fixture. It neglects the droplet's displaced volume and uses prescribed thermodynamic pressure. Gas scalar transport over the projected fluxes, momentum deposition, coupled extinction and condensation remain open.
+The two-cell check also uses the projected face fluxes for first-order upwind transport of dry air, vapour and enthalpy. It uses the post-exchange gas volume for each donor and records the transported inventories at the open outlet. The downstream cell gained 3.9873958e-19 kg of vapour, and the outlet carried 3.2060744e-18 kg of vapour and 3.200185e-11 J of enthalpy. Total dry air, water and enthalpy closed to within 1e-12 of the starting inventories with the outlet included.
+
+This is a one-step, gas-only fixture with prescribed thermodynamic pressure and negligible displaced droplet volume. Inflow reservoir support, multi-step gas-grid coupling, momentum deposition, coupled extinction and condensation remain open.
