@@ -8,6 +8,7 @@ internal static class IcePressureMain
 {
     private static void Main()
     {
+        CheckRemap();
         const double g = 9.81, rho = 1000;
         var size = new D3(0.04, 0.03, 0.02);
         var centre = new D3(0.055, 0.054, 0.053);
@@ -73,6 +74,50 @@ internal static class IcePressureMain
             Console.WriteLine(FormattableString.Invariant(
                 $"S11 ice pressure passed at grid offset {offset:G} m: lift {load.ForceN.Y:G8} N, applied torque {topLoad.TorqueNm.Z:G8} N m."));
         }
+    }
+
+    private static void CheckRemap()
+    {
+        var grid = new Grid3D(6, 6, 6, new D3(0.01, 0.01, 0.01));
+        var size = new D3(0.007, 0.006, 0.006);
+        var surface = SurfacePrimitives.Box(size * -0.5, size * 0.5);
+        VariableCoefficientProjection Pose(double x) => new VariableCoefficientProjection(
+            CutCellGeometry.Build(grid, iceSurface: SurfacePrimitives.Transform(surface, RigidFrame.Euler(new D3(x, 0.024, 0.024), 0, 0, 0))),
+            BoundaryConditions3D.Closed, _ => 1000, _ => 0);
+        var before = Pose(0.024);
+        var after = Pose(0.028);
+        var fields = new double[5][];
+        for (int field = 0; field < fields.Length; field++) fields[field] = new double[before.GroupCount];
+        for (int group = 0; group < before.GroupCount; group++)
+        {
+            double volume = before.Volumes[group];
+            double fraction = group % 2 == 0 ? 0.25 : 0.75;
+            fields[0][group] = fraction * volume;
+            fields[1][group] = (1 - fraction) * volume;
+            fields[2][group] = 40 * fields[0][group];
+            fields[3][group] = -12 * fields[1][group];
+            fields[4][group] = 0.01 * fields[1][group];
+        }
+        var swept = new[] { new double[grid.XFaces.Count], new double[grid.YFaces.Count], new double[grid.ZFaces.Count] };
+        // This fixture crosses a single face. Its exact fluid displacement is
+        // the loss of fluid capacity in the cell on the high side.
+        int high = grid.Cells.Index(3, 2, 2);
+        int crossed = grid.XFaces.Index(3, 2, 2);
+        swept[0][crossed] = after.Geometry.FluidVolumeM3[high] - before.Geometry.FluidVolumeM3[high];
+        var initial = new CutCellInventories(fields);
+        var moved = MovingCutCellRemap.Apply(before, after, initial, swept);
+        for (int field = 0; field < fields.Length; field++)
+            Near(Math.Abs(System.Linq.Enumerable.Sum(fields[field]) -
+                System.Linq.Enumerable.Sum(moved.Planes[field])), 1e-12);
+        for (int group = 0; group < after.GroupCount; group++)
+            Near(Math.Abs(moved.LiquidM3[group] + moved.GasM3[group] - after.Volumes[group]), 1e-15);
+        int donor = before.PressureGroup(3, 2, 2);
+        int receiver = after.PressureGroup(2, 2, 2);
+        int oldReceiver = before.PressureGroup(2, 2, 2);
+        double expected = fields[0][oldReceiver] - swept[0][crossed] * fields[0][donor] / before.Volumes[donor];
+        Near(Math.Abs(moved.LiquidM3[receiver] - expected), 1e-15);
+        Console.WriteLine(FormattableString.Invariant(
+            $"S11 moving-cell inventory passed: {Math.Abs(swept[0][crossed]) * 1e6:G6} mL transferred; phase volume, energy and vapour conserved."));
     }
 
     private static void Near(double error, double tolerance)
