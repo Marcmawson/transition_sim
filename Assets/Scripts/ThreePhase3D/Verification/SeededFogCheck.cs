@@ -108,6 +108,27 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     throw new InvalidOperationException("S14 detached component conversion lost liquid inventories.");
                 log(FormattableString.Invariant(
                     $"S14 detached VOF conversion passed: anchored neck retained, parcel displacement {restored.LiquidM3:G8} m3."));
+                const double dt = 0.0004;
+                int destination = plan.PressureGroup(5, 0, 0);
+                var displaced = new double[plan.GroupCount];
+                displaced[destination] = liquid[detached];
+                var moved = new CutCellVofTransport(plan).AdvanceParcelDisplacement(converted.Fields,
+                    converted.ParcelDisplacementM3, displaced, dt,
+                    source => FlowCpuReference.Project(plan, new float[plan.FaceCount], dt, 4096, null, source));
+                int face = plan.FaceIndex(0, 5, 0, 0);
+                if (Math.Abs(moved.GasFaceM3[face] + displaced[destination]) > 1e-10 * grid.CellVolume)
+                    throw new InvalidOperationException("S14 gas flux did not compensate for moving parcel displacement.");
+                for (int group = 0; group < liquid.Length; group++)
+                {
+                    double expectedGas = plan.Volumes[group] - converted.Fields.LiquidM3[group] - displaced[group];
+                    if (Math.Abs(moved.Fields.GasM3[group] - expectedGas) > 1e-10 * grid.CellVolume ||
+                        Math.Abs(moved.Fields.GasEnergyJ[group] - expectedGas * 1e5) > 1e-10 * grid.CellVolume * 1e5 ||
+                        Math.Abs(moved.Fields.VapourKg[group] - expectedGas * 0.01) > 1e-10 * grid.CellVolume * 0.01 ||
+                        Math.Abs(moved.Fields.LiquidM3[group] - converted.Fields.LiquidM3[group]) > 1e-10 * grid.CellVolume)
+                        throw new InvalidOperationException("S14 displacement transport did not close the phase inventories.");
+                }
+                log(FormattableString.Invariant(
+                    $"S14 parcel displacement transport passed: swept gas {moved.GasFaceM3[face]:G8} m3."));
             }
 
             void CheckConversion()

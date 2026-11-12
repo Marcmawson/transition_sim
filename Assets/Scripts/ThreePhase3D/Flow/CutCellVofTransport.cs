@@ -449,6 +449,35 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return (pressure, Advance(state, velocity, dt, inflow, absolute, null, increments: increments));
         }
 
+        internal CutCellTransportResult AdvanceParcelDisplacement(CutCellInventories state, double[] before,
+            double[] after, double dt, Func<double[], FlowStep> project)
+        {
+            if (before.Length != plan.GroupCount || after.Length != plan.GroupCount || !SiUnits.IsFinite(dt) || dt <= 0)
+                throw new ArgumentException("Parcel displacement requires matching groups and a positive timestep.");
+            var volume = new double[plan.GroupCount];
+            var source = new double[volume.Length];
+            for (int group = 0; group < volume.Length; group++)
+            {
+                if (!(before[group] >= 0 && before[group] < plan.Volumes[group] &&
+                    after[group] >= 0 && after[group] < plan.Volumes[group]) ||
+                    ((before[group] > 0 || after[group] > 0) && state.LiquidM3[group] != 0))
+                    throw new ArgumentException("Parcel displacement is supported in gas-only groups with free volume.");
+                volume[group] = after[group] - before[group];
+                source[group] = -volume[group] / dt;
+            }
+            Validate(state.Planes, before);
+            plan.ValidateBoundaryFlux(source);
+            var pressure = project(source);
+            if (!pressure.Diagnostics.Converged || pressure.Diagnostics.Dt != dt ||
+                pressure.VelocityMPerS.Length != plan.FaceCount)
+                throw new InvalidOperationException("Parcel displacement requires a compatible pressure projection.");
+            var velocity = new double[plan.FaceCount];
+            if (ReconcilePressureFlux(pressure.VelocityMPerS, dt, velocity, out double absolute,
+                targetVolume: volume) > PressureCorrectionLimit)
+                throw new InvalidOperationException("Parcel displacement pressure flux exceeds the transport correction budget.");
+            return Advance(state, velocity, dt, null, absolute, null, displacementBefore: before, displacementAfter: after);
+        }
+
         internal CutCellTransportResult AdvanceProjected(CutCellInventories state, FlowStep pressure,
             Func<int, CutCellInflow> inflow, Func<CutCellScalarWork, CutCellScalarOutput> apply, CutCellGeometryBatch clip,
             double? adaptiveMaxStepS, out double dt)
@@ -552,12 +581,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         internal CutCellTransportResult Advance(CutCellInventories state, double[] faceVelocity, double dt,
             Func<int, CutCellInflow> inflow, double pressureCorrection, Func<CutCellScalarWork, CutCellScalarOutput> apply,
-            CutCellGeometryBatch clip = null, CutCellInventories increments = null)
+            CutCellGeometryBatch clip = null, CutCellInventories increments = null,
+            double[] displacementBefore = null, double[] displacementAfter = null)
         {
             if (state == null || faceVelocity == null || faceVelocity.Length != plan.FaceCount ||
                 !SiUnits.IsFinite(dt) || dt <= 0) throw new ArgumentException("Invalid cut-cell transport inputs.");
             var fields = state.Planes;
-            Validate(fields);
+            Validate(fields, displacementBefore);
             int groups = plan.GroupCount, faces = plan.FaceCount;
             var swept = new double[faces];
             var correction = new double[faces];
@@ -593,7 +623,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
             }
             for (int c = 0; c < groups; c++)
             {
-                double volume = plan.Volumes[c];
+                double volume = plan.Volumes[c] - (displacementBefore?[c] ?? 0);
+                if (displacementBefore != null) divergence[c] -= displacementAfter[c] - displacementBefore[c];
                 if (increments != null) divergence[c] -= increments.LiquidM3[c] + increments.GasM3[c];
                 if (Math.Abs(divergence[c]) > Tolerance * volume)
                     throw new ArgumentException($"Cut-cell group {c} has relative volume imbalance {Math.Abs(divergence[c]) / volume:E3} (limit {Tolerance:E3}).");
@@ -646,7 +677,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 correction[f] = geometric - alpha * width;
             }
 
-            var work = new CutCellScalarWork(plan, fields, swept, correction, outgoing, reservoir);
+            var work = new CutCellScalarWork(plan, fields, swept, correction, outgoing, reservoir, displacementBefore);
             var output = apply == null ? ApplyReference(work) : apply(work);
             var next = output.Fields;
             if (increments != null)
@@ -656,7 +687,9 @@ namespace PhysicsSim.ThreePhase3D.Flow
             roundoff += output.RoundoffM3;
             for (int c = 0; c < groups; c++)
             {
-                double volume = plan.Volumes[c];
+                double volume = plan.Volumes[c] - (displacementAfter?[c] ?? 0);
+                if (displacementAfter != null && displacementAfter[c] > 0 && next[0][c] > Tolerance * volume)
+                    throw new InvalidOperationException("Resolved liquid entered a parcel-displaced gas group.");
                 if (next[0][c] < -Tolerance * volume || next[1][c] < -Tolerance * volume ||
                     Math.Abs(next[0][c] + next[1][c] - volume) > 4 * Tolerance * volume)
                     throw new InvalidOperationException("Cut-cell phase volume closure failed.");
@@ -672,7 +705,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 // Keep scalar conservation explicit. Reject an inconsistent
                 // empty phase rather than silently removing its inventory.
             }
-            Validate(next);
+            Validate(next, displacementAfter);
             return new CutCellTransportResult(plan, new CutCellInventories(next), output.Liquid, output.Gas,
                 output.Boundary, reservoir, roundoff, output.LimitedM3, pressureCorrection);
         }
@@ -717,7 +750,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 double l, g, el, eg, vapour;
                 if (donor >= 0)
                 {
-                    double delta = correction[f], volume = plan.Volumes[donor];
+                    double delta = correction[f], volume = plan.Volumes[donor] - (work.Displacement?[donor] ?? 0);
                     double fraction = fields[0][donor] / volume;
                     double gasFraction = fields[1][donor] / volume;
                     double capacity = (delta < 0 ? gasFraction : fraction) * (volume - outgoing[donor]);
@@ -949,7 +982,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return inventory * (transfer / volume);
         }
 
-        private void Validate(double[][] fields)
+        private void Validate(double[][] fields, double[] displacement = null)
         {
             foreach (double[] field in fields)
                 if (field == null || field.Length != plan.GroupCount || !Array.TrueForAll(field, SiUnits.IsFinite))
@@ -958,7 +991,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             {
                 if (fields[0][c] < 0 || fields[1][c] < 0 || fields[4][c] < 0 ||
                     fields[0][c] > plan.Volumes[c] || fields[1][c] > plan.Volumes[c] ||
-                    Math.Abs(fields[0][c] + fields[1][c] - plan.Volumes[c]) > Tolerance * plan.Volumes[c] ||
+                    Math.Abs(fields[0][c] + fields[1][c] + (displacement?[c] ?? 0) - plan.Volumes[c]) > Tolerance * plan.Volumes[c] ||
                     (fields[0][c] == 0 && fields[2][c] != 0) ||
                     (fields[1][c] == 0 && (fields[3][c] != 0 || fields[4][c] != 0)))
                     throw new ArgumentException($"Invalid cut-cell phase inventory in group {c}: liquid {fields[0][c]:G17}, gas {fields[1][c]:G17}, liquid enthalpy {fields[2][c]:G17}, gas enthalpy {fields[3][c]:G17}, vapour {fields[4][c]:G17}.");
@@ -988,11 +1021,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
         internal readonly double[][] Fields;
         internal readonly double[] Swept, Correction, Outgoing;
         internal readonly CutCellInflow[] Reservoir;
+        internal readonly double[] Displacement;
         internal CutCellScalarWork(VariableCoefficientProjection plan, double[][] fields, double[] swept,
-            double[] correction, double[] outgoing, CutCellInflow[] reservoir)
+            double[] correction, double[] outgoing, CutCellInflow[] reservoir, double[] displacement = null)
         {
             Plan = plan; Fields = fields; Swept = swept; Correction = correction;
             Outgoing = outgoing; Reservoir = reservoir;
+            Displacement = displacement;
         }
     }
 
