@@ -8,7 +8,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
     internal static class SeededFogCell
     {
         internal static ((D3 Position, double RadiusM, double TemperatureK, int Multiplicity)[] Parcels,
-            (double DryAirKg, double VapourKg, double EnthalpyJ)[] Gas, D3[] ParcelVelocity, D3[] GasMomentum)
+            (double DryAirKg, double VapourKg, double EnthalpyJ)[] Gas, D3[] ParcelVelocity, D3[] GasMomentum,
+            (long Droplets, double LiquidKg, double EnthalpyJ, D3 Momentum) Outlet)
             AdvanceMovingGrid(VariableCoefficientProjection plan,
                 (D3 Position, double RadiusM, double TemperatureK, int Multiplicity)[] parcels,
                 (double DryAirKg, double VapourKg, double EnthalpyJ)[] gas, D3[] parcelVelocity, D3[] gasMomentum,
@@ -17,8 +18,10 @@ namespace PhysicsSim.ThreePhase3D.Flow
             if (parcelVelocity.Length != parcels.Length || gasMomentum.Length != gas.Length)
                 throw new ArgumentException("Fog velocity and gas momentum must match their inventories.");
             var exchange = AdvanceGrid(plan, parcels, gas, default, pressurePa, conductivity, diffusivity, dt);
-            var velocity = new D3[parcels.Length];
+            var retained = new List<(D3 Position, double RadiusM, double TemperatureK, int Multiplicity)>(parcels.Length);
+            var velocity = new List<D3>(parcels.Length);
             var momentum = (D3[])gasMomentum.Clone();
+            (long Droplets, double LiquidKg, double EnthalpyJ, D3 Momentum) outlet = default;
             for (int index = 0; index < parcels.Length; index++)
             {
                 var parcel = parcels[index];
@@ -30,12 +33,26 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     DropletGasCellExchange.Mass(exchange.Parcels[index].RadiusM);
                 var motion = StokesDroplet.Advance(parcel.Position, parcelVelocity[index], gasMomentum[group] / mass,
                     default, parcel.RadiusM, DropletGasCellExchange.LiquidDensity, mass / volume, viscosity, dt, vapourGain);
-                DropletGasCellExchange.PressureGroupAt(plan, motion.Position);
-                exchange.Parcels[index].Position = motion.Position;
-                velocity[index] = motion.Velocity;
                 momentum[group] += motion.GasMomentumGain * parcel.Multiplicity;
+                var updated = exchange.Parcels[index];
+                if (DropletGasCellExchange.ExitsOpenBoundary(plan, parcel.Position, motion.Position))
+                {
+                    double liquid = DropletGasCellExchange.Mass(updated.RadiusM) * updated.Multiplicity;
+                    outlet.Droplets += updated.Multiplicity;
+                    outlet.LiquidKg += liquid;
+                    outlet.EnthalpyJ += liquid * DropletGasCellExchange.LiquidCp *
+                        (updated.TemperatureK - DropletGasCellExchange.ReferenceK);
+                    outlet.Momentum += motion.Velocity * liquid;
+                }
+                else
+                {
+                    DropletGasCellExchange.PressureGroupAt(plan, motion.Position);
+                    updated.Position = motion.Position;
+                    retained.Add(updated);
+                    velocity.Add(motion.Velocity);
+                }
             }
-            return (exchange.Parcels, exchange.Gas, velocity, momentum);
+            return (retained.ToArray(), exchange.Gas, velocity.ToArray(), momentum, outlet);
         }
 
         internal static ((D3 Position, double RadiusM, double TemperatureK, int Multiplicity)[] Parcels,

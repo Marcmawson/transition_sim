@@ -110,14 +110,17 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 CheckGasFeedback(20);
                 CheckGasFeedback(10, moving: true);
                 CheckGasFeedback(20, moving: true);
+                CheckGasFeedback(10, moving: true, exitParcels: true);
+                CheckGasFeedback(20, moving: true, exitParcels: true);
 
-                void CheckGasFeedback(int steps, bool moving = false)
+                void CheckGasFeedback(int steps, bool moving = false, bool exitParcels = false)
                 {
                     const double pressure = 101325;
                     double dt = duration / steps;
                     var sides = new FlowBoundary[6];
                     sides[1] = new FlowBoundary(FlowBoundaryKind.OpenPressure);
                     var boundaries = new BoundaryConditions3D(sides);
+                    var transportPlan = new VariableCoefficientProjection(plan.Geometry, boundaries, _ => 1.2, _ => 0);
                     var gas = ((double DryAirKg, double VapourKg, double EnthalpyJ)[])initialGas.Clone();
                     double startingAir = 0;
                     for (int group = 0; group < gas.Length; group++)
@@ -131,6 +134,13 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     var reservoir = gas[untouched];
                     var initialTotals = Totals(initialParcels, gas);
                     var parcels = initialParcels;
+                    if (exitParcels)
+                    {
+                        parcels = ((D3, double, double, int)[])initialParcels.Clone();
+                        for (int index = 0; index < parcels.Length; index++)
+                            parcels[index].Item1 = new D3(3 * dx - (index + 1) * 2e-6,
+                                transverse * 0.5, transverse * 0.5);
+                    }
                     var momentum = new D3[gas.Length];
                     var parcelVelocity = new D3[parcels.Length];
                     D3 startingMomentum = default;
@@ -144,13 +154,24 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     }
                     D3 reaction = default, momentumOut = default;
                     double airOut = 0, vapourOut = 0, energyOut = 0;
+                    long dropletsOut = 0;
+                    double liquidOut = 0, liquidEnthalpyOut = 0;
+                    D3 liquidMomentumOut = default;
                     double upstreamExchange = 0, downstreamExchange = 0, boundaryThroughput = 0;
                     for (int step = 0; step < steps; step++)
                     {
                         double upstreamBefore = gas[upstream].VapourKg, downstreamBefore = gas[downstream].VapourKg;
                         if (moving)
-                            (parcels, gas, parcelVelocity, momentum) = SeededFogCell.AdvanceMovingGrid(plan,
+                        {
+                            var exchange = SeededFogCell.AdvanceMovingGrid(transportPlan,
                                 parcels, gas, parcelVelocity, momentum, pressure, 0.026, 2.5e-5, 1.81e-5, dt);
+                            (parcels, gas, parcelVelocity, momentum) =
+                                (exchange.Parcels, exchange.Gas, exchange.ParcelVelocity, exchange.GasMomentum);
+                            dropletsOut += exchange.Outlet.Droplets;
+                            liquidOut += exchange.Outlet.LiquidKg;
+                            liquidEnthalpyOut += exchange.Outlet.EnthalpyJ;
+                            liquidMomentumOut += exchange.Outlet.Momentum;
+                        }
                         else
                             (parcels, gas) = SeededFogCell.AdvanceGrid(plan, parcels, gas, carrier,
                                 pressure, 0.026, 2.5e-5, dt);
@@ -184,7 +205,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         momentumOut += moved.Outflow.MomentumKgMPerS;
                         boundaryThroughput += Math.Abs(moved.Outflow.DryAirKg);
                         double air = airOut;
-                        D3 totalMomentum = momentumOut + reaction;
+                        D3 totalMomentum = momentumOut + reaction + liquidMomentumOut;
                         for (int group = 0; group < gas.Length; group++)
                         {
                             var cell = moved.Gas[group];
@@ -194,16 +215,29 @@ namespace PhysicsSim.ThreePhase3D.Verification
                             totalMomentum += momentum[group];
                         }
                         var total = Totals(parcels, gas);
+                        long dropletCount = dropletsOut;
                         for (int index = 0; index < parcels.Length; index++)
+                        {
+                            dropletCount += parcels[index].Item4;
                             totalMomentum += parcelVelocity[index] *
                                 (DropletGasCellExchange.Mass(parcels[index].Item2) * parcels[index].Item4);
-                        if (Math.Abs(air - startingAir) > 1e-12 * startingAir ||
-                            Math.Abs(total.Water + vapourOut - initialTotals.Water) > 1e-12 * initialTotals.Water ||
-                            Math.Abs(total.Energy + energyOut - initialTotals.Energy) > 1e-12 * initialTotals.Energy ||
+                        }
+                        if (dropletCount != 32 || Math.Abs(air - startingAir) > 1e-12 * startingAir ||
+                            Math.Abs(total.Water + vapourOut + liquidOut - initialTotals.Water) > 1e-12 * initialTotals.Water ||
+                            Math.Abs(total.Energy + energyOut + liquidEnthalpyOut - initialTotals.Energy) > 1e-12 * initialTotals.Energy ||
                             (totalMomentum - startingMomentum).Length > 1e-24)
                             throw new InvalidOperationException("V38 fog gas feedback failed conservation.");
                     }
-                    if (!(upstreamExchange > 0 && downstreamExchange < 0 && boundaryThroughput > 0) ||
+                    if (exitParcels)
+                    {
+                        if (!(dropletsOut == 32 && parcels.Length == 0 && parcelVelocity.Length == 0 &&
+                            liquidOut > 0 && liquidEnthalpyOut > 0 && liquidMomentumOut.X > 0 && boundaryThroughput > 0))
+                            throw new InvalidOperationException("V38 open boundary did not export the complete parcel ensemble.");
+                        log(FormattableString.Invariant(
+                            $"S14 V38 fog exit passed: {steps} steps, droplets {dropletsOut}, liquid {liquidOut:G8} kg, enthalpy {liquidEnthalpyOut:G8} J, momentum X {liquidMomentumOut.X:G8} N s."));
+                        return;
+                    }
+                    if (dropletsOut != 0 || !(upstreamExchange > 0 && downstreamExchange < 0 && boundaryThroughput > 0) ||
                         gas[untouched] == reservoir)
                         throw new InvalidOperationException("V38 fog exchange did not drive transport into the unseeded cell and boundary.");
                     if (moving)
