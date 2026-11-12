@@ -19,7 +19,25 @@ namespace PhysicsSim.ThreePhase3D.Solids
         // Pressure in Pa on the fluid side of the ice. Torque is about the
         // supplied body's centre of mass. Geometry must describe this pose.
         public static IcePressureLoad Integrate(IceBody body, CutCellGeometry geometry,
-            Func<InterfacePatch, D3, double> pressurePa)
+            Func<InterfacePatch, D3, double> pressurePa) =>
+            Integrate(body, geometry, pressurePa, null);
+
+        public static IcePressureLoad Hydrostatic(IceBody body, CutCellGeometry geometry,
+            D3 waterlinePointM, D3 gravityMPerS2, double liquidDensityKgM3)
+        {
+            if (geometry == null) throw new ArgumentNullException(nameof(geometry));
+            if (!SiUnits.IsFinite(liquidDensityKgM3) || liquidDensityKgM3 <= 0)
+                throw new ArgumentOutOfRangeException(nameof(liquidDensityKgM3));
+            D3 up = (-gravityMPerS2).Unit();
+            var frame = geometry.Grid.Frame;
+            var plane = new ClipPlane(new D3(D3.Dot(up, frame.U), D3.Dot(up, frame.V), D3.Dot(up, frame.W)),
+                frame.ToLocal(waterlinePointM));
+            return Integrate(body, geometry,
+                (_, point) => liquidDensityKgM3 * D3.Dot(gravityMPerS2, point - waterlinePointM), plane);
+        }
+
+        private static IcePressureLoad Integrate(IceBody body, CutCellGeometry geometry,
+            Func<InterfacePatch, D3, double> pressurePa, ClipPlane? clip)
         {
             if (body == null) throw new ArgumentNullException(nameof(body));
             if (geometry == null) throw new ArgumentNullException(nameof(geometry));
@@ -33,10 +51,14 @@ namespace PhysicsSim.ThreePhase3D.Solids
                     throw new NotSupportedException("Pressure torque on a partially blocked patch requires its exposed polygon.");
                 var n = patch.NormalLocal;
                 D3 normal = frame.U * n.X + frame.V * n.Y + frame.W * n.Z;
-                D3 a = patch.Polygon[0];
-                for (int i = 1; i + 1 < patch.Polygon.Count; i++)
+                IReadOnlyList<D3> polygon = clip.HasValue
+                    ? PolyhedronClip.Polygon(new List<D3>(patch.Polygon), clip.Value)
+                    : patch.Polygon;
+                if (polygon.Count < 3) continue;
+                D3 a = polygon[0];
+                for (int i = 1; i + 1 < polygon.Count; i++)
                 {
-                    D3 b = patch.Polygon[i], c = patch.Polygon[i + 1];
+                    D3 b = polygon[i], c = polygon[i + 1];
                     double weight = D3.Cross(b - a, c - a).Length / 6;
                     if (weight == 0) continue;
                     // Degree-two triangle quadrature integrates the moment

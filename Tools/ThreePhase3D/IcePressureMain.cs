@@ -9,6 +9,7 @@ internal static class IcePressureMain
     private static void Main()
     {
         CheckRemap();
+        CheckWaterline();
         const double g = 9.81, rho = 1000;
         var size = new D3(0.04, 0.03, 0.02);
         var centre = new D3(0.055, 0.054, 0.053);
@@ -131,6 +132,33 @@ internal static class IcePressureMain
                 $"S11 coupled step at offset {offset:G} m: {coupled.Iterations} iterations, rise {coupled.Body.VelocityMPerS.Y:G6} m/s, mismatch {coupled.BoundaryVelocityMismatchMPerS:G6} m/s."));
             Console.WriteLine(FormattableString.Invariant(
                 $"S11 ice pressure passed at grid offset {offset:G} m: lift {load.ForceN.Y:G8} N, applied torque {topLoad.TorqueNm.Z:G8} N m."));
+        }
+    }
+
+    private static void CheckWaterline()
+    {
+        const double rho = 1000, g = 9.81, iceDensity = 917;
+        var size = new D3(0.04, 0.03, 0.02);
+        var centre = new D3(0.055, 0.054, 0.053);
+        var body = IceBody.Box(iceDensity, size, RigidFrame.Euler(centre, 0.31, 0, 0));
+        var surface = SurfacePrimitives.Transform(SurfacePrimitives.Box(size * -0.5, size * 0.5), body.Frame);
+        var gravity = new D3(0, -g, 0);
+        foreach (double offset in new[] { 0.0, 0.003 })
+        {
+            var grid = new Grid3D(12, 12, 12, new D3(0.01, 0.01, 0.01),
+                RigidFrame.Euler(new D3(offset, 0.001 + offset, 0), 0.15, 0.1, 0));
+            var geometry = CutCellGeometry.Build(grid, iceSurface: surface);
+            foreach (double fraction in new[] { 0.0, 0.5, 0.917, 1.0 })
+            {
+                double waterline = centre.Y + (fraction - 0.5) * size.Y;
+                var load = IcePressureLoad.Hydrostatic(body, geometry, new D3(0, waterline, 0), gravity, rho);
+                double displaced = size.X * size.Y * size.Z * fraction;
+                Near((load.ForceN - new D3(0, rho * g * displaced, 0)).Length, 1e-10);
+                Near(load.TorqueNm.Length, 1e-11);
+                if (fraction == 0.917)
+                    Near((load.ForceN + gravity * body.MassKg).Length, 1e-10);
+            }
+            Console.WriteLine($"S11 V24 waterline traction passed at offset {offset:G} m.");
         }
     }
 

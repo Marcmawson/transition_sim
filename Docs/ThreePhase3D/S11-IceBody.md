@@ -53,3 +53,9 @@ The CPU fixture now advances three consecutive 10 ms steps at both grid offsets.
 Run **Physics Sim > Three Phase 3D > Run S11 GPU submerged ice check**. This repeats the three-step submerged continuation at both grid offsets using the Unity compute shader for pressure projection. It reuses pressure buffers during each coupling solve and seeds each trial with the previous pressure. Geometry rebuilds, swept-volume reconciliation, and remapping run on the host in this fixture.
 
 The run checks rise against the CPU result to within 1 micrometre and repeats the water and enthalpy conservation checks. The runtime and Editor entry point compiled separately against Unity 2022.3.46f1 assemblies. Device execution and free-surface flotation remain open.
+
+## V24 hydrostatic waterline traction
+
+The prescribed flat-waterline reference clips each exposed ice polygon against the submerged half-space and integrates gauge pressure over the clipped polygon. Air gauge pressure is zero in this fixture. The normal is determined by gravity in world space, including when the computational grid is tilted.
+
+The CPU fixture passed at both grid offsets for dry, half-submerged, 91.7% submerged, and fully submerged states. The lift agreed with displaced water weight to 1e-10 N, and the symmetric box torque was within 1e-11 N m. At 91.7% immersion, the integrated pressure balanced the ice weight. The waterline is prescribed here. Advancing the liquid interface and testing transient flotation against this reference remain open.
