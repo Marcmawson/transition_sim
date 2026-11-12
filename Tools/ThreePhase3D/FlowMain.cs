@@ -24,6 +24,11 @@ internal static class FlowMain
             CheckBubbleCondensation();
             return 0;
         }
+        if (args.Length == 1 && args[0] == "--capillary-bubble")
+        {
+            CheckCapillaryBubble();
+            return 0;
+        }
         if (args.Length == 1 && args[0] == "--humid-diffusion")
         {
             CheckHumidDiffusion();
@@ -50,6 +55,58 @@ internal static class FlowMain
             Console.WriteLine($"{passed}/{suite.Rows.Count} passed");
         }
         return suite.Passed ? 0 : 1;
+    }
+
+    private static void CheckCapillaryBubble()
+    {
+        const double seed = 0.0005, pressure = 101325, conductivity = 0.68, duration = 0.02;
+        var ambient = new PureWaterStefanInterface(pressure, 370, 377, 0, 0);
+        double boilingK = ambient.Saturation.Liquid.TemperatureK;
+        double sigma = new Water95().SurfaceTensionNm(boilingK);
+        foreach (double offset in new[] { 2.0, -2.0 })
+        {
+            double bulkK = boilingK + offset;
+            var initial = PureWaterStefanInterface.SphericalConduction(seed, pressure, sigma,
+                bulkK, conductivity, 370, 377);
+            double initialMass = Mass(seed, initial);
+            var coarse = Advance(4);
+            var fine = Advance(16);
+            var reference = Advance(64);
+            double error = Math.Abs(fine.Radius - reference.Radius);
+            if (!(error < Math.Abs(coarse.Radius - reference.Radius) / 10 && error < 1e-8) ||
+                Math.Sign(reference.Radius - seed) != Math.Sign(offset) ||
+                Math.Sign(reference.Heat) != Math.Sign(offset))
+                throw new InvalidOperationException("Capillary bubble evolution did not refine in the expected direction.");
+            Console.WriteLine(FormattableString.Invariant(
+                $"S13 capillary bubble passed: bulk offset {offset:G} K, radius {reference.Radius:G8} m, latent heat into interface {reference.Heat:G8} J, refinement difference {error:G6} m."));
+
+            (double Radius, double Heat) Advance(int steps)
+            {
+                double mass = initialMass, radius = seed, heat = 0, dt = duration / steps;
+                var surface = initial;
+                for (int step = 0; step < steps; step++)
+                {
+                    double midMass = mass + 0.5 * dt * Area(radius) * surface.MassFluxKgM2PerS;
+                    var mid = State(midMass);
+                    var exchange = mid.Interface.Transfer(Area(mid.RadiusM), dt, 1, mass);
+                    mass += exchange.WaterKg;
+                    heat += exchange.WaterKg * mid.Interface.Saturation.LatentEnthalpyJkg;
+                    (radius, surface) = State(mass);
+                    if (Math.Abs(Mass(radius, surface) - mass) > 1e-10 * mass ||
+                        Math.Abs(surface.Saturation.PressurePa - (pressure + 2 * sigma / radius)) > 2e-5 ||
+                        Math.Abs(exchange.LiquidEnthalpyJ + exchange.VapourEnthalpyJ) > 1e-14)
+                        throw new InvalidOperationException("Capillary bubble pressure, mass or phase enthalpy did not close.");
+                }
+                return (radius, heat);
+            }
+
+            (double RadiusM, PureWaterStefanInterface Interface) State(double mass) =>
+                PureWaterStefanInterface.SphericalFromVapourMass(mass, seed * 0.5, seed * 2,
+                    pressure, sigma, bulkK, conductivity, 370, 377);
+        }
+        double Area(double radius) => 4 * Math.PI * radius * radius;
+        double Mass(double radius, PureWaterStefanInterface surface) =>
+            (4 * Math.PI / 3 * radius * radius * radius) * surface.Saturation.Vapour.DensityKgM3;
     }
 
     private static void CheckBubbleCondensation()

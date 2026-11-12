@@ -21,3 +21,9 @@ This benchmark assumes a spherical seed and a quasi-steady prescribed liquid tem
 Run `FlowMain --bubble-condensation`. The spherical CPU reference begins with a 0.5 mm radius at 101325 Pa in liquid 2 K below saturation. It uses constant vapour density, zero surface tension and quasi-steady spherical conduction. The analytical squared radius decreases linearly in time. The 128-step midpoint run reached 0.25000107 mm at the reference time for a 0.25 mm cutoff, improving on the 32-step run.
 
 The fixture advances the unresolved tail to its analytical extinction time and transfers the entire remaining vapour inventory to the liquid using the same phase enthalpy balance. Extinction occurred at 0.12395206 s. The run condensed 3.1293235e-10 kg, released 0.00070612296 J of latent heat and left zero vapour. A general grid-scale cutoff, capillary time evolution and resolved flow verification remain open.
+
+## V30–V31 capillary radius evolution
+
+Run `FlowMain --capillary-bubble`. The spherical model recovers the radius from vapour mass, with vapour density evaluated at the saturation pressure including the capillary jump. A safeguarded Newton iteration uses the derivative along the saturation curve. The CPU fixture advances vapour mass with the midpoint phase flux and checks radius, capillary pressure and phase-transfer enthalpy on every step.
+
+At 101325 Pa over 20 ms, a 0.5 mm seed reached 0.53760683 mm at 2 K superheat and 0.45645248 mm at 2 K subcooling. Latent heat into the interface was +0.00017184167 J and −0.00016913939 J, respectively. The 16- and 64-step runs differed by at most 1.05e-10 m in final radius. This fixture uses quasi-static spherical equilibrium and prescribed liquid heat conduction. It checks the phase-transfer ledger and excludes mechanical pressure work and surface energy from that ledger. Resolved bubble motion and GPU execution remain open.

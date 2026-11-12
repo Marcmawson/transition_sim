@@ -47,6 +47,44 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return new PureWaterStefanInterface(saturation, heat, 0);
         }
 
+        public static (double RadiusM, PureWaterStefanInterface Interface) SphericalFromVapourMass(
+            double massKg, double lowerRadiusM, double upperRadiusM, double ambientPressurePa,
+            double surfaceTensionNm, double bulkLiquidK, double conductivityWmK, double lowerK, double upperK)
+        {
+            if (!SiUnits.IsFinite(massKg) || massKg <= 0 ||
+                !SiUnits.IsFinite(lowerRadiusM) || lowerRadiusM <= 0 ||
+                !SiUnits.IsFinite(upperRadiusM) || upperRadiusM <= lowerRadiusM)
+                throw new ArgumentException("Spherical vapour mass requires a positive radius bracket.");
+            if (Mass(lowerRadiusM, At(lowerRadiusM)) > massKg || Mass(upperRadiusM, At(upperRadiusM)) < massKg)
+                throw new ArgumentException("The radius bracket does not contain the vapour inventory.");
+            double radius = (lowerRadiusM + upperRadiusM) * 0.5;
+            for (int iteration = 0; iteration < 32; iteration++)
+            {
+                var surface = At(radius);
+                double error = Mass(radius, surface) - massKg;
+                if (Math.Abs(error) <= 1e-10 * massKg) return (radius, surface);
+                if (error < 0) lowerRadiusM = radius;
+                else upperRadiusM = radius;
+
+                var vapour = surface.Saturation.Vapour;
+                var liquid = surface.Saturation.Liquid;
+                double volume = 4 * Math.PI / 3 * radius * radius * radius;
+                double dTdp = vapour.TemperatureK * (1 / vapour.DensityKgM3 - 1 / liquid.DensityKgM3) /
+                    surface.Saturation.LatentEnthalpyJkg;
+                double densitySlope = (vapour.DensityPressureDerivative + vapour.DensityTemperatureDerivative * dTdp) *
+                    (-2 * surfaceTensionNm / (radius * radius));
+                double slope = volume * (3 * vapour.DensityKgM3 / radius + densitySlope);
+                double next = radius - error / slope;
+                radius = next > lowerRadiusM && next < upperRadiusM ? next : (lowerRadiusM + upperRadiusM) * 0.5;
+            }
+            throw new InvalidOperationException("Capillary radius did not converge to the vapour inventory.");
+
+            PureWaterStefanInterface At(double r) => SphericalConduction(r, ambientPressurePa,
+                surfaceTensionNm, bulkLiquidK, conductivityWmK, lowerK, upperK);
+            double Mass(double r, PureWaterStefanInterface surface) =>
+                (4 * Math.PI / 3 * r * r * r) * surface.Saturation.Vapour.DensityKgM3;
+        }
+
         private static SaturationState FindSaturation(double pressurePa, double lowerK, double upperK)
         {
             if (!SiUnits.IsFinite(pressurePa) || pressurePa <= 0 ||
