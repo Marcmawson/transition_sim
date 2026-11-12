@@ -6,6 +6,8 @@ namespace PhysicsSim.ThreePhase3D.Solids
 {
     public static class IceWallContact
     {
+        private const double RotatingSweepToleranceM = 1e-10;
+
         public readonly struct Sweep
         {
             public readonly IceBody Body;
@@ -82,7 +84,7 @@ namespace PhysicsSim.ThreePhase3D.Solids
             double speedBound = Math.Abs(D3.Dot(body.VelocityMPerS, normal)) + omega.Length * radius;
             if (!SiUnits.IsFinite(speedBound))
                 throw new ArgumentException("The hull speed bound must be finite.", nameof(body));
-            const double toleranceM = 1e-10;
+            const double toleranceM = RotatingSweepToleranceM;
             double elapsed = 0;
             for (int iteration = 0; iteration < 512; iteration++)
             {
@@ -109,6 +111,30 @@ namespace PhysicsSim.ThreePhase3D.Solids
                 elapsed = next;
             }
             throw new InvalidOperationException("The rotating plane sweep did not converge to a safe result.");
+        }
+
+        // Advance to the first impact, resolve all touching vertices, and
+        // return the elapsed time so the caller can process the remainder.
+        public static Sweep AdvanceAndResolvePlaneImpact(IceBody body, IReadOnlyList<D3> verticesLocalM,
+            D3 planePointM, D3 planeNormal, double seconds, double restitution, out D3 wallReactionNs)
+        {
+            if (!SiUnits.IsFinite(restitution) || restitution < 0 || restitution > 1)
+                throw new ArgumentOutOfRangeException(nameof(restitution));
+            var sweep = AdvancePrincipalRotationToPlane(body, verticesLocalM, planePointM, planeNormal, seconds);
+            wallReactionNs = default;
+            if (!sweep.Hit) return sweep;
+
+            D3 normal = planeNormal.Unit();
+            double firstGap = D3.Dot(sweep.ContactPointM - planePointM, normal);
+            var contacts = new List<D3>();
+            foreach (D3 vertex in verticesLocalM)
+            {
+                D3 point = sweep.Body.Frame.ToWorld(vertex);
+                double gap = D3.Dot(point - planePointM, normal);
+                if (gap - firstGap <= RotatingSweepToleranceM) contacts.Add(point);
+            }
+            var rebound = ResolveSimultaneousImpact(sweep.Body, contacts, normal, restitution, out wallReactionNs);
+            return new Sweep(rebound, sweep.ElapsedSeconds, true, sweep.ContactPointM);
         }
 
         // Contacts are supplied at the same impact pose. The restitution

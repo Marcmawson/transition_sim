@@ -132,3 +132,9 @@ The CPU fixture spins a box at 10 rad/s through a full revolution with both endp
 The frictionless fixed-wall solver resolves a set of contact points at one impact pose. It holds restitution targets from the incident point speeds, iterates nonnegative normal impulses, and accepts only a converged contact velocity solution without kinetic-energy gain. It returns the total equal and opposite reaction on the wall.
 
 The CPU fixture hit the wall squarely at 0.4 m/s and resolved all four corners at once. At restitution 0, 0.5 and 1, all corners matched the analytic rebound speed, the body stayed spin-free within 1e-8 rad/s, and tangential translation, net impulse and energy loss matched the reference. The fixture uses both forward and reverse corner traversal. Sweep-to-manifold integration, sustained support and beaker-wall coupling remain open.
+
+## V25 sweep-to-contact integration
+
+The combined step advances to first contact, gathers the hull vertices within the contact tolerance of the first point, then resolves their normal impulses together. It returns the updated body, equal and opposite wall reaction, and time consumed up to impact. The caller owns the remainder of the timestep.
+
+The CPU fixture drove a level box into a wall at 20 m/s. It detected contact after 5 ms of a 20 ms interval. All four corners rebounded at 10 m/s with restitution 0.5, with no hull penetration within 1e-12 m and no spin above 1e-8 rad/s. Reversing the hull vertex order gave the same result within tolerance. A 2 ms clear sweep produced no impulse. Sustained support under gravity and coupled beaker-wall contact remain open.

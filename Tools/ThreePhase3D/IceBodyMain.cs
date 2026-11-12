@@ -36,7 +36,44 @@ internal static class IceBodyMain
         CheckWallSweep(body);
         CheckRotatingSweep(body);
         CheckSimultaneousImpact(body);
+        CheckSweptManifold(body);
         Console.WriteLine("S11 rigid ice body passed: box inertia, force, torque, off-centre impulse, point velocity and free motion.");
+    }
+
+    private static void CheckSweptManifold(IceBody box)
+    {
+        var hull = new D3[8];
+        for (int i = 0; i < hull.Length; i++)
+            hull[i] = new D3((i & 1) == 0 ? -0.02 : 0.02,
+                (i & 2) == 0 ? -0.015 : 0.015, (i & 4) == 0 ? -0.01 : 0.01);
+        const double incident = 20, restitution = 0.5, dt = 0.02;
+        var body = new IceBody(box.MassKg, box.PrincipalInertiaKgM2,
+            RigidFrame.Euler(new D3(0, 0.115, 0), 0, 0, 0),
+            new D3(0.1, -incident, 0) * box.MassKg, default);
+        var normal = new D3(0, 1, 0);
+        foreach (bool reverse in new[] { false, true })
+        {
+            if (reverse) Array.Reverse(hull);
+            var impact = IceWallContact.AdvanceAndResolvePlaneImpact(body, hull, default, normal,
+                dt, restitution, out D3 reaction);
+            if (!impact.Hit) throw new InvalidOperationException("Missed face-first impact.");
+            Near(impact.ElapsedSeconds, 0.005, 1e-12);
+            Near(impact.Body.Frame.Origin.Y, 0.015, 1e-12);
+            Near(impact.Body.VelocityMPerS.Y, incident * restitution, 1e-10);
+            Near(impact.Body.AngularVelocityRadPerS.Length, 0, 1e-8);
+            Near(reaction.Y, -body.MassKg * incident * (1 + restitution), 1e-10);
+            foreach (D3 vertex in hull)
+            {
+                D3 point = impact.Body.Frame.ToWorld(vertex);
+                if (point.Y < -1e-12) throw new InvalidOperationException("Face-first impact penetrated the wall.");
+                if (vertex.Y < 0) Near(impact.Body.VelocityAt(point).Y, incident * restitution, 2e-10);
+            }
+        }
+        var clear = IceWallContact.AdvanceAndResolvePlaneImpact(body, hull, default, normal,
+            0.002, restitution, out D3 noReaction);
+        if (clear.Hit || noReaction.Length != 0)
+            throw new InvalidOperationException("A clear sweep produced an impulse.");
+        Console.WriteLine("S11 V25 swept face impact passed: all four corners rebounded at first contact.");
     }
 
     private static void CheckSimultaneousImpact(IceBody box)
