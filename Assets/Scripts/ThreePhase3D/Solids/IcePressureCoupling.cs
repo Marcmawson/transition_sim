@@ -24,9 +24,50 @@ namespace PhysicsSim.ThreePhase3D.Solids
 
         private delegate IceBody SupportedStep(D3 force, D3 torque, out D3 wallReactionNs);
 
+        // Kick with the converged pressure load, then sweep with the incident momenta.
+        // Each retry projects from the same fluid state for the revised duration.
+        public static (Result Step, double ElapsedSeconds, bool Hit) AdvanceToBeakerImpact(
+            IceBody body, VariableCoefficientProjection plan, double dt, D3 gravityMPerS2,
+            Func<double, double[], FlowStep> project, IReadOnlyList<D3> verticesLocalM,
+            GeometryInputs glass, int segments, RigidFrame beakerFrame, double restitution,
+            Func<D3, double> backgroundPressurePa = null, ColumnHydrostaticPressure columnPressure = null)
+        {
+            if (project == null) throw new ArgumentNullException(nameof(project));
+            double duration = dt;
+            const int retryLimit = 32;
+            for (int retry = 0; retry < retryLimit; retry++)
+            {
+                var step = AdvanceCore(body, plan, duration, gravityMPerS2, flux => project(duration, flux),
+                    backgroundPressurePa, columnPressure, null, drift: false);
+                var sweep = IceWallContact.AdvanceAndResolveBeakerImpact(step.Body, verticesLocalM,
+                    glass, segments, beakerFrame, dt, restitution, out D3 reaction);
+                if (sweep.Hit && sweep.ElapsedSeconds == 0)
+                    throw new InvalidOperationException("Resolve existing beaker contact before advancing the fluid.");
+                if (sweep.Hit && Math.Abs(duration - sweep.ElapsedSeconds) <= 1e-10)
+                    return (new Result(sweep.Body, step.Fluid, step.Iterations,
+                        step.BoundaryVelocityMismatchMPerS, reaction), sweep.ElapsedSeconds, true);
+
+                if (!sweep.Hit && duration == dt)
+                    return (new Result(sweep.Body, step.Fluid, step.Iterations,
+                        step.BoundaryVelocityMismatchMPerS, default), dt, false);
+                if (!sweep.Hit)
+                {
+                    // A shorter pressure kick can leave the hull clear. Accept only the projected interval.
+                    var clear = IceWallContact.AdvanceAndResolveBeakerImpact(step.Body, verticesLocalM,
+                        glass, segments, beakerFrame, duration, restitution, out _);
+                    if (clear.Hit)
+                        throw new InvalidOperationException("The shortened beaker sweep disagrees with the full sweep.");
+                    return (new Result(clear.Body, step.Fluid, step.Iterations,
+                        step.BoundaryVelocityMismatchMPerS, default), duration, false);
+                }
+                duration = sweep.ElapsedSeconds;
+            }
+            throw new InvalidOperationException("The pressure projection and beaker impact time did not converge.");
+        }
+
         private static Result AdvanceCore(IceBody body, VariableCoefficientProjection plan, double dt,
             D3 gravityMPerS2, Func<double[], FlowStep> project, Func<D3, double> backgroundPressurePa,
-            ColumnHydrostaticPressure columnPressure, SupportedStep support)
+            ColumnHydrostaticPressure columnPressure, SupportedStep support, bool drift = true)
         {
             if (body == null) throw new ArgumentNullException(nameof(body));
             if (plan == null) throw new ArgumentNullException(nameof(plan));
@@ -61,7 +102,7 @@ namespace PhysicsSim.ThreePhase3D.Solids
                 mismatch = Math.Max((corrected.VelocityMPerS - trial.VelocityMPerS).Length,
                     radius * (corrected.AngularVelocityRadPerS - trial.AngularVelocityRadPerS).Length);
                 if (mismatch <= velocityTolerance)
-                    return new Result(supported ?? load.Advance(body, dt, gravityMPerS2),
+                    return new Result(supported ?? (drift ? load.Advance(body, dt, gravityMPerS2) : corrected),
                         fluid, iteration, mismatch, wallReaction);
 
                 trial = new IceBody(body.MassKg, body.PrincipalInertiaKgM2, body.Frame,
