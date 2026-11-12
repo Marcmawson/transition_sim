@@ -108,3 +108,9 @@ Column pressure has a slope break at the waterline. Integrating the air contribu
 The CPU torque fixture rolls the nearly equilibrated box by -0.01, 0 and +0.01 rad on both grid offsets. The restoring torque is about 4.51659e-7 N m in magnitude at either tilt, consistent with the [small-angle metacentric reference](https://web.mit.edu/13.400/www/problemset2sol.pdf). The previous unsplit sampling produced a vector torque error of 6.63122e-7 N m in the first case. The split integration agrees with the exact flat-waterline integral within 3e-19 N m across all six cases.
 
 Both 512-step CPU reruns conserved all five inventories. The unshifted and 3 mm shifted runs ended at 92.0511% and 91.6315% immersion, respectively. Peak angular speeds in the final 32 steps were 0.7828 and 0.2594 rad/s. The correction resolves the static quadrature error. The dynamic rotation and offset dependence still require investigation before accepting settled flotation.
+
+## V25 fixed-wall point impact
+
+IceWallContact resolves a detected single-point impact against a fixed, frictionless wall. The impulse uses the inverse mass and world-space inverse inertia at the contact point. It applies the specified normal restitution and returns the equal and opposite wall reaction. Separating contacts receive no impulse. The model follows the [rigid-body collision impulse reference](https://www.cs.cmu.edu/~baraff/sigcourse/notesd2.pdf).
+
+The CPU rigid-body checks passed for central and off-centre impacts at restitution 0, 0.5 and 1. They compared normal rebound speed, unchanged tangential translation, wall reaction, angular impulse and kinetic energy loss against analytic values. Continuous collision detection, simultaneous and resting contacts, and the coupled wall nonpenetration check remain open for V25. V24 settled flotation is tracked separately above.

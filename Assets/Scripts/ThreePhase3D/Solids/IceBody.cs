@@ -68,6 +68,8 @@ namespace PhysicsSim.ThreePhase3D.Solids
                 momentum, angularMomentum);
         }
 
+        internal D3 InverseInertiaWorld(D3 angularImpulse) => AngularVelocity(Frame, angularImpulse);
+
         private D3 AngularVelocity(RigidFrame frame, D3 momentum) =>
             frame.U * (D3.Dot(momentum, frame.U) / PrincipalInertiaKgM2.X) +
             frame.V * (D3.Dot(momentum, frame.V) / PrincipalInertiaKgM2.Y) +

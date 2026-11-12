@@ -32,7 +32,39 @@ internal static class IceBodyMain
         var rotated = new IceBody(body.MassKg, body.PrincipalInertiaKgM2,
             RigidFrame.Euler(default, 0, 0, Math.PI / 2), default, new D3(0, 1e-5, 0));
         Near(rotated.AngularVelocityRadPerS.Y, 1e-5 / body.PrincipalInertiaKgM2.X, 1e-12);
+        CheckWallImpact(body);
         Console.WriteLine("S11 rigid ice body passed: box inertia, force, torque, off-centre impulse, point velocity and free motion.");
+    }
+
+    private static void CheckWallImpact(IceBody box)
+    {
+        const double incident = 0.4;
+        var body = new IceBody(box.MassKg, box.PrincipalInertiaKgM2,
+            RigidFrame.Euler(new D3(0, 0.015, 0), 0, 0, 0),
+            new D3(0.1, -incident, 0) * box.MassKg, default);
+        var normal = new D3(0, 1, 0);
+        foreach (double x in new[] { 0.0, 0.02 })
+        foreach (double restitution in new[] { 0.0, 0.5, 1.0 })
+        {
+            var point = new D3(x, 0, 0);
+            var result = IceWallContact.ResolveImpact(body, point, normal, restitution, out D3 wallReaction);
+            double effectiveMass = 1 / (1 / body.MassKg + x * x / body.PrincipalInertiaKgM2.Z);
+            double impulse = effectiveMass * (1 + restitution) * incident;
+            double loss = 0.5 * effectiveMass * (1 - restitution * restitution) * incident * incident;
+            Near(result.VelocityAt(point).Y, restitution * incident, 1e-12);
+            Near(result.VelocityMPerS.X, body.VelocityMPerS.X, 1e-12);
+            Near(wallReaction.Y, -impulse, 1e-12);
+            Near((result.MomentumKgMPerS + wallReaction - body.MomentumKgMPerS).Length, 0, 1e-12);
+            Near(result.AngularMomentumKgM2PerS.Z, x * impulse, 1e-12);
+            Near(body.KineticEnergyJ - result.KineticEnergyJ, loss, 1e-12);
+        }
+
+        var separating = new IceBody(body.MassKg, body.PrincipalInertiaKgM2, body.Frame,
+            new D3(0, incident * body.MassKg, 0), default);
+        var unchanged = IceWallContact.ResolveImpact(separating, default, normal, 1, out D3 reaction);
+        if (unchanged != separating || reaction.Length != 0)
+            throw new InvalidOperationException("A separating body must receive no wall impulse.");
+        Console.WriteLine("S11 V25 point impact passed: central and off-centre impulses, restitution, wall reaction and energy loss.");
     }
 
     private static void Near(double actual, double expected, double tolerance)
