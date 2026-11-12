@@ -33,11 +33,11 @@ namespace PhysicsSim.ThreePhase3D.Solids
             var plane = new ClipPlane(new D3(D3.Dot(up, frame.U), D3.Dot(up, frame.V), D3.Dot(up, frame.W)),
                 frame.ToLocal(waterlinePointM));
             return Integrate(body, geometry,
-                (_, point) => liquidDensityKgM3 * D3.Dot(gravityMPerS2, point - waterlinePointM), plane);
+                (_, point) => liquidDensityKgM3 * D3.Dot(gravityMPerS2, point - waterlinePointM), _ => plane);
         }
 
         private static IcePressureLoad Integrate(IceBody body, CutCellGeometry geometry,
-            Func<InterfacePatch, D3, double> pressurePa, ClipPlane? clip)
+            Func<InterfacePatch, D3, double> pressurePa, Func<InterfacePatch, ClipPlane> clip)
         {
             if (body == null) throw new ArgumentNullException(nameof(body));
             if (geometry == null) throw new ArgumentNullException(nameof(geometry));
@@ -51,8 +51,8 @@ namespace PhysicsSim.ThreePhase3D.Solids
                     throw new NotSupportedException("Pressure torque on a partially blocked patch requires its exposed polygon.");
                 var n = patch.NormalLocal;
                 D3 normal = frame.U * n.X + frame.V * n.Y + frame.W * n.Z;
-                IReadOnlyList<D3> polygon = clip.HasValue
-                    ? PolyhedronClip.Polygon(new List<D3>(patch.Polygon), clip.Value)
+                IReadOnlyList<D3> polygon = clip != null
+                    ? PolyhedronClip.Polygon(new List<D3>(patch.Polygon), clip(patch))
                     : patch.Polygon;
                 if (polygon.Count < 3) continue;
                 D3 a = polygon[0];
@@ -90,12 +90,18 @@ namespace PhysicsSim.ThreePhase3D.Solids
             if (plan == null) throw new ArgumentNullException(nameof(plan));
             if (groupPressurePa == null || groupPressurePa.Count != plan.GroupCount)
                 throw new ArgumentException("One pressure is required per projection group.", nameof(groupPressurePa));
-            return Integrate(body, plan.Geometry, (patch, point) =>
+            if (columnPressure != null && backgroundPressurePa != null)
+                throw new ArgumentException("Supply one hydrostatic background.");
+            var baseLoad = Integrate(body, plan.Geometry, (patch, point) =>
             {
                 int group = plan.GroupByCell[patch.Cell];
                 if (group < 0) throw new InvalidOperationException("An exposed ice patch has no fluid pressure group.");
-                return groupPressurePa[group] + (backgroundPressurePa?.Invoke(point) ?? 0) + (columnPressure?.At(patch.Cell, point) ?? 0);
+                return groupPressurePa[group] + (backgroundPressurePa?.Invoke(point) ?? 0) + (columnPressure?.AirAt(point) ?? 0);
             });
+            if (columnPressure == null) return baseLoad;
+            var wet = Integrate(body, plan.Geometry, (patch, point) => columnPressure.WaterExcessAt(patch.Cell, point),
+                patch => columnPressure.WaterlinePlane(patch.Cell));
+            return new IcePressureLoad(baseLoad.ForceN + wet.ForceN, baseLoad.TorqueNm + wet.TorqueNm);
         }
 
         // The outward fluid normal at the ice boundary points into the ice.

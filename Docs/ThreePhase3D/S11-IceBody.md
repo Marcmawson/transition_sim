@@ -100,3 +100,11 @@ The 512-step CPU runs initially exceeded the phase-volume closure tolerance afte
 | 3 mm | 91.6418% | 91.6418% to 91.7382% | 0.1220 mm/s | 0.2210 rad/s |
 
 The hydrostatic reference is approximately 91.7% submerged. The two offsets still differ and the body continues rotating. V24 settled flotation remains open. The Unity GPU check still covers the short two-step fixture.
+
+## Waterline torque quadrature
+
+Column pressure has a slope break at the waterline. Integrating the air contribution over the whole patch and the excess water pressure over only the clipped wet polygon removes the quadrature error at that break. Pressure from the dynamic projection continues to act over the whole exposed patch.
+
+The CPU torque fixture rolls the nearly equilibrated box by -0.01, 0 and +0.01 rad on both grid offsets. The restoring torque is about 4.51659e-7 N m in magnitude at either tilt, consistent with the [small-angle metacentric reference](https://web.mit.edu/13.400/www/problemset2sol.pdf). The previous unsplit sampling produced a vector torque error of 6.63122e-7 N m in the first case. The split integration agrees with the exact flat-waterline integral within 3e-19 N m across all six cases.
+
+Both 512-step CPU reruns conserved all five inventories. The unshifted and 3 mm shifted runs ended at 92.0511% and 91.6315% immersion, respectively. Peak angular speeds in the final 32 steps were 0.7828 and 0.2594 rad/s. The correction resolves the static quadrature error. The dynamic rotation and offset dependence still require investigation before accepting settled flotation.

@@ -116,6 +116,17 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return Pressure(x, z, grid.Frame.ToLocal(worldPointM).Y);
         }
 
+        internal double AirAt(D3 point) => gasSlope * (grid.Cells.Y * grid.Spacing.Y - grid.Frame.ToLocal(point).Y);
+
+        internal double WaterExcessAt(int cell, D3 point) =>
+            (liquidSlope - gasSlope) * (WaterlinePlane(cell).Offset - grid.Frame.ToLocal(point).Y);
+
+        internal ClipPlane WaterlinePlane(int cell)
+        {
+            grid.Cells.Coordinates(cell, out int x, out _, out int z);
+            return new ClipPlane(new D3(0, 1, 0), new D3(0, WaterlineLocalM(x, z), 0));
+        }
+
         internal double WaterlineLocalM(int x, int z) => waterline[z * grid.Cells.X + x];
 
         private double Pressure(int x, int z, double pointY)

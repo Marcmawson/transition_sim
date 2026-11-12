@@ -11,6 +11,7 @@ internal static class IcePressureMain
     {
         CheckRemap();
         CheckWaterline();
+        CheckFlotationTorque();
         CheckColumnPrediction();
         foreach (double offset in new[] { 0.0, 0.003 })
         {
@@ -164,6 +165,40 @@ internal static class IcePressureMain
         double expected = -dt * g * (rhoWater - rhoAir) * 0.001 * plan.Faces[face].Mobility;
         Near(Math.Abs(slopedPressure.Predict(still, dt)[face] - expected), 1e-9);
         Console.WriteLine($"S11 column prediction passed: flat surface at rest, downslope face speed {expected:G6} m/s.");
+    }
+
+    private static void CheckFlotationTorque()
+    {
+        const double rho = 1000, g = 9.81, tilt = 0.01, fraction = 0.917;
+        var size = new D3(0.018, 0.017, 0.016);
+        var centre = new D3(0.038, 0.041, 0.039);
+        var waterline = new D3(0, centre.Y + (fraction - 0.5) * size.Y, 0);
+        var gravity = new D3(0, -g, 0);
+        var surface = SurfacePrimitives.Box(size * -0.5, size * 0.5);
+        double draft = fraction * size.Y;
+        double metacentricHeight = size.X * size.X / (12 * draft) - (size.Y - draft) / 2;
+        double restoringSlope = -rho * g * size.X * size.Z * draft * metacentricHeight;
+        foreach (double offset in new[] { 0.0, 0.003 })
+        foreach (double angle in new[] { -tilt, 0, tilt })
+        {
+            var grid = new Grid3D(8, 8, 8, new D3(0.01, 0.01, 0.01),
+                RigidFrame.Euler(new D3(offset, 0, 0), 0, 0, 0));
+            var body = IceBody.Box(917, size, RigidFrame.Euler(centre, 0, 0, angle));
+            var geometry = CutCellGeometry.Build(grid, iceSurface: SurfacePrimitives.Transform(surface, body.Frame));
+            var plan = new VariableCoefficientProjection(geometry, BoundaryConditions3D.Closed, _ => rho, _ => 0);
+            var fields = PlanarLiquidInventory.Create(plan, waterline, new D3(0, 1, 0), 0, 0, 0);
+            const double rhoAir = 1.2;
+            var column = new ColumnHydrostaticPressure(plan, fields, gravity, rho, rhoAir);
+            var reference = IcePressureLoad.Hydrostatic(body, geometry, waterline, gravity, rho - rhoAir);
+            var reconstructed = IcePressureLoad.FromProjection(body, plan, new double[plan.GroupCount],
+                columnPressure: column);
+            double expected = restoringSlope * angle * (rho - rhoAir) / rho;
+            Near(Math.Abs(reference.TorqueNm.Z - expected), 0.001 * Math.Abs(restoringSlope * tilt));
+            double error = (reconstructed.TorqueNm - reference.TorqueNm).Length;
+            Console.WriteLine(FormattableString.Invariant(
+                $"V24 torque at offset {offset:G} m and roll {angle:G} rad: reference {reference.TorqueNm.Z:G6} N m, reconstructed {reconstructed.TorqueNm.Z:G6} N m, vector error {error:G6} N m."));
+            Near(error, 1e-10);
+        }
     }
 
     private static void CheckWaterline()
