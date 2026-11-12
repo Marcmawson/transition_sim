@@ -9,6 +9,11 @@ internal static class FlowMain
 {
     public static int Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--pure-stefan")
+        {
+            CheckPureWaterStefan();
+            return 0;
+        }
         if (args.Length == 1 && args[0] == "--humid-diffusion")
         {
             CheckHumidDiffusion();
@@ -35,6 +40,64 @@ internal static class FlowMain
             Console.WriteLine($"{passed}/{suite.Rows.Count} passed");
         }
         return suite.Passed ? 0 : 1;
+    }
+
+    private static void CheckPureWaterStefan()
+    {
+        const double pressure = 101325, dx = 0.01, dt = 0.002;
+        const int steps = 4;
+        var grid = new Grid3D(1, 3, 1, new D3(dx, dx, dx), RigidFrame.Identity);
+        double area = grid.FaceArea(1);
+        var sides = new FlowBoundary[6];
+        sides[3] = new FlowBoundary(FlowBoundaryKind.OpenPressure);
+        foreach (double liquidHeat in new[] { 10000.0, -10000.0 })
+        {
+            var surface = new PureWaterStefanInterface(pressure, 370, 377, liquidHeat, 0);
+            var liquid = surface.Saturation.Liquid;
+            var vapour = surface.Saturation.Vapour;
+            Near(Math.Abs(liquid.TemperatureK - 373.1243), 5e-5);
+            Near(Math.Abs(liquid.TemperatureK - vapour.TemperatureK), 0);
+            if (!(liquid.DensityKgM3 / vapour.DensityKgM3 > 1500))
+                throw new InvalidOperationException("The Stefan fixture requires the physical liquid/vapour density contrast.");
+            var plan = new VariableCoefficientProjection(CutCellGeometry.Build(grid),
+                new BoundaryConditions3D(sides), _ => vapour.DensityKgM3, _ => 0);
+            var transport = new CutCellVofTransport(plan);
+            var fields = PlanarLiquidInventory.Create(plan, new D3(0, 0.015, 0), new D3(0, 1, 0),
+                liquid.DensityKgM3 * liquid.EnthalpyJkg, vapour.DensityKgM3 * vapour.EnthalpyJkg, vapour.DensityKgM3);
+            double Sum(double[] values) => System.Linq.Enumerable.Sum(values);
+            double initialLiquid = Sum(fields.LiquidM3);
+            double initialWater = initialLiquid * liquid.DensityKgM3 + Sum(fields.VapourKg);
+            double initialHeat = Sum(fields.LiquidEnergyJ) + Sum(fields.GasEnergyJ);
+            double boundaryWater = 0, boundaryHeat = 0;
+            for (int step = 0; step < steps; step++)
+            {
+                var result = transport.AdvancePureWaterStefan(fields, dt, surface,
+                    source => FlowCpuReference.Project(plan, new float[plan.FaceCount], dt, 4096, null, source),
+                    _ => new CutCellInflow(0, 0, vapour.DensityKgM3 * vapour.EnthalpyJkg, vapour.DensityKgM3));
+                fields = result.Transport.Fields;
+                var boundary = result.Transport.BoundaryInflow;
+                Near(Math.Abs(boundary[0]), 1e-18);
+                boundaryWater += boundary[4];
+                boundaryHeat += boundary[2] + boundary[3];
+                double outlet = result.Pressure.VelocityMPerS[plan.FaceIndex(1, 0, 3, 0)];
+                Near(Math.Abs(outlet - surface.VapourMinusLiquidVelocityMPerS), 1e-7);
+            }
+            double frontShift = (Sum(fields.LiquidM3) - initialLiquid) / area;
+            double analyticShift = -liquidHeat * dt * steps /
+                (surface.Saturation.LatentEnthalpyJkg * liquid.DensityKgM3);
+            Near(Math.Abs(frontShift - analyticShift), 1e-11);
+            Near(Math.Abs(Sum(fields.LiquidM3) * liquid.DensityKgM3 + Sum(fields.VapourKg) -
+                initialWater - boundaryWater), 1e-14);
+            Near(Math.Abs(Sum(fields.LiquidEnergyJ) + Sum(fields.GasEnergyJ) - initialHeat - boundaryHeat), 1e-9);
+            Console.WriteLine(FormattableString.Invariant(
+                $"S13 V29 planar Stefan passed: flux {surface.MassFluxKgM2PerS:G8} kg/m2/s, front shift {frontShift:G8} m, velocity jump {surface.VapourMinusLiquidVelocityMPerS:G8} m/s."));
+        }
+
+        void Near(double error, double tolerance)
+        {
+            if (!(error <= tolerance))
+                throw new InvalidOperationException($"Planar Stefan error {error:G8} exceeds {tolerance:G8}.");
+        }
     }
 
     private static void CheckHumidLowMach()

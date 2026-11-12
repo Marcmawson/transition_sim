@@ -285,6 +285,42 @@ namespace PhysicsSim.ThreePhase3D.Flow
             Func<double[], FlowStep> project, Func<int, CutCellInflow> inflow = null)
         {
             if (solve == null) throw new ArgumentNullException(nameof(solve));
+            return AdvanceInterfaceExchange(state, dt, liquidDensityKgM3,
+                (liquid, gas, area, availableLiquid, availableVapour) => HumidInterfaceFlux.InventoryTransfer(
+                    solve(liquid, gas), area, dt, availableLiquid, availableVapour), project, inflow);
+        }
+
+        public (FlowStep Pressure, CutCellTransportResult Transport) AdvancePureWaterStefan(
+            CutCellInventories state, double dt, PureWaterStefanInterface surface,
+            Func<double[], FlowStep> project, Func<int, CutCellInflow> inflow = null)
+        {
+            if (surface == null) throw new ArgumentNullException(nameof(surface));
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            Validate(state.Planes);
+            double vapourDensity = surface.Saturation.Vapour.DensityKgM3;
+            for (int group = 0; group < plan.GroupCount; group++)
+                if (Math.Abs(state.VapourKg[group] - state.GasM3[group] * vapourDensity) >
+                    1e-10 * plan.Volumes[group] * vapourDensity)
+                    throw new ArgumentException("Pure-water Stefan exchange requires saturated vapour inventory.", nameof(state));
+            Func<int, CutCellInflow> pureInflow = inflow == null ? null : face =>
+            {
+                var reservoir = inflow(face);
+                if (reservoir.LiquidFraction < 1 &&
+                    Math.Abs(reservoir.VapourDensity - vapourDensity) > 1e-10 * vapourDensity)
+                    throw new ArgumentException("Pure-water Stefan backflow requires saturated vapour.", nameof(inflow));
+                return reservoir;
+            };
+            return AdvanceInterfaceExchange(state, dt, surface.Saturation.Liquid.DensityKgM3,
+                (_, _, area, availableLiquid, availableVapour) =>
+                    surface.Transfer(area, dt, availableLiquid, availableVapour), project, pureInflow);
+        }
+
+        private (FlowStep Pressure, CutCellTransportResult Transport) AdvanceInterfaceExchange(
+            CutCellInventories state, double dt, double liquidDensityKgM3,
+            Func<int, int, double, double, double, (double WaterKg, double LiquidM3, double GasM3,
+                double LiquidEnthalpyJ, double GasEnthalpyJ)> calculate,
+            Func<double[], FlowStep> project, Func<int, CutCellInflow> inflow)
+        {
             if (!SiUnits.IsFinite(liquidDensityKgM3) || liquidDensityKgM3 <= 0 ||
                 !SiUnits.IsFinite(dt) || dt <= 0)
                 throw new ArgumentException("Phase exchange requires positive density and timestep.");
@@ -313,13 +349,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
             void Add(int liquid, int gas, double area)
             {
-                var transfer = HumidInterfaceFlux.InventoryTransfer(solve(liquid, gas), area, dt,
+                var transfer = calculate(liquid, gas, area,
                     state.LiquidM3[liquid] * liquidDensityKgM3 - liquidUsed[liquid],
                     state.VapourKg[gas] - vapourUsed[gas]);
                 liquidUsed[liquid] += Math.Max(0, transfer.WaterKg);
                 vapourUsed[gas] += Math.Max(0, -transfer.WaterKg);
-                increments.LiquidM3[liquid] += transfer.LiquidVolumeM3;
-                increments.GasM3[gas] += transfer.GasVolumeM3;
+                increments.LiquidM3[liquid] += transfer.LiquidM3;
+                increments.GasM3[gas] += transfer.GasM3;
                 increments.LiquidEnergyJ[liquid] += transfer.LiquidEnthalpyJ;
                 increments.GasEnergyJ[gas] += transfer.GasEnthalpyJ;
                 increments.VapourKg[gas] += transfer.WaterKg;
