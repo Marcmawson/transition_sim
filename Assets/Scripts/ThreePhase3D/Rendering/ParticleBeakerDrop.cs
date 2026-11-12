@@ -53,6 +53,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         [SerializeField, Range(0f, .1f)] private float nearPressureMultiplier = .0216f;
         [SerializeField, Range(0f, 1f)] private float viscosityStrength;
         [SerializeField, Range(0f, 1f)] private float wallBounce = .2f;
+        [SerializeField] private bool glassFloorPressure = true;
 
         private FluidSim fluid;
         private BeakerFreeLookCamera beakerCamera;
@@ -74,7 +75,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private float frameMs;
         private float playbackSpeed;
         private float measuredPlaybackSpeed, measuredBurnerWatts;
-        private bool measuredBuoyancy;
+        private bool measuredBuoyancy, measuredFloorPressure;
         private int timestepIndex;
         private int benchmarkSteps;
         private Vector2 panelScroll;
@@ -154,6 +155,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 (float)geometry.innerRadiusM * Mathf.Cos(Mathf.PI / setup.scenario.display.cylinderSegments) - particleRadiusM,
                 floor + particleRadiusM);
             fluid.beakerRimY = rim;
+            fluid.beakerGlassFloorY = floor;
 
             var display = particleDisplay = solverObject.AddComponent<ParticleDisplay3D>();
             display.sim = fluid;
@@ -241,6 +243,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void AdvanceDrop(double stepSeconds, int steps)
         {
             fluid.thermalBuoyancy = measuring ? measuredBuoyancy : thermalBuoyancy;
+            fluid.beakerFloorPressure = measuring ? measuredFloorPressure : glassFloorPressure;
             fluid.AdvanceManually((float)stepSeconds, steps);
             movingHeat?.Advance(stepSeconds * steps, measuring ? measuredBurnerWatts : absorbedBurnerWatts);
         }
@@ -262,6 +265,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             measuredPlaybackSpeed = playbackSpeed;
             measuredBurnerWatts = absorbedBurnerWatts;
             measuredBuoyancy = thermalBuoyancy;
+            measuredFloorPressure = glassFloorPressure;
             benchmarkSteps = durationMicroseconds / StepMicroseconds;
             SetRunning(true);
             startTime = lastTick;
@@ -274,6 +278,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             double elapsed = Time.realtimeSinceStartupAsDouble - startTime;
             string timing = FormattableString.Invariant(
                 $"GPU drop: {measuredFrames} frames, {measuredFrames / elapsed:F1} FPS, {fluid.SimulatedSeconds:F3} s simulated in {elapsed:F3} s at {measuredPlaybackSpeed:P0} playback · {StepMicroseconds / 1000.0:0.##} ms per step · {solverSteps} solver steps · {releaseVolumeMl:F0} mL release");
+            timing += $" · floor pressure {(measuredFloorPressure ? "on" : "off")}";
             if (movingHeat != null) timing += $" · {measuredBurnerWatts:F0} W · buoyancy {(measuredBuoyancy ? "on" : "off")} · " + movingHeat.Measure();
             evidence = timing;
             if (!SystemInfo.supportsAsyncGPUReadback)
@@ -395,6 +400,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 fluid.nearPressureMultiplier = Slider($"Near pressure  {fluid.nearPressureMultiplier:F4}", fluid.nearPressureMultiplier, 0, .1f);
                 fluid.viscosityStrength = Slider($"Viscosity strength  {fluid.viscosityStrength:F2}", fluid.viscosityStrength, 0, 1);
                 fluid.collisionDamping = Slider($"Wall bounce  {fluid.collisionDamping:P0}", fluid.collisionDamping, 0, 1);
+                glassFloorPressure = GUILayout.Toggle(glassFloorPressure, "Glass floor pressure support");
                 if (movingHeat != null)
                 {
                     absorbedBurnerWatts = Slider($"Burner {absorbedBurnerWatts:F0} W", absorbedBurnerWatts, 0, 100);

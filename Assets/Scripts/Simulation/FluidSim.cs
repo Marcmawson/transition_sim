@@ -88,6 +88,8 @@ namespace Seb.Fluid.Simulation
 		[HideInInspector] public bool manualControl;
 		[HideInInspector] public bool transportTemperature;
 		[HideInInspector] public bool thermalBuoyancy;
+		[HideInInspector] public bool beakerFloorPressure;
+		[HideInInspector] public float beakerGlassFloorY;
 		[NonSerialized] public float[] buoyancyDensityByDegree;
 		public ComputeBuffer TemperatureRise { get; private set; }
 		ComputeBuffer sortedTemperature;
@@ -421,6 +423,8 @@ namespace Seb.Fluid.Simulation
 			compute.SetFloat("whiteParticleDeltaTime", frameDeltaTime);
 			compute.SetFloat("simTime", (float)simTimer);
 			compute.SetFloat("gravity", gravity);
+			compute.SetFloat("BeakerFloorPressure", beakerFloorPressure ? 1f : 0f);
+			compute.SetFloat("beakerGlassFloorY", beakerGlassFloorY);
 			if (activeExternalForcesKernel != externalForcesKernel)
 				compute.SetFloat("ThermalBuoyancy", thermalBuoyancy ? 1f : 0f);
 			compute.SetFloat("collisionDamping", collisionDamping);

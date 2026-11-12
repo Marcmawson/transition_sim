@@ -47,6 +47,8 @@ const float collisionDamping;
 const float predictionTime;
 const float4 beakerCollision;
 const float beakerRimY;
+const float beakerGlassFloorY;
+const float BeakerFloorPressure;
 const float smoothingRadius;
 const float targetDensity;
 const float pressureMultiplier;
@@ -256,12 +258,26 @@ void ReorderWithHeat(uint3 id : SV_DispatchThreadID) { ReorderData(id); }
 [numthreads(ThreadGroupSize, 1, 1)]
 void ReorderCopyBackWithHeat(uint3 id : SV_DispatchThreadID) { CopyReorderedData(id); }
 
+bool SupportsFloorMirror(float3 p)
+{
+    float2 radial = p.xz - beakerCollision.xy;
+    return p.y >= beakerGlassFloorY && p.y < beakerRimY &&
+        dot(radial, radial) <= beakerCollision.z * beakerCollision.z + 1e-8;
+}
+
+float3 FloorMirror(float3 p)
+{
+    p.y = 2 * beakerGlassFloorY - p.y;
+    return p;
+}
+
 float2 CalculateDensitiesAtPoint(float3 pos)
 {
     int3 originCell = GetCell3D(pos, smoothingRadius);
     float sqrRadius = smoothingRadius * smoothingRadius;
     float density = 0;
     float nearDensity = 0;
+    bool floorSupport = BeakerFloorPressure > .5 && SupportsFloorMirror(pos) && pos.y - beakerGlassFloorY < smoothingRadius;
 
     // Neighbour search
     for (int i = 0; i < 27; i++)
@@ -292,6 +308,12 @@ float2 CalculateDensitiesAtPoint(float3 pos)
             float dst = sqrt(sqrDstToNeighbour);
             density += DensityKernel(dst, smoothingRadius);
             nearDensity += NearDensityKernel(dst, smoothingRadius);
+            if (floorSupport && SupportsFloorMirror(neighbourPos))
+            {
+                float reflectedDistance = distance(FloorMirror(neighbourPos), pos);
+                density += DensityKernel(reflectedDistance, smoothingRadius);
+                nearDensity += NearDensityKernel(reflectedDistance, smoothingRadius);
+            }
         }
     }
 
@@ -336,6 +358,22 @@ float3 CalculateOrthonormal(float3 dir)
 }
 
 
+float3 FloorPressureForce(float3 pos, float3 neighbour, float2 neighbourDensity, float pressure, float nearPressure)
+{
+    float3 offset = FloorMirror(neighbour) - pos;
+    float d2 = dot(offset, offset);
+    if (d2 <= 0 || d2 >= smoothingRadius * smoothingRadius) return 0;
+    float d = sqrt(d2);
+    // Extend the neighbour pressure below the floor with the hydrostatic gradient.
+    float ghostPressure = PressureFromDensity(neighbourDensity.x) +
+        neighbourDensity.x * abs(gravity) * 2 * (neighbour.y - beakerGlassFloorY);
+    float shared = max(0, .5 * (pressure + ghostPressure));
+    float sharedNear = .5 * (nearPressure + NearPressureFromDensity(neighbourDensity.y));
+    return (offset / d) * (
+        DensityDerivative(d, smoothingRadius) * shared / neighbourDensity.x +
+        NearDensityDerivative(d, smoothingRadius) * sharedNear / neighbourDensity.y);
+}
+
 [numthreads(ThreadGroupSize, 1, 1)]
 void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
 {
@@ -354,6 +392,9 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
     int3 originCell = GetCell3D(pos, smoothingRadius);
     float sqrRadius = smoothingRadius * smoothingRadius;
     int neighbourCount = 0;
+    bool floorSupport = BeakerFloorPressure > .5 && SupportsFloorMirror(pos) && pos.y - beakerGlassFloorY < smoothingRadius;
+    if (floorSupport)
+        pressureForce += FloorPressureForce(pos, pos, float2(density, densityNear), pressure, nearPressure);
 
     // Foam variables
     float weightedVelocityDifference = 0;
@@ -401,6 +442,9 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
             // Update pressure force
             pressureForce += dirToNeighbour * DensityDerivative(dstToNeighbour, smoothingRadius) * sharedPressure / densityNeighbour;
             pressureForce += dirToNeighbour * NearDensityDerivative(dstToNeighbour, smoothingRadius) * sharedNearPressure / nearDensityNeighbour;
+            if (floorSupport && SupportsFloorMirror(neighbourPos))
+                pressureForce += FloorPressureForce(pos, neighbourPos,
+                    float2(densityNeighbour, nearDensityNeighbour), pressure, nearPressure);
 
             // ---- White Particle 'Trapped Air' Calculation ----
             float3 relativeVelocity = velocity - Velocities[neighbourIndex];
