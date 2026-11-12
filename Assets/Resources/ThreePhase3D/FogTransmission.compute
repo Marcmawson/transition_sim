@@ -1,0 +1,14 @@
+#pragma kernel Transmit
+
+// Each sample stores extinction per metre and path length in metres.
+StructuredBuffer<float2> FogSamples;
+RWStructuredBuffer<float> Transmission;
+int SampleCount;
+
+[numthreads(32, 1, 1)]
+void Transmit(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= (uint)SampleCount) return;
+    float2 sample = FogSamples[id.x];
+    Transmission[id.x] = exp(-sample.x * sample.y);
+}
