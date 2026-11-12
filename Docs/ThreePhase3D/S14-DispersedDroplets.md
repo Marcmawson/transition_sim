@@ -54,4 +54,10 @@ Both CPU runs passed at 0.2 ms and 0.1 ms. The 0.1 ms run deposited 2.7858871e-1
 
 The exit case starts the droplet centre 2 µm inside the open pressure boundary. The step identifies the first exterior face crossed by the centre trajectory. When it is open, the fixture removes the remaining liquid and records its mass, enthalpy and momentum separately from gas transport. Gas integration continues after the droplet leaves.
 
-Both CPU runs closed dry air, water, enthalpy and momentum at every step. At 0.1 ms, the droplet exited on step 5 carrying 4.1525538e-12 kg of liquid, 4.1608284e-7 J of liquid enthalpy and 1.3755498e-14 N·s of X momentum. Exchange and export are split at the end of the crossing step, so exit timing and inventory values have timestep dependence. Wall impacts, coupled extinction and condensation remain open.
+Both CPU runs closed dry air, water, enthalpy and momentum at every step. At 0.1 ms, the droplet exited on step 5 carrying 4.1525538e-12 kg of liquid, 4.1608284e-7 J of liquid enthalpy and 1.3755498e-14 N·s of X momentum. Exchange and export are split at the end of the crossing step, so exit timing and inventory values have timestep dependence.
+
+## V37 prescribed wall deposition
+
+The deposition fixture starts with a 2 µm gap between the spherical droplet surface and a planar wall. On first contact with the prescribed sticking face, the step transfers the remaining liquid mass and enthalpy to the wall deposit inventory and transfers its momentum to the wall impulse ledger. The gas solver continues after deposition.
+
+CPU runs at 0.2 and 0.1 ms closed the dry-air, water, enthalpy and momentum ledgers at every step. At 0.1 ms, impact occurred on step 5 and deposited 4.1525538e-12 kg of water and 4.1608284e-7 J of liquid enthalpy, with a wall impulse of -1.3964958e-14 N·s along X. Contact is resolved at the end of the step. This fixture assumes perfect sticking and uses an enthalpy ledger without impact kinetic heating. Apparatus wetting, rebound, film re-evaporation, coupled extinction and condensation remain open.

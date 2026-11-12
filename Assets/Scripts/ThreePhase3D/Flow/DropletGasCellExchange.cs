@@ -89,6 +89,21 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return open;
         }
 
+        internal static bool ContactsBoxWall(VariableCoefficientProjection plan, int axis, bool positive,
+            D3 start, D3 end, double radiusM)
+        {
+            if (plan.HasEmbeddedSolid || plan.IsPeriodic ||
+                plan.Boundaries.Side(axis, positive).Kind == FlowBoundaryKind.OpenPressure)
+                throw new ArgumentException("Droplet contact requires a solid exterior face of a Cartesian box.");
+            var grid = plan.Grid;
+            int count = axis == 0 ? grid.Cells.X : axis == 1 ? grid.Cells.Y : grid.Cells.Z;
+            double wall = positive ? grid.Spacing[axis] * count : 0;
+            double direction = positive ? 1 : -1;
+            double before = direction * (wall - grid.Frame.ToLocal(start)[axis]);
+            double after = direction * (wall - grid.Frame.ToLocal(end)[axis]);
+            return after < before && after <= radiusM;
+        }
+
         internal static double GasVolumeM3(double dryAirKg, double vapourKg, double gasEnthalpyJ, double pressurePa)
         {
             double temperature = GasTemperature(dryAirKg, vapourKg, gasEnthalpyJ);

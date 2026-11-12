@@ -40,9 +40,11 @@ namespace PhysicsSim.ThreePhase3D.Verification
             SimulateGrid(40, crossCell: true);
             SimulateGrid(20, exitDomain: true);
             SimulateGrid(40, exitDomain: true);
+            SimulateGrid(20, depositAtWall: true);
+            SimulateGrid(40, depositAtWall: true);
 
             (double RadiusM, double OutletVapourKg, double FeedbackMps, double WallReactionX) SimulateGrid(
-                int steps, bool crossCell = false, bool exitDomain = false)
+                int steps, bool crossCell = false, bool exitDomain = false, bool depositAtWall = false)
             {
                 const double pressure = 101325;
                 double dt = duration / steps;
@@ -60,15 +62,18 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 var gas = new (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[seed.GroupCount];
                 for (int group = 0; group < gas.Length; group++) gas[group] = (dryAir, initialVapour, initialGasEnergy, default);
                 double radius = initialRadius, liquidK = initialK, airOut = 0, vapourOut = 0, energyOut = 0;
-                var initialVelocity = new D3(0.005, 0, 0);
+                var initialVelocity = new D3(depositAtWall ? -0.005 : 0.005, 0, 0);
                 D3 velocity = initialVelocity, position = grid.Centre(0, 0, 0), momentumOut = default;
                 if (crossCell) position += new D3(dx * 0.5 - 2e-6, 0, 0);
                 if (exitDomain) position = grid.Centre(1, 0, 0) + new D3(dx * 0.5 - 2e-6, 0, 0);
+                if (depositAtWall) position = new D3(initialRadius + 2e-6, dx * 0.5, dx * 0.5);
                 D3 wallReaction = default, openReaction = default;
                 double feedback = 0, firstVapour = 0, secondVapour = 0;
                 double liquidOut = 0, liquidEnthalpyOut = 0;
                 D3 liquidMomentumOut = default;
-                int crossings = 0, exitStep = 0;
+                double depositedLiquid = 0, depositedEnthalpy = 0;
+                D3 impactReaction = default;
+                int crossings = 0, exitStep = 0, impactStep = 0;
                 int previousGroup = exitDomain ? secondGroup : firstGroup;
                 for (int step = 0; step < steps; step++)
                 {
@@ -89,9 +94,11 @@ namespace PhysicsSim.ThreePhase3D.Verification
                             exchanged.VapourKg - local.VapourKg);
                         gasMomentumGain = motion.GasMomentumGain;
                         bool exited = DropletGasCellExchange.ExitsOpenBoundary(seed, position, motion.Position);
+                        bool stuck = depositAtWall && DropletGasCellExchange.ContactsBoxWall(seed, 0, false,
+                            position, motion.Position, exchanged.RadiusM);
                         velocity = motion.Velocity;
                         position = motion.Position;
-                        if (!exited) DropletGasCellExchange.PressureGroupAt(seed, position);
+                        if (!exited && !stuck) DropletGasCellExchange.PressureGroupAt(seed, position);
                         radius = exchanged.RadiusM;
                         liquidK = exchanged.LiquidK;
                         gas[dropletGroup] = (local.DryAirKg, exchanged.VapourKg, exchanged.GasEnthalpyJ,
@@ -111,6 +118,14 @@ namespace PhysicsSim.ThreePhase3D.Verification
                             liquidOut = DropletGasCellExchange.Mass(radius);
                             liquidEnthalpyOut = LiquidEnthalpy(liquidOut, liquidK);
                             liquidMomentumOut = velocity * liquidOut;
+                            radius = 0;
+                        }
+                        else if (stuck)
+                        {
+                            impactStep = step + 1;
+                            depositedLiquid = DropletGasCellExchange.Mass(radius);
+                            depositedEnthalpy = LiquidEnthalpy(depositedLiquid, liquidK);
+                            impactReaction = velocity * depositedLiquid;
                             radius = 0;
                         }
                     }
@@ -150,9 +165,9 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     energyOut += moved.Outflow.EnthalpyJ;
                     momentumOut += moved.Outflow.MomentumKgMPerS;
                     double remaining = DropletGasCellExchange.Mass(radius);
-                    double air = airOut, water = vapourOut + liquidOut + remaining;
-                    double energy = energyOut + liquidEnthalpyOut + LiquidEnthalpy(remaining, liquidK);
-                    D3 momentum = momentumOut + liquidMomentumOut + wallReaction + openReaction + velocity * remaining;
+                    double air = airOut, water = vapourOut + liquidOut + depositedLiquid + remaining;
+                    double energy = energyOut + liquidEnthalpyOut + depositedEnthalpy + LiquidEnthalpy(remaining, liquidK);
+                    D3 momentum = momentumOut + liquidMomentumOut + impactReaction + wallReaction + openReaction + velocity * remaining;
                     foreach (var state in gas)
                     {
                         air += state.DryAirKg;
@@ -191,6 +206,15 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 }
                 else if (exitStep != 0)
                     throw new InvalidOperationException("S14 control droplet unexpectedly exited the domain.");
+                if (depositAtWall)
+                {
+                    if (!(impactStep > 0 && impactStep < steps && radius == 0 && depositedLiquid > 0 &&
+                        depositedEnthalpy > 0 && impactReaction.X < 0) ||
+                        Math.Abs(depositedLiquid + firstVapour - initialMass) > 1e-12 * initialMass)
+                        throw new InvalidOperationException("S14 wall deposition did not account for the remaining droplet.");
+                    log(FormattableString.Invariant(
+                        $"S14 V37 wall deposition passed: {steps} steps, impact step {impactStep}, liquid {depositedLiquid:G8} kg, enthalpy {depositedEnthalpy:G8} J, wall impulse X {impactReaction.X:G8} N s."));
+                }
                 return (radius, vapourOut, feedback, wallReaction.X);
             }
 
