@@ -81,7 +81,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             heat.SetBuffer(kernel, "CellFaces", faceBuffer);
             heat.SetBuffer(kernel, "FaceVelocity", velocityBuffer);
             ComputeBuffer current = temperatureA, next = temperatureB;
-            double dt = (cube ? 0.08 : 0.12) * h * h * stepScale;
+            /* Leave headroom for no-slip wall diffusion and the developing advective CFL. */
+            double dt = (cube ? 0.055 : 0.08) * h * h * stepScale;
             int sampleEvery = (int)Math.Ceiling(0.02 / dt);
             int steps = (int)Math.Ceiling(1 / dt);
             double[] pressure = null;
@@ -90,7 +91,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 var flow = solver.Advance(velocity, new D3(0, 0, 0), dt, 8192,
                     current, Rayleigh * Prandtl, pressure);
                 if (flow.Diagnostics.Dt < dt * 0.99999)
-                    throw new InvalidOperationException("V19 requested timestep exceeded the momentum stability bound.");
+                    throw new InvalidOperationException($"V19 {n}x{n}x{depth} step {step}: requested dt {dt:G6}, momentum limit {flow.Diagnostics.Dt:G6} (thermal-diffusion units).");
                 velocity = flow.VelocityMPerS;
                 pressure = flow.GroupPressurePa;
                 velocityBuffer.SetData(velocity);

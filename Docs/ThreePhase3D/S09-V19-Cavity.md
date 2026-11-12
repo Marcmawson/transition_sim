@@ -18,9 +18,9 @@ The separate S09 heated-floor GPU regression passed in Unity 2022.3.46f1 on the 
 
 In Unity, run **Physics Sim → Three Phase 3D → Run S09 V19 GPU cavity benchmark**. The benchmark uses one spanwise cell with symmetry, the existing GPU staggered momentum and pressure solver, and a GPU finite-volume temperature update with upwind advection and centred diffusion. Buoyancy uses the benchmark's constant Boussinesq coefficient. Temperature stays on the GPU between heat transport and momentum prediction. The existing flow solver still reads back velocity and pressure for its convergence checks.
 
-The menu runs 8, 16 and 32 cells per side at timestep 0.12/N² in thermal-diffusion time units, then repeats the 16-cell case at half timestep. It reports mean wall Nusselt number, both positive centreline velocity peaks and hot/cold wall Nusselt imbalance. The run requires steady state on each mesh, a decreasing norm of relative reference errors, a maximum fine-grid relative error of 10% and a half-timestep change below 1% of each reference value. These are initial verification thresholds for the project's first-order upwind discretisation.
+The menu runs 8, 16 and 32 cells per side at timestep 0.08/N² in thermal-diffusion time units, then repeats the 16-cell case at half timestep. It reports mean wall Nusselt number, both positive centreline velocity peaks and hot/cold wall Nusselt imbalance. The run requires steady state on each mesh, a decreasing norm of relative reference errors, a maximum fine-grid relative error of 10% and a half-timestep change below 1% of each reference value. These are initial verification thresholds for the project's first-order upwind discretisation.
 
-An independent FP64 numerical check of the discretisation used a cosine-transform pressure solve and gave:
+An earlier independent FP64 check used a cosine-transform pressure solve and a base timestep of 0.12/N². Its results were:
 
 | Mesh | Timestep scale | Mean Nu | Centreline U max | Centreline V max |
 | --- | ---: | ---: | ---: | ---: |
@@ -33,7 +33,7 @@ The GPU run must independently establish these checks in Unity.
 
 ## Three-dimensional cavity check
 
-Run **Physics Sim → Three Phase 3D → Run S09 V19 3D GPU cavity check**. This case uses an 8 × 8 × 8 cube with no-slip walls on all six sides, fixed temperatures on the two x walls, and zero heat flux on the remaining walls. It uses the same Rayleigh and Prandtl numbers as the square case. The heat kernel now exchanges flux through all three axes.
+Run **Physics Sim → Three Phase 3D → Run S09 V19 3D GPU cavity check**. This case uses an 8 × 8 × 8 cube with no-slip walls on all six sides, fixed temperatures on the two x walls, and zero heat flux on the remaining walls. It uses the same Rayleigh and Prandtl numbers as the square case. The heat kernel exchanges flux through all three axes. The cube uses a fixed timestep of 0.055/N² to allow for the stricter no-slip diffusion and advection bounds.
 
 The check requires a steady solution, hot/cold wall Nusselt numbers within 0.001 of each other, mean Nusselt number above the conductive limit of 1, and a nonzero interior spanwise speed above 0.001 in thermal-diffusion units. These checks exercise three-dimensional coupling. Quantitative published-reference and refinement checks apply to the separate square benchmark.
 
