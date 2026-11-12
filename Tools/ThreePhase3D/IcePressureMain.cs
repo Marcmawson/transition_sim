@@ -42,6 +42,21 @@ internal static class IcePressureMain
             D3 expectedTorque = body.Frame.W * (-gradient * size.Z * Math.Pow(size.X, 3) / 12);
             Near((topLoad.ForceN - body.Frame.V * (-100 * size.X * size.Z)).Length, 1e-9);
             Near((topLoad.TorqueNm - expectedTorque).Length, 1e-10);
+            var trial = new IceBody(body.MassKg, body.PrincipalInertiaKgM2, body.Frame,
+                new D3(0, body.MassKg * 0.01, 0), new D3(0, 0, body.PrincipalInertiaKgM2.Z * 0.2));
+            var flux = IcePressureLoad.OutwardFluidFlux(trial, plan);
+            var projection = FlowCpuReference.Project(plan, new float[plan.FaceCount], dt, 16384, null, flux);
+            var reaction = IcePressureLoad.FromProjection(trial, plan, projection.GroupPressurePa);
+            double workRate = D3.Dot(reaction.ForceN, trial.VelocityMPerS) +
+                D3.Dot(reaction.TorqueNm, trial.AngularVelocityRadPerS);
+            double pressurePower = 0;
+            for (int group = 0; group < plan.GroupCount; group++)
+                pressurePower += projection.GroupPressurePa[group] * flux[group];
+            Near(Math.Abs(workRate - pressurePower), 1e-10);
+            if (workRate >= 0 || !projection.Diagnostics.Converged)
+                throw new InvalidOperationException("Moving ice did not produce an opposing pressure reaction.");
+            Console.WriteLine(FormattableString.Invariant(
+                $"S11 moving boundary passed at offset {offset:G} m: pressure power {workRate:G6} W."));
             Console.WriteLine(FormattableString.Invariant(
                 $"S11 ice pressure passed at grid offset {offset:G} m: lift {load.ForceN.Y:G8} N, applied torque {topLoad.TorqueNm.Z:G8} N m."));
         }

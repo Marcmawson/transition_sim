@@ -45,8 +45,9 @@ namespace PhysicsSim.ThreePhase3D.Flow
             Project(plan, tentative, dt, maxIterations, null);
 
         internal static FlowStep Project(VariableCoefficientProjection plan, float[] tentative, double dt, int maxIterations,
-            Func<float[], bool> acceptVelocity)
+            Func<float[], bool> acceptVelocity, double[] boundaryFlux = null)
         {
+            plan.ValidateBoundaryFlux(boundaryFlux);
             if (maxIterations <= 0) throw new ArgumentOutOfRangeException(nameof(maxIterations));
             var corrected = new float[plan.FaceCount];
             var pressure = new double[plan.GroupCount];
@@ -61,7 +62,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                         var metric = plan.Faces[face];
                         corrected[face] = metric.Active == 0 ? 0 : (float)(tentative[face] - dt * plan.Gradient(metric, pressure));
                     }
-                    diagnostics = plan.Measure(tentative, corrected, pressure, dt, iteration);
+                    diagnostics = plan.Measure(tentative, corrected, pressure, dt, iteration, boundaryFlux);
                     if (diagnostics.Converged && Array.TrueForAll(corrected, value => SiUnits.IsFinite(value)) &&
                         (acceptVelocity == null || acceptVelocity(corrected)))
                     {
@@ -72,7 +73,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 }
                 for (int group = 0; group < pressure.Length; group++)
                 {
-                    double residual = 0;
+                    double residual = -(boundaryFlux?[group] ?? 0) / dt;
                     for (int entry = plan.Rows[group]; entry < plan.Rows[group + 1]; entry++)
                     {
                         int signed = plan.Incidence[entry], face = Math.Abs(signed) - 1;

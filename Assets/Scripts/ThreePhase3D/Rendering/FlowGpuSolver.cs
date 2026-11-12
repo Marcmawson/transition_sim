@@ -33,11 +33,11 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         public static FlowStep Project(VariableCoefficientProjection plan, ComputeShader shader,
             float[] tentative, double dt, int maxIterations,
-            Func<float[], double> measureTransportCorrection = null, double[] initialPressure = null)
+            Func<float[], double> measureTransportCorrection = null, double[] initialPressure = null, double[] boundaryFlux = null)
         {
             if (plan == null) throw new ArgumentNullException(nameof(plan));
             using (var solver = new FlowGpuSolver(plan, null, shader))
-                return solver.Project(tentative, dt, maxIterations, measureTransportCorrection, initialPressure);
+                return solver.Project(tentative, dt, maxIterations, measureTransportCorrection, initialPressure, boundaryFlux);
         }
 
         internal FlowGpuSolver(MomentumPredictor3D predictor, ComputeShader shader, bool thermalBuoyancy)
@@ -139,7 +139,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
         }
 
         private FlowStep Project(float[] tentative, double dt, int maxIterations,
-            Func<float[], double> measureTransportCorrection = null, double[] initialPressure = null)
+            Func<float[], double> measureTransportCorrection = null, double[] initialPressure = null, double[] boundaryFlux = null)
         {
             if (disposed) throw new ObjectDisposedException(nameof(FlowGpuSolver));
             if (maxIterations <= 0 || tentative.Length != plan.FaceCount || !SiUnits.IsFinite(dt) || dt <= 0)
@@ -147,15 +147,16 @@ namespace PhysicsSim.ThreePhase3D.Flow
             shader.SetInt("FaceCount", plan.FaceCount);
             shader.SetInt("GroupCount", plan.GroupCount);
             shader.SetFloat("Dt", (float)dt);
+            plan.ValidateBoundaryFlux(boundaryFlux);
             if (!Array.TrueForAll(tentative, value => SiUnits.IsFinite(value)))
                 throw new ArgumentException("Nonfinite tentative velocity.");
             Array.Copy(tentative, predictedReadback, tentative.Length);
             predicted.SetData(tentative, 0, 0, tentative.Length);
-            return SolvePressure(dt, maxIterations, measureTransportCorrection, initialPressure);
+            return SolvePressure(dt, maxIterations, measureTransportCorrection, initialPressure, boundaryFlux);
         }
 
         private FlowStep SolvePressure(double dt, int maxIterations,
-            Func<float[], double> measureTransportCorrection = null, double[] initialPressure = null)
+            Func<float[], double> measureTransportCorrection = null, double[] initialPressure = null, double[] boundaryFlux = null)
         {
             if (initialPressure != null)
             {
@@ -178,7 +179,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             shader.SetBuffer(pressureKernel, "Incidence", incidence);
             for (int group = 0; group < plan.GroupCount; group++)
             {
-                double flux = plan.OutwardFlux(group, predictedReadback) / dt;
+                double flux = (plan.OutwardFlux(group, predictedReadback) + (boundaryFlux?[group] ?? 0)) / dt;
                 float high = (float)flux;
                 pressureRowData[group] = new Vector4(plan.Diagonal[group], high, (float)(flux - high), 0);
             }
@@ -213,7 +214,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 corrected.GetData(correctedReadback);
                 CorrectionWallMs += clock.Elapsed.TotalMilliseconds;
                 CheckReadback(correctedReadback);
-                var diagnostics = plan.Measure(predictedReadback, correctedReadback, pressure, dt, iteration);
+                var diagnostics = plan.Measure(predictedReadback, correctedReadback, pressure, dt, iteration, boundaryFlux);
                 double transportCorrection = diagnostics.Converged && measureTransportCorrection != null
                     ? measureTransportCorrection(correctedReadback) : 0;
                 if (diagnostics.Converged && transportCorrection <= CutCellVofTransport.PressureCorrectionLimit)

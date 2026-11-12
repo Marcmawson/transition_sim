@@ -222,6 +222,24 @@ namespace PhysicsSim.ThreePhase3D.Flow
             }
         }
 
+        internal void ValidateBoundaryFlux(double[] boundaryFlux)
+        {
+            if (boundaryFlux == null) return;
+            if (boundaryFlux.Length != GroupCount || !Array.TrueForAll(boundaryFlux, value => SiUnits.IsFinite(value)))
+                throw new ArgumentException("One finite boundary flux is required per pressure group.", nameof(boundaryFlux));
+            foreach (int[] component in closedComponents)
+            {
+                double sum = 0, scale = 0;
+                foreach (int group in component)
+                {
+                    sum += boundaryFlux[group];
+                    scale += Math.Abs(boundaryFlux[group]);
+                }
+                if (Math.Abs(sum) > 1e-12 * scale)
+                    throw new ArgumentException("Moving boundaries impose a net flux on a closed pressure component.", nameof(boundaryFlux));
+            }
+        }
+
         internal double OutwardFlux(int group, float[] velocity)
         {
             double flux = 0;
@@ -254,12 +272,12 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return face.Mobility * (high - low);
         }
 
-        internal FlowDiagnostics Measure(float[] predicted, float[] corrected, double[] pressure, double dt, int iterations)
+        internal FlowDiagnostics Measure(float[] predicted, float[] corrected, double[] pressure, double dt, int iterations, double[] boundaryFlux = null)
         {
             double residual2 = 0, rhs2 = 0, maxDivergence = 0;
             for (int group = 0; group < GroupCount; group++)
             {
-                double flux = 0, residual = 0;
+                double flux = boundaryFlux?[group] ?? 0, residual = flux / dt;
                 for (int entry = Rows[group]; entry < Rows[group + 1]; entry++)
                 {
                     int signed = Incidence[entry], index = Math.Abs(signed) - 1;
@@ -268,7 +286,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                     flux += area * corrected[index];
                     residual += area * ((double)predicted[index] / dt - Gradient(face, pressure));
                 }
-                double rhs = Rhs(group, predicted, dt);
+                double rhs = Rhs(group, predicted, dt) - (boundaryFlux?[group] ?? 0) / dt;
                 rhs2 += rhs * rhs;
                 residual2 += residual * residual;
                 maxDivergence = Math.Max(maxDivergence, Math.Abs(flux) / Volumes[group]);

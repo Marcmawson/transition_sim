@@ -76,6 +76,29 @@ namespace PhysicsSim.ThreePhase3D.Solids
             });
         }
 
+        // The outward fluid normal at the ice boundary points into the ice.
+        // Rigid velocity is affine, so its integral uses the patch centroid.
+        public static double[] OutwardFluidFlux(IceBody body, VariableCoefficientProjection plan)
+        {
+            if (body == null) throw new ArgumentNullException(nameof(body));
+            if (plan == null) throw new ArgumentNullException(nameof(plan));
+            var flux = new double[plan.GroupCount];
+            var frame = plan.Grid.Frame;
+            foreach (var patch in plan.Geometry.Patches)
+            {
+                if (patch.Role != SolidRole.Ice || patch.FluidExposedAreaM2 <= 0) continue;
+                if (patch.ContactAreaM2 > 0)
+                    throw new NotSupportedException("Moving ice requires an exposed polygon at partial contact.");
+                int group = plan.GroupByCell[patch.Cell];
+                if (group < 0) throw new InvalidOperationException("An exposed ice patch has no fluid pressure group.");
+                var n = patch.NormalLocal;
+                D3 normal = frame.U * n.X + frame.V * n.Y + frame.W * n.Z;
+                D3 point = frame.ToWorld(patch.CentroidLocalM);
+                flux[group] -= D3.Dot(normal, body.VelocityAt(point)) * patch.AreaM2;
+            }
+            return flux;
+        }
+
         public IceBody Advance(IceBody body, double seconds, D3 gravityMPerS2)
         {
             if (body == null) throw new ArgumentNullException(nameof(body));
