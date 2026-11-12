@@ -4,6 +4,9 @@ Shader "PhysicsSim/BeakerRefraction"
     {
         _NormalReflectance ("Normal-incidence reflectance", Range(0,1)) = 0.03658
         _RefractiveIndex ("Refractive index", Float) = 1.473
+        _AbsorptionPerM ("Absorption per metre", Float) = 0
+        _WaterCylinder ("Water centre XZ, bottom Y, radius", Vector) = (0,0,0,0)
+        _WaterTopY ("Water top Y", Float) = 0
     }
     SubShader
     {
@@ -15,6 +18,9 @@ Shader "PhysicsSim/BeakerRefraction"
 
         sampler2D _BeakerOpticalBackground;
         float _RefractiveIndex;
+        float _AbsorptionPerM;
+        float4 _WaterCylinder;
+        float _WaterTopY;
         half _NormalReflectance;
 
         struct Input
@@ -22,6 +28,20 @@ Shader "PhysicsSim/BeakerRefraction"
             float3 worldPos;
             float3 worldNormal;
         };
+
+        float WaterPathM(float3 position, float3 direction)
+        {
+            float2 offset = position.xz - _WaterCylinder.xy;
+            float radialSpeed = dot(direction.xz, direction.xz);
+            float radialDot = dot(offset, direction.xz);
+            float discriminant = radialDot * radialDot + radialSpeed *
+                (_WaterCylinder.w * _WaterCylinder.w - dot(offset, offset));
+            float side = radialSpeed > 1e-8
+                ? (-radialDot + sqrt(max(0, discriminant))) / radialSpeed : 1e6;
+            float cap = abs(direction.y) > 1e-6
+                ? ((direction.y > 0 ? _WaterTopY : _WaterCylinder.z) - position.y) / direction.y : 1e6;
+            return max(0, min(side, cap));
+        }
 
         void surf(Input input, inout SurfaceOutputStandardSpecular output)
         {
@@ -37,7 +57,9 @@ Shader "PhysicsSim/BeakerRefraction"
             output.Albedo = 0;
             output.Specular = _NormalReflectance;
             output.Smoothness = 1;
-            output.Emission = tex2D(_BeakerOpticalBackground, uv).rgb * (1 - fresnel);
+            float transmission = _AbsorptionPerM > 0
+                ? exp(-_AbsorptionPerM * WaterPathM(input.worldPos, transmitted)) : 1;
+            output.Emission = tex2D(_BeakerOpticalBackground, uv).rgb * (1 - fresnel) * transmission;
             output.Alpha = 1;
         }
         ENDCG

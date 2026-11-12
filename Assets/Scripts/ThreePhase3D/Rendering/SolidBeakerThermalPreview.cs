@@ -272,7 +272,14 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 const float waterIndex = 1.333f; // O01, representative visible index.
                 float amplitude = (waterIndex - 1) / (waterIndex + 1);
                 waterMaterial.SetFloat("_NormalReflectance", amplitude * amplitude);
-                if (useWaterRefractionPreview) waterMaterial.SetFloat("_RefractiveIndex", waterIndex);
+                if (useWaterRefractionPreview)
+                {
+                    waterMaterial.SetFloat("_RefractiveIndex", waterIndex);
+                    // Pope and Fry (1997), pure water at 550 nm.
+                    waterMaterial.SetFloat("_AbsorptionPerM", 0.0565f);
+                    waterMaterial.SetVector("_WaterCylinder", new Vector4(0, 0, floor, radius));
+                    waterMaterial.SetFloat("_WaterTopY", floor + depth);
+                }
             }
             waterDisplay.AddComponent<MeshRenderer>().sharedMaterial = waterMaterial;
             RefreshWaterColours();
