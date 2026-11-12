@@ -261,6 +261,17 @@ namespace PhysicsSim.ThreePhase3D.Flow
             Func<double[], FlowStep> project, Func<int, CutCellInflow> inflow = null)
         {
             if (solve == null) throw new ArgumentNullException(nameof(solve));
+            return AdvanceReconstructedPhaseExchange(state, dt, liquidDensityKgM3,
+                (liquid, _) => solve(liquid), project, inflow);
+        }
+
+        public (FlowStep Pressure, CutCellTransportResult Transport) AdvanceReconstructedPhaseExchange(
+            CutCellInventories state, double dt, double liquidDensityKgM3,
+            Func<int, int, (GasLiquidEquilibrium Surface, double MassFluxKgM2PerS, double LiquidHeatWm2,
+                double GasHeatWm2, double LatentHeatJkg)> solve,
+            Func<double[], FlowStep> project, Func<int, CutCellInflow> inflow = null)
+        {
+            if (solve == null) throw new ArgumentNullException(nameof(solve));
             if (!SiUnits.IsFinite(liquidDensityKgM3) || liquidDensityKgM3 <= 0 ||
                 !SiUnits.IsFinite(dt) || dt <= 0)
                 throw new ArgumentException("Phase exchange requires positive density and timestep.");
@@ -268,18 +279,38 @@ namespace PhysicsSim.ThreePhase3D.Flow
             int count = plan.GroupCount;
             var increments = new CutCellInventories(new double[count], new double[count],
                 new double[count], new double[count], new double[count]);
+            var liquidUsed = new double[count];
+            var vapourUsed = new double[count];
             for (int group = 0; group < count; group++)
             {
-                if (areas[group] == 0) continue;
-                var transfer = HumidInterfaceFlux.InventoryTransfer(solve(group), areas[group], dt,
-                    state.LiquidM3[group] * liquidDensityKgM3, state.VapourKg[group]);
-                increments.LiquidM3[group] = transfer.LiquidVolumeM3;
-                increments.GasM3[group] = transfer.GasVolumeM3;
-                increments.LiquidEnergyJ[group] = transfer.LiquidEnthalpyJ;
-                increments.GasEnergyJ[group] = transfer.GasEnthalpyJ;
-                increments.VapourKg[group] = transfer.WaterKg;
+                if (areas[group] > 0) Add(group, group, areas[group]);
+            }
+            for (int index = 0; index < plan.FaceCount; index++)
+            {
+                var face = plan.Faces[index];
+                int low = face.Low, high = face.High;
+                if (face.Active == 0 || low < 0 || high < 0 || low == high) continue;
+                double area = plan.Geometry.Areas(face.Axis)[index - plan.FaceOffsets[face.Axis]];
+                if (state.GasM3[low] == 0 && state.LiquidM3[high] == 0)
+                    Add(low, high, area);
+                else if (state.GasM3[high] == 0 && state.LiquidM3[low] == 0)
+                    Add(high, low, area);
             }
             return AdvanceWithPhaseExchange(state, increments, dt, project, inflow);
+
+            void Add(int liquid, int gas, double area)
+            {
+                var transfer = HumidInterfaceFlux.InventoryTransfer(solve(liquid, gas), area, dt,
+                    state.LiquidM3[liquid] * liquidDensityKgM3 - liquidUsed[liquid],
+                    state.VapourKg[gas] - vapourUsed[gas]);
+                liquidUsed[liquid] += Math.Max(0, transfer.WaterKg);
+                vapourUsed[gas] += Math.Max(0, -transfer.WaterKg);
+                increments.LiquidM3[liquid] += transfer.LiquidVolumeM3;
+                increments.GasM3[gas] += transfer.GasVolumeM3;
+                increments.LiquidEnergyJ[liquid] += transfer.LiquidEnthalpyJ;
+                increments.GasEnergyJ[gas] += transfer.GasEnthalpyJ;
+                increments.VapourKg[gas] += transfer.WaterKg;
+            }
         }
 
         public (FlowStep Pressure, CutCellTransportResult Transport) AdvanceWithPhaseExchange(

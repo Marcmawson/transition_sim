@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
 using PhysicsSim.ThreePhase3D.Geometry;
@@ -43,7 +44,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     Math.Abs(transfer.GasVolumeM3 + transfer.LiquidVolumeM3 -
                         HumidInterfaceFlux.NormalVelocityJumpMPerS(solved.Surface, solved.MassFluxKgM2PerS) * area * dt) > 1e-18)
                     throw new InvalidOperationException("Humid interface inventory transfer did not close.");
-                CheckProjectedPhaseExchange(solved, dt, project, log);
+                CheckProjectedPhaseExchange(solved, dt, project, log, false);
+                CheckProjectedPhaseExchange(solved, dt, project, log, true);
             }
             log(FormattableString.Invariant(
                 $"S12 humid interface passed: evaporation {evaporation:G8}, condensation {condensation:G8} kg/m2/s, Stefan jump {velocityJump:G8} m/s."));
@@ -54,37 +56,54 @@ namespace PhysicsSim.ThreePhase3D.Verification
         private static void CheckProjectedPhaseExchange(
             (GasLiquidEquilibrium Surface, double MassFluxKgM2PerS, double LiquidHeatWm2,
                 double GasHeatWm2, double LatentHeatJkg) solved, double dt,
-            Func<VariableCoefficientProjection, float[], double, double[], FlowStep> project, Action<string> log)
+            Func<VariableCoefficientProjection, float[], double, double[], FlowStep> project, Action<string> log,
+            bool aligned)
         {
-            var grid = new Grid3D(1, 1, 1, new D3(0.01, 0.01, 0.01), RigidFrame.Identity);
+            var grid = new Grid3D(1, aligned ? 2 : 1, 1, new D3(0.01, 0.01, 0.01), RigidFrame.Identity);
             var sides = new FlowBoundary[6];
             sides[3] = new FlowBoundary(FlowBoundaryKind.OpenPressure);
             var plan = new VariableCoefficientProjection(CutCellGeometry.Build(grid),
                 new BoundaryConditions3D(sides), _ => 1.2, _ => 0);
-            var state = new CutCellInventories(new[] { grid.CellVolume * 0.5 }, new[] { grid.CellVolume * 0.5 },
-                new[] { 0.1 }, new[] { 0.2 }, new[] { 5e-9 });
+            var state = PlanarLiquidInventory.Create(plan, new D3(0, aligned ? 0.01 : 0.005, 0),
+                new D3(0, 1, 0), 2e5, 4e5, 0.01);
+            int liquid = plan.GroupByCell[grid.Cells.Index(0, 0, 0)];
+            int gas = plan.GroupByCell[grid.Cells.Index(0, aligned ? 1 : 0, 0)];
             double density = solved.Surface.Liquid.DensityKgM3;
             var transfer = HumidInterfaceFlux.InventoryTransfer(solved, grid.FaceArea(1), dt,
-                state.LiquidM3[0] * density, state.VapourKg[0]);
-            var increments = new CutCellInventories(new[] { transfer.LiquidVolumeM3 }, new[] { transfer.GasVolumeM3 },
-                new[] { transfer.LiquidEnthalpyJ }, new[] { transfer.GasEnthalpyJ }, new[] { transfer.WaterKg });
+                state.LiquidM3[liquid] * density, state.VapourKg[gas]);
+            var increments = new[] { transfer.LiquidVolumeM3, transfer.GasVolumeM3,
+                transfer.LiquidEnthalpyJ, transfer.GasEnthalpyJ, transfer.WaterKg };
+            int solves = 0;
             var result = new CutCellVofTransport(plan).AdvanceReconstructedPhaseExchange(state, dt, density,
-                _ => solved,
+                (liquidGroup, gasGroup) =>
+                {
+                    if (liquidGroup != liquid || gasGroup != gas)
+                        throw new InvalidOperationException("Phase exchange selected the wrong donor groups.");
+                    solves++;
+                    return solved;
+                },
                 source => project(plan, new float[plan.FaceCount], dt, source),
                 _ => new CutCellInflow(0, 0, 3e5, 0.01));
             var advected = result.Transport;
+            if (solves != 1) throw new InvalidOperationException("The interface must be processed once.");
             for (int field = 0; field < state.Planes.Length; field++)
-                if (Math.Abs(advected.Fields.Planes[field][0] - state.Planes[field][0] -
-                    increments.Planes[field][0] - advected.BoundaryInflow[field]) > 1e-13)
+                if (Math.Abs(advected.Fields.Planes[field].Sum() - state.Planes[field].Sum() -
+                    increments[field] - advected.BoundaryInflow[field]) > 1e-13)
                     throw new InvalidOperationException("Projected phase exchange did not close its inventory ledger.");
             double expansion = transfer.GasVolumeM3 + transfer.LiquidVolumeM3;
-            double pressureVolume = plan.OutwardFlux(0, result.Pressure.VelocityMPerS) * dt;
-            if (Math.Abs(pressureVolume - expansion) > Math.Abs(expansion) * 1e-5 ||
-                Math.Abs(advected.BoundaryInflow[0] + advected.BoundaryInflow[1] + expansion) > 1e-17 ||
-                Math.Abs(advected.Fields.LiquidM3[0] + advected.Fields.GasM3[0] - grid.CellVolume) > 1e-17)
+            if (Math.Abs(advected.BoundaryInflow[0] + advected.BoundaryInflow[1] + expansion) > 1e-17)
                 throw new InvalidOperationException("Projected phase exchange did not close its volume ledger.");
+            for (int group = 0; group < plan.GroupCount; group++)
+            {
+                double expected = (group == liquid ? transfer.LiquidVolumeM3 : 0) +
+                    (group == gas ? transfer.GasVolumeM3 : 0);
+                double projected = plan.OutwardFlux(group, result.Pressure.VelocityMPerS) * dt;
+                if (Math.Abs(projected - expected) > Math.Abs(expansion) * 1e-5 ||
+                    Math.Abs(advected.Fields.LiquidM3[group] + advected.Fields.GasM3[group] - grid.CellVolume) > 1e-17)
+                    throw new InvalidOperationException("Projected phase exchange did not close the local volume balance.");
+            }
             log(FormattableString.Invariant(
-                $"S12 projected phase exchange passed: net volume {expansion:G8} m3, boundary compensation {-expansion:G8} m3."));
+                $"S12 {(aligned ? "face-aligned" : "mixed-cell")} phase exchange passed: net volume {expansion:G8} m3, boundary compensation {-expansion:G8} m3."));
         }
     }
 }
