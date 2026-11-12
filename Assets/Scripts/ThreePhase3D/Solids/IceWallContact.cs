@@ -77,27 +77,42 @@ namespace PhysicsSim.ThreePhase3D.Solids
             var angularMomentum = body.AngularMomentumKgM2PerS;
             if (D3.Cross(omega.Unit(), angularMomentum.Unit()).Length > 1e-12)
                 throw new NotSupportedException("The rotating plane sweep requires principal-axis spin.");
+            return AdvanceRotation(body, verticesLocalM, new[] { (planePointM, planeNormal.Unit()) },
+                seconds, omega.Length, false);
+        }
 
-            D3 normal = planeNormal.Unit();
+        private static Sweep AdvanceRotation(IceBody body, IReadOnlyList<D3> verticesLocalM,
+            IReadOnlyList<(D3 Point, D3 Normal)> planes, double seconds, double omegaBound, bool tumbling)
+        {
             double radius = 0;
             foreach (D3 vertex in verticesLocalM) radius = Math.Max(radius, vertex.Length);
-            double speedBound = Math.Abs(D3.Dot(body.VelocityMPerS, normal)) + omega.Length * radius;
+            double normalSpeed = 0;
+            foreach (var plane in planes)
+                normalSpeed = Math.Max(normalSpeed, Math.Abs(D3.Dot(body.VelocityMPerS, plane.Normal)));
+            double speedBound = normalSpeed + omegaBound * radius;
             if (!SiUnits.IsFinite(speedBound))
                 throw new ArgumentException("The hull speed bound must be finite.", nameof(body));
             const double toleranceM = RotatingSweepToleranceM;
+            // The midpoint update drifts along a constant-rate rotation per substep.
+            // Its angular rate is bounded by |L| / min(I) at every orientation.
+            double maxSubstep = tumbling ? 0.002 / omegaBound : seconds;
+            int iterationLimit = tumbling ? 65536 : 512;
             double elapsed = 0;
-            for (int iteration = 0; iteration < 512; iteration++)
+            var pose = body;
+            for (int iteration = 0; iteration < iterationLimit; iteration++)
             {
-                var pose = elapsed == 0 ? body : body.Advance(elapsed, default, default);
                 double gap = double.PositiveInfinity;
                 D3 support = default;
                 foreach (D3 vertex in verticesLocalM)
                 {
                     D3 point = pose.Frame.ToWorld(vertex);
-                    double distance = D3.Dot(point - planePointM, normal);
-                    if (distance >= gap) continue;
-                    gap = distance;
-                    support = point;
+                    foreach (var plane in planes)
+                    {
+                        double distance = D3.Dot(point - plane.Point, plane.Normal);
+                        if (distance >= gap) continue;
+                        gap = distance;
+                        support = point;
+                    }
                 }
                 if (gap < -toleranceM)
                     throw new InvalidOperationException("The ice hull starts behind or crossed the contact plane.");
@@ -106,8 +121,9 @@ namespace PhysicsSim.ThreePhase3D.Solids
                 if (elapsed == seconds)
                     return new Sweep(pose, seconds, false, default);
 
-                double next = Math.Min(seconds, elapsed + gap / speedBound);
+                double next = Math.Min(seconds, elapsed + Math.Min(maxSubstep, gap / speedBound));
                 if (next <= elapsed) break;
+                pose = tumbling ? pose.Advance(next - elapsed, default, default) : body.Advance(next, default, default);
                 elapsed = next;
             }
             throw new InvalidOperationException("The rotating plane sweep did not converge to a safe result.");
@@ -137,7 +153,7 @@ namespace PhysicsSim.ThreePhase3D.Solids
             return new Sweep(rebound, sweep.ElapsedSeconds, true, sweep.ContactPointM);
         }
 
-        // First impact for a translating or principal-axis-spinning hull inside the beaker.
+        // First impact for a translating or torque-free rotating hull inside the beaker.
         // The side planes coincide with the facets of ApparatusSurface.Beaker.
         public static Sweep AdvanceAndResolveBeakerImpact(IceBody body, IReadOnlyList<D3> verticesLocalM,
             GeometryInputs glass, int segments, RigidFrame beakerFrame, double seconds, double restitution,
@@ -167,15 +183,30 @@ namespace PhysicsSim.ThreePhase3D.Solids
             }
 
             var earliest = new Sweep(body, seconds, false, default);
-            foreach (var plane in planes)
+            bool spinning = body.AngularMomentumKgM2PerS.Length != 0;
+            if (spinning)
             {
-                var candidate = AdvancePrincipalRotationToPlane(body, verticesLocalM, plane.Point, plane.Normal, seconds);
-                if (candidate.Hit && (!earliest.Hit || candidate.ElapsedSeconds < earliest.ElapsedSeconds))
-                    earliest = candidate;
+                D3 omega = body.AngularVelocityRadPerS;
+                D3 momentum = body.AngularMomentumKgM2PerS;
+                bool tumbling = D3.Cross(omega.Unit(), momentum.Unit()).Length > 1e-12;
+                D3 inertia = body.PrincipalInertiaKgM2;
+                double omegaBound = tumbling
+                    ? momentum.Length / Math.Min(inertia.X, Math.Min(inertia.Y, inertia.Z))
+                    : omega.Length;
+                earliest = AdvanceRotation(body, verticesLocalM, planes, seconds, omegaBound, tumbling);
+            }
+            else
+            {
+                foreach (var plane in planes)
+                {
+                    var candidate = AdvanceTranslationToPlane(body, verticesLocalM, plane.Point, plane.Normal, seconds);
+                    if (candidate.Hit && (!earliest.Hit || candidate.ElapsedSeconds < earliest.ElapsedSeconds))
+                        earliest = candidate;
+                }
+                if (!earliest.Hit) earliest = new Sweep(body.Advance(seconds, default, default), seconds, false, default);
             }
 
-            var atEnd = earliest.Hit ? earliest.Body : body.Advance(seconds, default, default);
-            bool spinning = body.AngularMomentumKgM2PerS.Length != 0;
+            var atEnd = earliest.Body;
             double highestCentre = Math.Max(beakerFrame.ToLocal(body.Frame.Origin).Y,
                 beakerFrame.ToLocal(atEnd.Frame.Origin).Y);
             var points = new List<D3>();

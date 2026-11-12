@@ -39,7 +39,50 @@ internal static class IceBodyMain
         CheckSweptManifold(body);
         CheckRestingSupport(body);
         CheckBeakerImpact();
+        CheckTumblingBeakerImpact();
         Console.WriteLine("S11 rigid ice body passed: box inertia, force, torque, off-centre impulse, point velocity and free motion.");
+    }
+
+    private static void CheckTumblingBeakerImpact()
+    {
+        var glass = new GeometryInputs();
+        double floor = glass.externalBaseHeightM + glass.baseThicknessM;
+        var half = new D3(0.02, 0.015, 0.01);
+        var box = IceBody.Box(917, half * 2, RigidFrame.Euler(new D3(0, floor + 0.018, 0), 0, 0, 0));
+        var inertia = box.PrincipalInertiaKgM2;
+        var body = new IceBody(box.MassKg, inertia, box.Frame, default,
+            new D3(3 * inertia.X, 4 * inertia.Y, 10 * inertia.Z));
+        var hull = new D3[8];
+        for (int i = 0; i < hull.Length; i++)
+            hull[i] = new D3((i & 1) == 0 ? -half.X : half.X,
+                (i & 2) == 0 ? -half.Y : half.Y, (i & 4) == 0 ? -half.Z : half.Z);
+
+        const double interval = 0.04, referenceStep = 1e-6;
+        var reference = body;
+        double referenceTime = 0;
+        while (referenceTime < interval && Array.TrueForAll(hull, vertex => reference.Frame.ToWorld(vertex).Y > floor))
+        {
+            reference = reference.Advance(referenceStep, default, default);
+            referenceTime += referenceStep;
+        }
+        var hit = IceWallContact.AdvanceAndResolveBeakerImpact(body, hull, glass, 24, RigidFrame.Identity,
+            interval, 0.5, out D3 reaction);
+        if (!hit.Hit || reaction.Y >= 0 || referenceTime >= interval)
+            throw new InvalidOperationException("The tumbling fixture missed the floor.");
+        Near(hit.ElapsedSeconds, referenceTime, referenceStep + 1e-8);
+        Near(hit.ContactPointM.Y, floor, 1e-10);
+        Near((reaction + hit.Body.MomentumKgMPerS).Length, 0, 1e-12);
+        foreach (D3 vertex in hull)
+            if (hit.Body.Frame.ToWorld(vertex).Y < floor - 1e-10)
+                throw new InvalidOperationException("The tumbling ice penetrated the floor.");
+
+        var clear = IceWallContact.AdvanceAndResolveBeakerImpact(body, hull, glass, 24, RigidFrame.Identity,
+            0.01, 0.5, out D3 clearReaction);
+        if (clear.Hit || clearReaction.Length != 0) throw new InvalidOperationException("The short tumbling sweep hit the wall.");
+        Near((clear.Body.AngularMomentumKgM2PerS - body.AngularMomentumKgM2PerS).Length, 0, 0);
+        Near(clear.Body.KineticEnergyJ / body.KineticEnergyJ, 1, 1e-7);
+        Console.WriteLine(FormattableString.Invariant(
+            $"S11 V25 tumbling beaker impact passed: floor hit at {hit.ElapsedSeconds * 1000:F6} ms."));
     }
 
     private static void CheckBeakerImpact()

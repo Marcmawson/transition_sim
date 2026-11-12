@@ -168,3 +168,9 @@ The CPU fixture used a 24-facet beaker and a 0.4 m/s side approach, both with an
 The beaker sweep now uses the conservative rotating plane sweep for the floor and each side facet, then resolves the earliest contact manifold. A centre-height and hull-radius bound keeps the full rotating arc below the rim. The supported motion is constant translation with torque-free principal-axis spin.
 
 In separate CPU fixtures a box spinning at 10 rad/s hit the floor and a side facet after 20 ms, within 1 ns of the analytic contact times. Both sweeps had clear start and end poses over a full revolution. The wall reactions balanced the linear impulse, and the translational beaker and resting-support checks passed again. General tumbling, coupled pressure and impact stepping, and Unity GPU verification remain open.
+
+## V25 torque-free tumbling inside the beaker
+
+For angular momentum off the principal axes, the sweep advances the existing midpoint rigid-body integrator in substeps of at most 0.002 radians of bounded rotation. All beaker planes use the same trajectory. The gap to the nearest plane and the point-speed bound, using angular momentum magnitude divided by minimum principal inertia, limit each advance so the numerical trajectory stays on the admissible side up to the contact tolerance.
+
+An asymmetric box with initial angular velocity (3, 4, 10) rad/s hit the floor at 13.950243 ms, within 1 microsecond of a separate 1-microsecond stepping run. All vertices remained above the floor within 1e-10 m and the wall reaction balanced the change in ice momentum. A shorter clear sweep preserved world angular momentum and kept relative kinetic-energy drift below 1e-7. Coupled pressure and impact stepping and Unity GPU verification remain open.
