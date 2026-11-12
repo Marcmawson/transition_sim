@@ -44,8 +44,9 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     Math.Abs(transfer.GasVolumeM3 + transfer.LiquidVolumeM3 -
                         HumidInterfaceFlux.NormalVelocityJumpMPerS(solved.Surface, solved.MassFluxKgM2PerS) * area * dt) > 1e-18)
                     throw new InvalidOperationException("Humid interface inventory transfer did not close.");
-                CheckProjectedPhaseExchange(solved, dt, project, log, false);
-                CheckProjectedPhaseExchange(solved, dt, project, log, true);
+                double bulkK = solved.MassFluxKgM2PerS > 0 ? warm.TemperatureK : cool.TemperatureK;
+                CheckProjectedPhaseExchange(solved, dt, bulkK, bulk, film, project, log, false);
+                CheckProjectedPhaseExchange(solved, dt, bulkK, bulk, film, project, log, true);
             }
             log(FormattableString.Invariant(
                 $"S12 humid interface passed: evaporation {evaporation:G8}, condensation {condensation:G8} kg/m2/s, Stefan jump {velocityJump:G8} m/s."));
@@ -55,7 +56,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
 
         private static void CheckProjectedPhaseExchange(
             (GasLiquidEquilibrium Surface, double MassFluxKgM2PerS, double LiquidHeatWm2,
-                double GasHeatWm2, double LatentHeatJkg) solved, double dt,
+                double GasHeatWm2, double LatentHeatJkg) solved, double dt, double bulkK,
+            double bulkFraction, double film,
             Func<VariableCoefficientProjection, float[], double, double[], FlowStep> project, Action<string> log,
             bool aligned)
         {
@@ -64,28 +66,32 @@ namespace PhysicsSim.ThreePhase3D.Verification
             sides[3] = new FlowBoundary(FlowBoundaryKind.OpenPressure);
             var plan = new VariableCoefficientProjection(CutCellGeometry.Build(grid),
                 new BoundaryConditions3D(sides), _ => 1.2, _ => 0);
+            double pressure = solved.Surface.PressurePa;
+            double density = solved.Surface.Liquid.DensityKgM3;
+            var liquidState = new Water95().Evaluate(bulkK, pressure, WaterBranch.Liquid);
+            var gasState = new HumidGas().ReferenceTp(bulkK, pressure, bulkFraction);
             var state = PlanarLiquidInventory.Create(plan, new D3(0, aligned ? 0.01 : 0.005, 0),
-                new D3(0, 1, 0), 2e5, 4e5, 0.01);
+                new D3(0, 1, 0), liquidState.EnthalpyJkg * density,
+                gasState.EnthalpyJkg * gasState.DensityKgM3, bulkFraction * gasState.DensityKgM3);
             int liquid = plan.GroupByCell[grid.Cells.Index(0, 0, 0)];
             int gas = plan.GroupByCell[grid.Cells.Index(0, aligned ? 1 : 0, 0)];
-            double density = solved.Surface.Liquid.DensityKgM3;
-            var transfer = HumidInterfaceFlux.InventoryTransfer(solved, grid.FaceArea(1), dt,
+            double lower = solved.MassFluxKgM2PerS > 0 ? bulkK - 10 : bulkK - 5;
+            double upper = solved.MassFluxKgM2PerS > 0 ? bulkK + 5 : bulkK + 10;
+            var gasMass = Array.ConvertAll(state.GasM3, volume => volume * gasState.DensityKgM3);
+            var recovered = HumidInterfaceFlux.SolveFromInventories(state, liquid, gas,
+                density, gasMass[gas], pressure, film, 100, 10, lower, upper);
+            if (Math.Abs(recovered.Surface.TemperatureK - solved.Surface.TemperatureK) > 1e-8 ||
+                Math.Abs(recovered.MassFluxKgM2PerS - solved.MassFluxKgM2PerS) > 1e-12)
+                throw new InvalidOperationException("Recovered thermal state changed the interface solution.");
+            var transfer = HumidInterfaceFlux.InventoryTransfer(recovered, grid.FaceArea(1), dt,
                 state.LiquidM3[liquid] * density, state.VapourKg[gas]);
-            var increments = new[] { transfer.LiquidVolumeM3, transfer.GasVolumeM3,
-                transfer.LiquidEnthalpyJ, transfer.GasEnthalpyJ, transfer.WaterKg };
-            int solves = 0;
-            var result = new CutCellVofTransport(plan).AdvanceReconstructedPhaseExchange(state, dt, density,
-                (liquidGroup, gasGroup) =>
-                {
-                    if (liquidGroup != liquid || gasGroup != gas)
-                        throw new InvalidOperationException("Phase exchange selected the wrong donor groups.");
-                    solves++;
-                    return solved;
-                },
+            var result = new CutCellVofTransport(plan).AdvanceInventoryPhaseExchange(state, dt, density,
+                gasMass, pressure, film, 100, 10, lower, upper,
                 source => project(plan, new float[plan.FaceCount], dt, source),
                 _ => new CutCellInflow(0, 0, 3e5, 0.01));
             var advected = result.Transport;
-            if (solves != 1) throw new InvalidOperationException("The interface must be processed once.");
+            var increments = new[] { transfer.LiquidVolumeM3, transfer.GasVolumeM3,
+                transfer.LiquidEnthalpyJ, transfer.GasEnthalpyJ, transfer.WaterKg };
             for (int field = 0; field < state.Planes.Length; field++)
                 if (Math.Abs(advected.Fields.Planes[field].Sum() - state.Planes[field].Sum() -
                     increments[field] - advected.BoundaryInflow[field]) > 1e-13)

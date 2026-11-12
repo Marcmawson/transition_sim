@@ -7,6 +7,53 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // Isothermal gas film with no net dry-air flux. Positive flux evaporates water.
     public static class HumidInterfaceFlux
     {
+        public static (GasLiquidEquilibrium Surface, double MassFluxKgM2PerS, double LiquidHeatWm2,
+            double GasHeatWm2, double LatentHeatJkg) SolveFromInventories(
+            CutCellInventories fields, int liquidGroup, int gasGroup, double liquidDensityKgM3,
+            double gasMassKg, double pressurePa, double filmThicknessM, double liquidConductanceWm2K,
+            double gasConductanceWm2K, double lowerK, double upperK)
+        {
+            if (fields == null) throw new ArgumentNullException(nameof(fields));
+            if (!SiUnits.IsFinite(liquidDensityKgM3) || liquidDensityKgM3 <= 0 ||
+                !SiUnits.IsFinite(gasMassKg) || gasMassKg <= 0 ||
+                !SiUnits.IsFinite(lowerK) || !SiUnits.IsFinite(upperK) || lowerK >= upperK)
+                throw new ArgumentException("Phase-state recovery requires positive masses and an ordered temperature bracket.");
+            double liquidMass = fields.LiquidM3[liquidGroup] * liquidDensityKgM3;
+            double fraction = fields.VapourKg[gasGroup] / gasMassKg;
+            if (!(liquidMass > 0 && SiUnits.IsFinite(liquidMass) && fraction >= 0 && fraction < 1))
+                throw new ArgumentException("The interface requires liquid and a humid gas inventory.");
+
+            var water = new Water95();
+            var humid = new HumidGas();
+            double liquidK = RecoverTemperature(fields.LiquidEnergyJ[liquidGroup] / liquidMass,
+                temperature => water.Evaluate(temperature, pressurePa, WaterBranch.Liquid).EnthalpyJkg);
+            // The homogeneous EOS evaluates supersaturated bulk gas before condensation.
+            double gasK = RecoverTemperature(fields.GasEnergyJ[gasGroup] / gasMassKg,
+                temperature => humid.ReferenceTp(temperature, pressurePa, fraction).EnthalpyJkg);
+            return SolveTemperature(pressurePa, fraction, filmThicknessM, liquidK, gasK,
+                liquidConductanceWm2K, gasConductanceWm2K, lowerK, upperK);
+
+            double RecoverTemperature(double target, Func<double, double> enthalpy)
+            {
+                double low = lowerK, high = upperK;
+                double lowH = enthalpy(low), highH = enthalpy(high);
+                const double enthalpyTolerance = 1e-6;
+                if (!SiUnits.IsFinite(target) || target < lowH - enthalpyTolerance || target > highH + enthalpyTolerance)
+                    throw new ArgumentException("The inventory enthalpy is outside the temperature bracket.");
+                if (target <= lowH) return low;
+                if (target >= highH) return high;
+                for (int iteration = 0; iteration < 48; iteration++)
+                {
+                    double middle = 0.5 * (low + high);
+                    double value = enthalpy(middle);
+                    if (Math.Abs(value - target) <= enthalpyTolerance) return middle;
+                    if (value < target) low = middle;
+                    else high = middle;
+                }
+                throw new InvalidOperationException("The phase inventory temperature did not converge.");
+            }
+        }
+
         // Integrated inventory increments before geometric remap and pressure projection.
         public static (double WaterKg, double LiquidVolumeM3, double GasVolumeM3,
             double LiquidEnthalpyJ, double GasEnthalpyJ) InventoryTransfer(

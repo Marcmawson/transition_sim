@@ -254,6 +254,19 @@ namespace PhysicsSim.ThreePhase3D.Flow
         public CutCellTransportResult AdvanceProjected(CutCellInventories state, FlowStep pressure,
             Func<int, CutCellInflow> inflow = null) => AdvanceProjected(state, pressure, inflow, null, null, null, out _);
 
+        public (FlowStep Pressure, CutCellTransportResult Transport) AdvanceInventoryPhaseExchange(
+            CutCellInventories state, double dt, double liquidDensityKgM3, double[] gasMassKg,
+            double pressurePa, double filmThicknessM, double liquidConductanceWm2K, double gasConductanceWm2K,
+            double lowerK, double upperK, Func<double[], FlowStep> project, Func<int, CutCellInflow> inflow = null)
+        {
+            if (gasMassKg == null || gasMassKg.Length != plan.GroupCount)
+                throw new ArgumentException("Gas mass must match the pressure groups.", nameof(gasMassKg));
+            return AdvanceReconstructedPhaseExchange(state, dt, liquidDensityKgM3, (liquid, gas) =>
+                HumidInterfaceFlux.SolveFromInventories(state, liquid, gas, liquidDensityKgM3, gasMassKg[gas],
+                    pressurePa, filmThicknessM, liquidConductanceWm2K, gasConductanceWm2K, lowerK, upperK),
+                project, inflow);
+        }
+
         public (FlowStep Pressure, CutCellTransportResult Transport) AdvanceReconstructedPhaseExchange(
             CutCellInventories state, double dt, double liquidDensityKgM3,
             Func<int, (GasLiquidEquilibrium Surface, double MassFluxKgM2PerS, double LiquidHeatWm2,
