@@ -7,6 +7,42 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // Each parcel represents identical seeded droplets sharing one gas inventory.
     internal static class SeededFogCell
     {
+        // Reinsert a parcel into its reserved footprint. The caller transfers
+        // the returned momentum into the resolved momentum inventory.
+        internal static (CutCellInventories Fields, D3[] LiquidMomentum) ReinsertResolvedLiquid(
+            VariableCoefficientProjection plan, CutCellInventories state, double[] displacement,
+            double radiusM, double temperatureK, int multiplicity, D3 velocity)
+        {
+            var parcel = ToResolvedLiquid(radiusM, temperatureK, multiplicity, velocity);
+            if (displacement.Length != plan.GroupCount || state.LiquidM3.Length != plan.GroupCount)
+                throw new ArgumentException("Parcel footprint must match the pressure groups.");
+            double reserved = 0;
+            for (int group = 0; group < displacement.Length; group++)
+            {
+                double occupied = displacement[group];
+                if (!(occupied >= 0 && occupied <= plan.Volumes[group]) ||
+                    Math.Abs(state.LiquidM3[group] + state.GasM3[group] + occupied - plan.Volumes[group]) >
+                        1e-10 * plan.Volumes[group])
+                    throw new ArgumentException("Parcel footprint does not close the geometric volume.");
+                reserved += occupied;
+            }
+            if (Math.Abs(reserved - parcel.LiquidM3) > 1e-12 * parcel.LiquidM3)
+                throw new ArgumentException("Parcel liquid volume must match its reserved footprint.");
+
+            var liquid = (double[])state.LiquidM3.Clone();
+            var energy = (double[])state.LiquidEnergyJ.Clone();
+            var momentum = new D3[liquid.Length];
+            for (int group = 0; group < liquid.Length; group++)
+            {
+                double fraction = displacement[group] / reserved;
+                liquid[group] += displacement[group];
+                energy[group] += parcel.EnthalpyJ * fraction;
+                momentum[group] = parcel.Momentum * fraction;
+            }
+            return (new CutCellInventories(liquid, (double[])state.GasM3.Clone(), energy,
+                (double[])state.GasEnergyJ.Clone(), (double[])state.VapourKg.Clone()), momentum);
+        }
+
         // Anchors identify bulk liquid. Components touching an open liquid face
         // remain resolved so their inventory can be handled by the boundary flux.
         internal static List<int[]> DetachedLiquidGroups(VariableCoefficientProjection plan, CutCellInventories fields,

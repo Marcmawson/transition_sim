@@ -121,3 +121,7 @@ The CPU displacement step now feeds the change in parcel occupancy into pressure
 ### Representation threshold under axial refinement
 
 A CPU classification check integrates three planar liquid intervals into Cartesian VOF cells. One interval is anchored and two are detached, with volumes of 1.15e-12 and 1.75e-12 m3. Axial spacing is refined from 50 to 25 to 12.5 micrometres at fixed cross-section. At all three resolutions the 1.45e-12 m3 threshold selects only the smaller interval and its parcel recovers 1.15e-12 m3. The 1.0e-12 and 1.9e-12 m3 controls select zero and two detached intervals respectively. This verifies classification and inventory consistency for exact planar input. Dynamic three-dimensional threshold convergence and parcel-to-VOF insertion remain open.
+
+### Parcel reinsertion
+
+A parcel can now be reinserted into a supplied footprint whose total displacement matches its liquid volume. The VOF groups receive the reserved volume and proportional liquid enthalpy, and the routine returns matching per-group momentum credits. The six-cell CPU fixture converts detached liquid to a parcel, moves its displacement through the pressure and VOF transport step, and reinserts 1e-13 m3 at the destination. Gas volume, vapour and gas enthalpy are identical immediately before and after reinsertion. The restored fields pass a subsequent VOF step. Automatic footprint selection and applying the momentum credits to the staggered solver remain open.

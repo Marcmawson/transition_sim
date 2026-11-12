@@ -178,6 +178,24 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 }
                 log(FormattableString.Invariant(
                     $"S14 parcel displacement transport passed: swept gas {moved.GasFaceM3[face]:G8} m3."));
+                var reinserted = SeededFogCell.ReinsertResolvedLiquid(plan, moved.Fields, displaced,
+                    parcel.RadiusM, parcel.TemperatureK, parcel.Multiplicity, parcel.Velocity);
+                for (int group = 0; group < liquid.Length; group++)
+                {
+                    double expectedEnergy = moved.Fields.LiquidEnergyJ[group] + (group == destination ? restored.EnthalpyJ : 0);
+                    D3 expectedMomentum = group == destination ? momentum : default;
+                    if (Math.Abs(reinserted.Fields.LiquidM3[group] - moved.Fields.LiquidM3[group] - displaced[group]) >
+                            1e-13 * grid.CellVolume ||
+                        Math.Abs(reinserted.Fields.LiquidEnergyJ[group] - expectedEnergy) > 1e-13 * restored.EnthalpyJ ||
+                        (reinserted.LiquidMomentum[group] - expectedMomentum).Length > 1e-26 ||
+                        reinserted.Fields.GasM3[group] != moved.Fields.GasM3[group] ||
+                        reinserted.Fields.GasEnergyJ[group] != moved.Fields.GasEnergyJ[group] ||
+                        reinserted.Fields.VapourKg[group] != moved.Fields.VapourKg[group])
+                        throw new InvalidOperationException("S14 parcel reinsertion failed its liquid or gas inventory check.");
+                }
+                new CutCellVofTransport(plan).Advance(reinserted.Fields, new double[plan.FaceCount], dt);
+                log(FormattableString.Invariant(
+                    $"S14 parcel reinsertion passed: restored {reinserted.Fields.LiquidM3[destination]:G8} m3 to the destination VOF group."));
             }
 
             void CheckConversion()
