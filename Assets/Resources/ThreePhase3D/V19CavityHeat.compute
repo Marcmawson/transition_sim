@@ -2,11 +2,15 @@
 
 // Rows are in geometric order. The mapped pressure group owns the temperature.
 StructuredBuffer<int> CellGroups;
-StructuredBuffer<int4> CellFaces;
+struct FaceRow
+{
+    int left, right, bottom, top, front, back;
+};
+StructuredBuffer<FaceRow> CellFaces;
 StructuredBuffer<float> FaceVelocity;
 StructuredBuffer<float> TemperatureIn;
 RWStructuredBuffer<float> TemperatureOut;
-int Width;
+int Width, Depth;
 float Dt, InverseSpacing;
 
 float Flux(float low, float high, float velocity, float inverseDistance)
@@ -18,18 +22,22 @@ float Flux(float low, float high, float velocity, float inverseDistance)
 void AdvanceHeat(uint3 id : SV_DispatchThreadID)
 {
     int cell = (int)id.x;
-    if (cell >= Width * Width) return;
-    int x = cell % Width, y = cell / Width;
+    int layerSize = Width * Width;
+    if (cell >= layerSize * Depth) return;
+    int x = cell % Width, y = (cell / Width) % Width, z = cell / layerSize;
     int group = CellGroups[cell];
-    int4 faces = CellFaces[cell];
+    FaceRow faces = CellFaces[cell];
     float t = TemperatureIn[group];
     float inv = InverseSpacing;
     float left = (0.5 - t) * 2 * inv;
     float right = (t + 0.5) * 2 * inv;
-    if (x > 0) left = Flux(TemperatureIn[CellGroups[cell - 1]], t, FaceVelocity[faces.x], inv);
-    if (x < Width - 1) right = Flux(t, TemperatureIn[CellGroups[cell + 1]], FaceVelocity[faces.y], inv);
+    if (x > 0) left = Flux(TemperatureIn[CellGroups[cell - 1]], t, FaceVelocity[faces.left], inv);
+    if (x < Width - 1) right = Flux(t, TemperatureIn[CellGroups[cell + 1]], FaceVelocity[faces.right], inv);
     float bottom = 0, top = 0;
-    if (y > 0) bottom = Flux(TemperatureIn[CellGroups[cell - Width]], t, FaceVelocity[faces.z], inv);
-    if (y < Width - 1) top = Flux(t, TemperatureIn[CellGroups[cell + Width]], FaceVelocity[faces.w], inv);
-    TemperatureOut[group] = t + Dt * inv * ((left - right) + (bottom - top));
+    if (y > 0) bottom = Flux(TemperatureIn[CellGroups[cell - Width]], t, FaceVelocity[faces.bottom], inv);
+    if (y < Width - 1) top = Flux(t, TemperatureIn[CellGroups[cell + Width]], FaceVelocity[faces.top], inv);
+    float front = 0, back = 0;
+    if (z > 0) front = Flux(TemperatureIn[CellGroups[cell - layerSize]], t, FaceVelocity[faces.front], inv);
+    if (z < Depth - 1) back = Flux(t, TemperatureIn[CellGroups[cell + layerSize]], FaceVelocity[faces.back], inv);
+    TemperatureOut[group] = t + Dt * inv * ((left - right) + (bottom - top) + (front - back));
 }

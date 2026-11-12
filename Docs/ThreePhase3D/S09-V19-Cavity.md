@@ -30,3 +30,11 @@ An independent FP64 numerical check of the discretisation used a cosine-transfor
 | 16² | 0.5 | 1.14850 | 3.47127 | 3.54275 |
 
 The GPU run must independently establish these checks in Unity.
+
+## Three-dimensional cavity check
+
+Run **Physics Sim → Three Phase 3D → Run S09 V19 3D GPU cavity check**. This case uses an 8 × 8 × 8 cube with no-slip walls on all six sides, fixed temperatures on the two x walls, and zero heat flux on the remaining walls. It uses the same Rayleigh and Prandtl numbers as the square case. The heat kernel now exchanges flux through all three axes.
+
+The check requires a steady solution, hot/cold wall Nusselt numbers within 0.001 of each other, mean Nusselt number above the conductive limit of 1, and a nonzero interior spanwise speed above 0.001 in thermal-diffusion units. These checks exercise three-dimensional coupling. Quantitative published-reference and refinement checks apply to the separate square benchmark.
+
+The runtime and Editor entry point compiled separately against Unity 2022.3.46f1 assemblies. GPU execution remains pending.
