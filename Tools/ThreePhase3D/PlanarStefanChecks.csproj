@@ -7,6 +7,6 @@
   <ItemGroup>
     <Compile Include="PlanarStefanMain.cs" />
     <Compile Include="../../Assets/Scripts/ThreePhase3D/Core/SiUnits.cs" />
-    <Compile Include="../../Assets/Scripts/ThreePhase3D/PhaseChange/PlanarStefanMelting.cs" />
+    <Compile Include="../../Assets/Scripts/ThreePhase3D/PhaseChange/PlanarStefanFront.cs" />
   </ItemGroup>
 </Project>
