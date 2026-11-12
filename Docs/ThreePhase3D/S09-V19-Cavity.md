@@ -10,6 +10,23 @@ The CPU fixture uses the existing finite-volume conduction operator on the squar
 
 With the velocity held at zero, the exact steady temperature is linear in x and the mean Nusselt number at each side wall is 1. The 8, 16 and 32 cells per side checks passed with maximum temperature error below 9e-10 K and absolute energy residual below 7e-9 J. The three meshes check the conductive limit. A separate coupled flow run must establish grid and timestep convergence.
 
-The first coupled target is the de Vahl Davis square air cavity at Ra = 1000 and Pr = 0.71, with no-slip walls and spanwise symmetry. Use the thermal-diffusion velocity scale (thermal diffusivity divided by cavity width). The published targets are mean Nusselt number 1.118, peak horizontal velocity 3.649 on the vertical centreline and peak vertical velocity 3.697 on the horizontal centreline. See [B03](Sources.md#b03-natural-convection-benchmark) and [V19](Validation.md). The GPU coupled steady cavity and the genuinely 3D convection case are still open.
+The first coupled target is the de Vahl Davis square air cavity at Ra = 1000 and Pr = 0.71, with no-slip walls and spanwise symmetry. Use the thermal-diffusion velocity scale (thermal diffusivity divided by cavity width). The published targets are mean Nusselt number 1.118, peak horizontal velocity 3.649 on the vertical centreline and peak vertical velocity 3.697 on the horizontal centreline. See [B03](Sources.md#b03-natural-convection-benchmark) and [V19](Validation.md). The GPU square-cavity run awaits Unity execution. The genuinely 3D convection case remains open.
 
 The separate S09 heated-floor GPU regression passed in Unity 2022.3.46f1 on the user run. It supplied 10.000 J, retained 9.9426 J in glass and transferred 0.0574 J to water. The reported residual was 4.6584e-7 J, with a rising velocity of 1.5449e-6 m/s and a return velocity of -5.893e-7 m/s.
+
+## Coupled square cavity
+
+In Unity, run **Physics Sim → Three Phase 3D → Run S09 V19 GPU cavity benchmark**. The benchmark uses one spanwise cell with symmetry, the existing GPU staggered momentum and pressure solver, and a GPU finite-volume temperature update with upwind advection and centred diffusion. Buoyancy uses the benchmark's constant Boussinesq coefficient. Temperature stays on the GPU between heat transport and momentum prediction. The existing flow solver still reads back velocity and pressure for its convergence checks.
+
+The menu runs 8, 16 and 32 cells per side at timestep 0.12/N² in thermal-diffusion time units, then repeats the 16-cell case at half timestep. It reports mean wall Nusselt number, both positive centreline velocity peaks and hot/cold wall Nusselt imbalance. The run requires steady state on each mesh, a decreasing norm of relative reference errors, a maximum fine-grid relative error of 10% and a half-timestep change below 1% of each reference value. These are initial verification thresholds for the project's first-order upwind discretisation.
+
+An independent FP64 numerical check of the discretisation used a cosine-transform pressure solve and gave:
+
+| Mesh | Timestep scale | Mean Nu | Centreline U max | Centreline V max |
+| --- | ---: | ---: | ---: | ---: |
+| 8² | 1 | 1.19686 | 3.47748 | 3.49452 |
+| 16² | 1 | 1.14850 | 3.47126 | 3.54275 |
+| 32² | 1 | 1.13088 | 3.55756 | 3.61429 |
+| 16² | 0.5 | 1.14850 | 3.47127 | 3.54275 |
+
+The GPU run must independently establish these checks in Unity.

@@ -1,4 +1,5 @@
 #pragma kernel PredictMomentum
+#pragma kernel PredictCavityMomentum CAVITY_BUOYANCY
 #pragma kernel IteratePressure
 #pragma kernel CorrectVelocity
 #include "VofCompensated.hlsl"
@@ -25,6 +26,10 @@ RWStructuredBuffer<float> CorrectedOut;
 int FaceCount, GroupCount;
 float Dt;
 float4 InverseSpacing, Acceleration;
+#ifdef CAVITY_BUOYANCY
+StructuredBuffer<float> CavityTemperature;
+float CavityBuoyancy;
+#endif
 
 float SampleVelocity(int index, float centre)
 {
@@ -44,7 +49,11 @@ float2 PressureGradient(Face face)
 }
 
 [numthreads(64, 1, 1)]
+#ifdef CAVITY_BUOYANCY
+void PredictCavityMomentum(uint3 id : SV_DispatchThreadID)
+#else
 void PredictMomentum(uint3 id : SV_DispatchThreadID)
+#endif
 {
     uint index = id.x;
     if (index >= (uint)FaceCount) return;
@@ -58,6 +67,10 @@ void PredictMomentum(uint3 id : SV_DispatchThreadID)
     float centre = VelocityIn[index];
     int row = (int)index * 9;
     float change = Acceleration[face.axis] - ViscousRates[row + 6] * centre;
+#ifdef CAVITY_BUOYANCY
+    if (face.axis == 1 && face.low >= 0 && face.high >= 0)
+        change += CavityBuoyancy * 0.5 * (CavityTemperature[face.low] + CavityTemperature[face.high]);
+#endif
     int start = (int)index * 18;
     for (int axis = 0; axis < 3; axis++)
     {

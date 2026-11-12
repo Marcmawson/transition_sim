@@ -1,0 +1,35 @@
+#pragma kernel AdvanceHeat
+
+// Rows are in geometric order. The mapped pressure group owns the temperature.
+StructuredBuffer<int> CellGroups;
+StructuredBuffer<int4> CellFaces;
+StructuredBuffer<float> FaceVelocity;
+StructuredBuffer<float> TemperatureIn;
+RWStructuredBuffer<float> TemperatureOut;
+int Width;
+float Dt, InverseSpacing;
+
+float Flux(float low, float high, float velocity, float inverseDistance)
+{
+    return velocity * (velocity >= 0 ? low : high) - (high - low) * inverseDistance;
+}
+
+[numthreads(64, 1, 1)]
+void AdvanceHeat(uint3 id : SV_DispatchThreadID)
+{
+    int cell = (int)id.x;
+    if (cell >= Width * Width) return;
+    int x = cell % Width, y = cell / Width;
+    int group = CellGroups[cell];
+    int4 faces = CellFaces[cell];
+    float t = TemperatureIn[group];
+    float inv = InverseSpacing;
+    float left = (0.5 - t) * 2 * inv;
+    float right = (t + 0.5) * 2 * inv;
+    if (x > 0) left = Flux(TemperatureIn[CellGroups[cell - 1]], t, FaceVelocity[faces.x], inv);
+    if (x < Width - 1) right = Flux(t, TemperatureIn[CellGroups[cell + 1]], FaceVelocity[faces.y], inv);
+    float bottom = 0, top = 0;
+    if (y > 0) bottom = Flux(TemperatureIn[CellGroups[cell - Width]], t, FaceVelocity[faces.z], inv);
+    if (y < Width - 1) top = Flux(t, TemperatureIn[CellGroups[cell + Width]], FaceVelocity[faces.w], inv);
+    TemperatureOut[group] = t + Dt * inv * ((left - right) + (bottom - top));
+}

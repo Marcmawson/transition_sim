@@ -40,7 +40,11 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 return solver.Project(tentative, dt, maxIterations, measureTransportCorrection, initialPressure);
         }
 
-        private FlowGpuSolver(VariableCoefficientProjection plan, MomentumPredictor3D predictor, ComputeShader shader)
+        internal FlowGpuSolver(MomentumPredictor3D predictor, ComputeShader shader, bool thermalBuoyancy)
+            : this(predictor.Plan, predictor, shader, thermalBuoyancy) { }
+
+        private FlowGpuSolver(VariableCoefficientProjection plan, MomentumPredictor3D predictor, ComputeShader shader,
+            bool thermalBuoyancy = false)
         {
             this.plan = plan;
             this.predictor = predictor;
@@ -50,7 +54,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
             try
             {
-                predictKernel = predictor == null ? -1 : shader.FindKernel("PredictMomentum");
+                predictKernel = predictor == null ? -1 : shader.FindKernel(thermalBuoyancy ? "PredictCavityMomentum" : "PredictMomentum");
                 pressureKernel = shader.FindKernel("IteratePressure");
                 correctKernel = shader.FindKernel("CorrectVelocity");
                 Groups(plan.FaceCount);
@@ -97,6 +101,10 @@ namespace PhysicsSim.ThreePhase3D.Flow
         }
 
         public FlowStep Advance(float[] input, D3 acceleration, double requestedSeconds, int maxIterations = 4096)
+            => Advance(input, acceleration, requestedSeconds, maxIterations, null, 0, null);
+
+        internal FlowStep Advance(float[] input, D3 acceleration, double requestedSeconds, int maxIterations,
+            ComputeBuffer temperature, float buoyancy, double[] initialPressure)
         {
             if (disposed) throw new ObjectDisposedException(nameof(FlowGpuSolver));
             if (maxIterations <= 0) throw new ArgumentOutOfRangeException(nameof(maxIterations));
@@ -117,12 +125,17 @@ namespace PhysicsSim.ThreePhase3D.Flow
             shader.SetBuffer(predictKernel, "ViscousRates", viscousRates);
             shader.SetBuffer(predictKernel, "VelocityIn", velocity);
             shader.SetBuffer(predictKernel, "PredictedOut", predicted);
+            if (temperature != null)
+            {
+                shader.SetBuffer(predictKernel, "CavityTemperature", temperature);
+                shader.SetFloat("CavityBuoyancy", buoyancy);
+            }
             Dispatch(predictKernel, plan.FaceCount);
             predicted.GetData(predictedReadback);
             PredictionWallMs += clock.Elapsed.TotalMilliseconds;
             CheckReadback(predictedReadback);
 
-            return SolvePressure(dt, maxIterations);
+            return SolvePressure(dt, maxIterations, initialPressure: initialPressure);
         }
 
         private FlowStep Project(float[] tentative, double dt, int maxIterations,
