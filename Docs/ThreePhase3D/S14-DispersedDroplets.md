@@ -70,4 +70,10 @@ The 0.1 ms run returned 6.2842125e-15 kg to the gas, with a net film enthalpy lo
 
 The wall-film step caps the frozen-rate mass transfer at both the remaining water mass and the enthalpy available above the liquid reference temperature, including sensible heat from the gas. At dry-out it exports the remaining liquid inventory and leaves unused sensible heat in the gas. Later steps with zero film mass and enthalpy leave the gas inventories unchanged.
 
-In the CPU dry-out fixture, 310 K gas evaporated the entire 1e-17 kg film over one 0.1 ms step. With the gas initially at the film temperature of 290 K, the heat-limited control retained 9.7218851e-18 kg. Both checks conserved water and enthalpy. Apparatus wetting, rebound, wall heat conduction, coupled droplet extinction and condensation remain open.
+In the CPU dry-out fixture, 310 K gas evaporated the entire 1e-17 kg film over one 0.1 ms step. With the gas initially at the film temperature of 290 K, the heat-limited control retained 9.7218851e-18 kg. Both checks conserved water and enthalpy. Apparatus wetting, rebound, wall heat conduction and coupled droplet extinction remain open.
+
+## Seeded condensation
+
+The local gas-cell exchange can now reverse the stagnant spherical film flux when ambient vapour exceeds saturation at the droplet surface. Condensed mass leaves the gas inventory with its vapour enthalpy, warming the growing droplet. The opt-in case uses the same prescribed pressure, constant heat capacities and flat-surface saturation relation as the evaporation fixture.
+
+Over 1 ms, the 10 µm seed grew to 10.014102 µm, warmed from 290 K to 292.259523 K, and condensed 1.7710493e-14 kg. The 16- and 32-step results refined toward the 64-step reference. Water and enthalpy closed each step, and the zero-seed control left the gas unchanged. This CPU case covers one stationary seed. Condensation momentum, multi-cell gas coupling for condensation, and the V38 fog ensemble remain open.

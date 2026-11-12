@@ -43,6 +43,44 @@ namespace PhysicsSim.ThreePhase3D.Verification
             SimulateGrid(20, depositAtWall: true);
             SimulateGrid(40, depositAtWall: true);
             CheckFilmDryOut();
+            CheckCondensation();
+
+            void CheckCondensation()
+            {
+                const double seedK = 290, elapsed = 0.001;
+                double vapour = dryAir * 0.018;
+                double gasEnergy = GasEnthalpy(seedK, vapour);
+                double total = gasEnergy + LiquidEnthalpy(initialMass, seedK);
+                var coarseGrowth = Grow(16);
+                var fineGrowth = Grow(32);
+                var referenceGrowth = Grow(64);
+                if (!(referenceGrowth.RadiusM > initialRadius && referenceGrowth.LiquidK > seedK &&
+                    referenceGrowth.VapourKg < vapour) ||
+                    Math.Abs(fineGrowth.RadiusM - referenceGrowth.RadiusM) >=
+                    Math.Abs(coarseGrowth.RadiusM - referenceGrowth.RadiusM))
+                    throw new InvalidOperationException("S14 seeded condensation did not grow, warm or refine.");
+                var unseeded = DropletGasCellExchange.Advance(0, seedK, dryAir, vapour, gasEnergy,
+                    101325, 0.026, 2.5e-5, elapsed, allowCondensation: true);
+                if (unseeded.RadiusM != 0 || unseeded.VapourKg != vapour || unseeded.GasEnthalpyJ != gasEnergy)
+                    throw new InvalidOperationException("S14 condensation created liquid without a seed.");
+                log(FormattableString.Invariant(
+                    $"S14 seeded droplet condensation passed: radius {referenceGrowth.RadiusM * 1e6:F6} um, droplet {referenceGrowth.LiquidK:F6} K, condensed {vapour - referenceGrowth.VapourKg:G8} kg."));
+
+                (double RadiusM, double LiquidK, double VapourKg, double GasEnthalpyJ) Grow(int steps)
+                {
+                    var state = (RadiusM: initialRadius, LiquidK: seedK, VapourKg: vapour, GasEnthalpyJ: gasEnergy);
+                    for (int step = 0; step < steps; step++)
+                    {
+                        state = DropletGasCellExchange.Advance(state.RadiusM, state.LiquidK, dryAir, state.VapourKg,
+                            state.GasEnthalpyJ, 101325, 0.026, 2.5e-5, elapsed / steps, allowCondensation: true);
+                        double mass = DropletGasCellExchange.Mass(state.RadiusM);
+                        if (Math.Abs(mass + state.VapourKg - initialMass - vapour) > 1e-12 * initialMass ||
+                            Math.Abs(LiquidEnthalpy(mass, state.LiquidK) + state.GasEnthalpyJ - total) > 1e-12 * total)
+                            throw new InvalidOperationException("S14 seeded condensation failed its water or enthalpy ledger.");
+                    }
+                    return state;
+                }
+            }
 
             void CheckFilmDryOut()
             {

@@ -12,7 +12,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         internal static (double RadiusM, double LiquidK, double VapourKg, double GasEnthalpyJ) Advance(
             double radiusM, double liquidK, double dryAirKg, double vapourKg, double gasEnthalpyJ,
-            double pressurePa, double conductivity, double diffusivity, double dt)
+            double pressurePa, double conductivity, double diffusivity, double dt, bool allowCondensation = false)
         {
             if (!SiUnits.IsFinite(radiusM) || radiusM < 0 || !SiUnits.IsFinite(dryAirKg) || dryAirKg <= 0 ||
                 !SiUnits.IsFinite(vapourKg) || vapourKg < 0 || !SiUnits.IsFinite(pressurePa) ||
@@ -37,16 +37,18 @@ namespace PhysicsSim.ThreePhase3D.Flow
             double liquidH = LiquidCp * (heatedK - ReferenceK);
             double vapourH = VapourReferenceEnthalpy + VapourCp * (heatedK - ReferenceK);
             var transfer = DropletEvaporation.Advance(radiusM, LiquidDensity, gasDensity, diffusivity,
-                Math.Max(surface, ambient), ambient, liquidH, vapourH, dt);
+                allowCondensation ? surface : Math.Max(surface, ambient), ambient, liquidH, vapourH, dt, allowCondensation);
             double remainingMass = Mass(transfer.RadiusM);
             if (remainingMass <= 0)
                 throw new InvalidOperationException("The coupled evaporation step crossed extinction. Reduce the timestep.");
-            double cooledK = heatedK - transfer.HeatRequiredJ / (remainingMass * LiquidCp);
-            CheckTemperature(cooledK);
+            double updatedLiquidK = heatedK - transfer.HeatRequiredJ / (remainingMass * LiquidCp);
+            CheckTemperature(updatedLiquidK);
             double updatedVapour = vapourKg + transfer.VapourKg;
+            if (updatedVapour < 0)
+                throw new InvalidOperationException("Condensation would overdraw the gas vapour inventory. Reduce the timestep.");
             double updatedEnthalpy = gasEnthalpyJ - sensible + transfer.VapourEnthalpyJ;
             CheckTemperature(GasTemperature(dryAirKg, updatedVapour, updatedEnthalpy));
-            return (transfer.RadiusM, cooledK, updatedVapour, updatedEnthalpy);
+            return (transfer.RadiusM, updatedLiquidK, updatedVapour, updatedEnthalpy);
         }
 
         internal static double Mass(double radius) => (4 * Math.PI / 3) * LiquidDensity * radius * radius * radius;
