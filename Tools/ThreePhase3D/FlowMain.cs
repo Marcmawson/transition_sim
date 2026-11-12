@@ -162,13 +162,22 @@ internal static class FlowMain
                 for (int face = 0; face < current.FaceCount; face++)
                     if (current.Faces[face].Active != 0 && current.Faces[face].Axis == 1)
                         tentative[face] = (float)(tentative[face] + dt * gravityY);
-                var result = new CutCellVofTransport(current).AdvancePureWaterStefan(fields, dt, surface, source =>
+                var result = new CutCellVofTransport(current).AdvancePureWaterStefanWithMomentum(fields, dt, surface, source =>
                 {
                     vapourProduced += -Sum(source) * dt / (1 / rhoG - 1 / rhoL) / rhoG;
                     return FlowCpuReference.Project(current, tentative, dt, 32768, null, source);
                 }, _ => new CutCellInflow(1, rhoL * saturation.Liquid.EnthalpyJkg, 0, 0));
+                var incomingMomentum = new CutCellMomentum(current).GatherGroupMomentum(fields,
+                    result.Pressure.VelocityMPerS, rhoL, rhoG);
+                var outgoingMomentum = new double[3];
+                for (int face = 0; face < current.FaceCount; face++)
+                    outgoingMomentum[current.Faces[face].Axis] += result.Momentum.MomentumKgMPerS[face];
+                for (int axis = 0; axis < 3; axis++)
+                    if (Math.Abs(outgoingMomentum[axis] - Sum(incomingMomentum[axis]) -
+                        result.Momentum.BoundaryMomentumKgMPerS[axis] - result.Momentum.WallImpulseKgMPerS[axis]) > 1e-15)
+                        throw new InvalidOperationException("The growing bubble failed its momentum balance.");
                 fields = result.Transport.Fields;
-                velocity = result.Pressure.VelocityMPerS;
+                velocity = Array.ConvertAll(result.Momentum.VelocityMPerS, value => (float)value);
                 var boundary = result.Transport.BoundaryInflow;
                 waterIn += boundary[0] * rhoL + boundary[4];
                 energyIn += boundary[2] + boundary[3];
@@ -357,13 +366,14 @@ internal static class FlowMain
     private static void CheckPureWaterStefan()
     {
         const double pressure = 101325, dx = 0.01, dt = 0.002;
-        const int steps = 4;
         var grid = new Grid3D(1, 3, 1, new D3(dx, dx, dx), RigidFrame.Identity);
         double area = grid.FaceArea(1);
         var sides = new FlowBoundary[6];
         sides[3] = new FlowBoundary(FlowBoundaryKind.OpenPressure);
         foreach (double liquidHeat in new[] { 10000.0, -10000.0 })
+        foreach (double initialHeight in new[] { 0.01, 0.015 })
         {
+            int steps = initialHeight == dx ? 1 : 4;
             var surface = new PureWaterStefanInterface(pressure, 370, 377, liquidHeat, 0);
             var liquid = surface.Saturation.Liquid;
             var vapour = surface.Saturation.Vapour;
@@ -374,7 +384,7 @@ internal static class FlowMain
             var plan = new VariableCoefficientProjection(CutCellGeometry.Build(grid),
                 new BoundaryConditions3D(sides), _ => vapour.DensityKgM3, _ => 0);
             var transport = new CutCellVofTransport(plan);
-            var fields = PlanarLiquidInventory.Create(plan, new D3(0, 0.015, 0), new D3(0, 1, 0),
+            var fields = PlanarLiquidInventory.Create(plan, new D3(0, initialHeight, 0), new D3(0, 1, 0),
                 liquid.DensityKgM3 * liquid.EnthalpyJkg, vapour.DensityKgM3 * vapour.EnthalpyJkg, vapour.DensityKgM3);
             double Sum(double[] values) => System.Linq.Enumerable.Sum(values);
             double initialLiquid = Sum(fields.LiquidM3);
@@ -383,7 +393,7 @@ internal static class FlowMain
             double boundaryWater = 0, boundaryHeat = 0;
             for (int step = 0; step < steps; step++)
             {
-                var result = transport.AdvancePureWaterStefan(fields, dt, surface,
+                var result = transport.AdvancePureWaterStefanWithMomentum(fields, dt, surface,
                     source => FlowCpuReference.Project(plan, new float[plan.FaceCount], dt, 4096, null, source),
                     _ => new CutCellInflow(0, 0, vapour.DensityKgM3 * vapour.EnthalpyJkg, vapour.DensityKgM3));
                 fields = result.Transport.Fields;

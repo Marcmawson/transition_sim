@@ -259,7 +259,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
         }
 
         internal CutCellMomentumResult Advance(CutCellInventories before, CutCellTransportResult after,
-            double[] velocity, double liquidDensity, double gasDensity)
+            double[] velocity, double liquidDensity, double gasDensity,
+            IReadOnlyList<(int Donor, int Recipient, double MassKg)> phaseTransfers = null)
         {
             if (velocity == null || velocity.Length != plan.FaceCount ||
                 !SiUnits.IsFinite(liquidDensity) || !SiUnits.IsFinite(gasDensity) || liquidDensity <= 0 || gasDensity <= 0)
@@ -286,10 +287,17 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 var face = plan.Faces[f];
                 int donor = amount > 0 ? face.Low : face.High;
                 int recipient = amount > 0 ? face.High : face.Low;
-                amount = Math.Abs(amount);
+                Transfer(donor, recipient, Math.Abs(amount), after.Reservoir[f].VelocityMPerS);
+            }
+            if (phaseTransfers != null)
+                foreach (var phase in phaseTransfers)
+                    Transfer(phase.Donor, phase.Recipient, phase.MassKg, default);
+
+            void Transfer(int donor, int recipient, double amount, D3 inflowVelocity)
+            {
                 for (int axis = 0; axis < 3; axis++)
                 {
-                    double impulse = donor < 0 ? amount * after.Reservoir[f].VelocityMPerS[axis] :
+                    double impulse = donor < 0 ? amount * inflowVelocity[axis] :
                         Distribute(donor, axis, amount, 0, true);
                     if (donor < 0) exterior[axis] += impulse;
                     if (recipient < 0) exterior[axis] -= impulse;

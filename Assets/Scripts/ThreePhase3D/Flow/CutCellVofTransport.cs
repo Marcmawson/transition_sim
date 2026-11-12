@@ -292,7 +292,25 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         public (FlowStep Pressure, CutCellTransportResult Transport) AdvancePureWaterStefan(
             CutCellInventories state, double dt, PureWaterStefanInterface surface,
+            Func<double[], FlowStep> project, Func<int, CutCellInflow> inflow = null) =>
+            AdvancePureWaterStefanCore(state, dt, surface, project, inflow, null);
+
+        public CutCellCoupledStep AdvancePureWaterStefanWithMomentum(
+            CutCellInventories state, double dt, PureWaterStefanInterface surface,
             Func<double[], FlowStep> project, Func<int, CutCellInflow> inflow = null)
+        {
+            var transfers = new List<(int Donor, int Recipient, double MassKg)>();
+            var exchanged = AdvancePureWaterStefanCore(state, dt, surface, project, inflow, transfers);
+            var velocity = Array.ConvertAll(exchanged.Pressure.VelocityMPerS, value => (double)value);
+            var advected = momentum.Advance(state, exchanged.Transport, velocity,
+                surface.Saturation.Liquid.DensityKgM3, surface.Saturation.Vapour.DensityKgM3, transfers);
+            return new CutCellCoupledStep(exchanged.Transport, advected, exchanged.Pressure);
+        }
+
+        private (FlowStep Pressure, CutCellTransportResult Transport) AdvancePureWaterStefanCore(
+            CutCellInventories state, double dt, PureWaterStefanInterface surface,
+            Func<double[], FlowStep> project, Func<int, CutCellInflow> inflow,
+            List<(int Donor, int Recipient, double MassKg)> phaseTransfers)
         {
             if (surface == null) throw new ArgumentNullException(nameof(surface));
             if (state == null) throw new ArgumentNullException(nameof(state));
@@ -312,14 +330,15 @@ namespace PhysicsSim.ThreePhase3D.Flow
             };
             return AdvanceInterfaceExchange(state, dt, surface.Saturation.Liquid.DensityKgM3,
                 (_, _, area, availableLiquid, availableVapour) =>
-                    surface.Transfer(area, dt, availableLiquid, availableVapour), project, pureInflow);
+                    surface.Transfer(area, dt, availableLiquid, availableVapour), project, pureInflow, phaseTransfers);
         }
 
         private (FlowStep Pressure, CutCellTransportResult Transport) AdvanceInterfaceExchange(
             CutCellInventories state, double dt, double liquidDensityKgM3,
             Func<int, int, double, double, double, (double WaterKg, double LiquidM3, double GasM3,
                 double LiquidEnthalpyJ, double GasEnthalpyJ)> calculate,
-            Func<double[], FlowStep> project, Func<int, CutCellInflow> inflow)
+            Func<double[], FlowStep> project, Func<int, CutCellInflow> inflow,
+            List<(int Donor, int Recipient, double MassKg)> phaseTransfers = null)
         {
             if (!SiUnits.IsFinite(liquidDensityKgM3) || liquidDensityKgM3 <= 0 ||
                 !SiUnits.IsFinite(dt) || dt <= 0)
@@ -359,6 +378,9 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 increments.LiquidEnergyJ[liquid] += transfer.LiquidEnthalpyJ;
                 increments.GasEnergyJ[gas] += transfer.GasEnthalpyJ;
                 increments.VapourKg[gas] += transfer.WaterKg;
+                if (phaseTransfers != null && liquid != gas && transfer.WaterKg != 0)
+                    phaseTransfers.Add(transfer.WaterKg > 0
+                        ? (liquid, gas, transfer.WaterKg) : (gas, liquid, -transfer.WaterKg));
             }
         }
 
