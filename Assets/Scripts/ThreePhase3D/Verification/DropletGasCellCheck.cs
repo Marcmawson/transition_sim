@@ -69,15 +69,39 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 (double RadiusM, double LiquidK, double VapourKg, double GasEnthalpyJ) Grow(int steps)
                 {
                     var state = (RadiusM: initialRadius, LiquidK: seedK, VapourKg: vapour, GasEnthalpyJ: gasEnergy);
+                    D3 velocity = default, position = default;
+                    D3 initialMomentum = new D3(0.01, 0, 0) * (dryAir + vapour);
+                    D3 gasMomentum = initialMomentum;
+                    double dt = elapsed / steps;
                     for (int step = 0; step < steps; step++)
                     {
+                        var before = state;
                         state = DropletGasCellExchange.Advance(state.RadiusM, state.LiquidK, dryAir, state.VapourKg,
-                            state.GasEnthalpyJ, 101325, 0.026, 2.5e-5, elapsed / steps, allowCondensation: true);
+                            state.GasEnthalpyJ, 101325, 0.026, 2.5e-5, dt, allowCondensation: true);
+                        double gasMass = dryAir + before.VapourKg;
+                        D3 gasVelocity = gasMomentum / gasMass;
+                        double gasDensity = gasMass / DropletGasCellExchange.GasVolumeM3(dryAir, before.VapourKg,
+                            before.GasEnthalpyJ, 101325);
+                        double phaseMass = state.VapourKg - before.VapourKg;
+                        var dragOnly = StokesDroplet.Advance(position, velocity, gasVelocity, default, before.RadiusM,
+                            DropletGasCellExchange.LiquidDensity, gasDensity, 1.81e-5, dt);
+                        var motion = StokesDroplet.Advance(position, velocity, gasVelocity, default, before.RadiusM,
+                            DropletGasCellExchange.LiquidDensity, gasDensity, 1.81e-5, dt, phaseMass);
+                        if (!(phaseMass < 0 && motion.Velocity.X > dragOnly.Velocity.X) ||
+                            (motion.GasMomentumGain - dragOnly.GasMomentumGain - gasVelocity * phaseMass).Length > 1e-27)
+                            throw new InvalidOperationException("S14 condensed water did not carry donor gas momentum.");
+                        gasMomentum += motion.GasMomentumGain;
+                        velocity = motion.Velocity;
+                        position = motion.Position;
                         double mass = DropletGasCellExchange.Mass(state.RadiusM);
                         if (Math.Abs(mass + state.VapourKg - initialMass - vapour) > 1e-12 * initialMass ||
-                            Math.Abs(LiquidEnthalpy(mass, state.LiquidK) + state.GasEnthalpyJ - total) > 1e-12 * total)
-                            throw new InvalidOperationException("S14 seeded condensation failed its water or enthalpy ledger.");
+                            Math.Abs(LiquidEnthalpy(mass, state.LiquidK) + state.GasEnthalpyJ - total) > 1e-12 * total ||
+                            (velocity * mass + gasMomentum - initialMomentum).Length > 1e-24)
+                            throw new InvalidOperationException("S14 seeded condensation failed its water, enthalpy or momentum ledger.");
                     }
+                    if (steps == 64)
+                        log(FormattableString.Invariant(
+                            $"S14 condensation momentum passed: droplet velocity {velocity.X:G8} m/s, residual {(velocity * DropletGasCellExchange.Mass(state.RadiusM) + gasMomentum - initialMomentum).Length:G5} N s."));
                     return state;
                 }
             }
