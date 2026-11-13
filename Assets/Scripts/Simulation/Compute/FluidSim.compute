@@ -11,6 +11,8 @@
 #pragma kernel WhiteParticlePrepareNextFrame;
 
 #pragma kernel ExternalForcesWithHeat THERMAL_PARTICLES
+#pragma kernel SortLiquidMass
+#pragma kernel CopyLiquidMass
 #pragma kernel ReorderWithHeat THERMAL_PARTICLES
 #pragma kernel ReorderCopyBackWithHeat THERMAL_PARTICLES
 
@@ -222,6 +224,26 @@ RWStructuredBuffer<float3> SortTarget_Positions;
 RWStructuredBuffer<float3> SortTarget_PredictedPositions;
 RWStructuredBuffer<float3> SortTarget_Velocities;
 RWStructuredBuffer<float> SortedTemperatureRise;
+RWStructuredBuffer<float> LiquidFraction;
+RWStructuredBuffer<float> SortedLiquidFraction;
+int TrackLiquidMass;
+
+float LiquidWeight(uint index)
+{
+    return TrackLiquidMass != 0 ? LiquidFraction[index] : 1;
+}
+
+[numthreads(ThreadGroupSize, 1, 1)]
+void SortLiquidMass(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x < numParticles) SortedLiquidFraction[id.x] = LiquidFraction[SortedIndices[id.x]];
+}
+
+[numthreads(ThreadGroupSize, 1, 1)]
+void CopyLiquidMass(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x < numParticles) LiquidFraction[id.x] = SortedLiquidFraction[id.x];
+}
 
 void ReorderData(uint3 id)
 {
@@ -233,6 +255,7 @@ void ReorderData(uint3 id)
     SortTarget_Velocities[id.x] = Velocities[sortedIndex];
 #ifdef THERMAL_PARTICLES
     SortedTemperatureRise[id.x] = TemperatureRise[sortedIndex];
+
 #endif
 }
 
@@ -246,6 +269,7 @@ void CopyReorderedData(uint3 id)
     Velocities[id.x] = SortTarget_Velocities[id.x];
 #ifdef THERMAL_PARTICLES
     TemperatureRise[id.x] = SortedTemperatureRise[id.x];
+
 #endif
 }
 
@@ -306,13 +330,14 @@ float2 CalculateDensitiesAtPoint(float3 pos)
 
             // Calculate density and near density
             float dst = sqrt(sqrDstToNeighbour);
-            density += DensityKernel(dst, smoothingRadius);
-            nearDensity += NearDensityKernel(dst, smoothingRadius);
+            float weight = LiquidWeight(neighbourIndex);
+            density += weight * DensityKernel(dst, smoothingRadius);
+            nearDensity += weight * NearDensityKernel(dst, smoothingRadius);
             if (floorSupport && SupportsFloorMirror(neighbourPos))
             {
                 float reflectedDistance = distance(FloorMirror(neighbourPos), pos);
-                density += DensityKernel(reflectedDistance, smoothingRadius);
-                nearDensity += NearDensityKernel(reflectedDistance, smoothingRadius);
+                density += weight * DensityKernel(reflectedDistance, smoothingRadius);
+                nearDensity += weight * NearDensityKernel(reflectedDistance, smoothingRadius);
             }
         }
     }
@@ -380,6 +405,9 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
     if (id.x >= numParticles)
         return;
 
+    float selfWeight = LiquidWeight(id.x);
+    if (selfWeight <= 0) return;
+
     // Calculate pressure
     float density = Densities[id.x][0];
     float densityNear = Densities[id.x][1];
@@ -394,7 +422,7 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
     int neighbourCount = 0;
     bool floorSupport = BeakerFloorPressure > .5 && SupportsFloorMirror(pos) && pos.y - beakerGlassFloorY < smoothingRadius;
     if (floorSupport)
-        pressureForce += FloorPressureForce(pos, pos, float2(density, densityNear), pressure, nearPressure);
+        pressureForce += selfWeight * FloorPressureForce(pos, pos, float2(density, densityNear), pressure, nearPressure);
 
     // Foam variables
     float weightedVelocityDifference = 0;
@@ -426,6 +454,9 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
             // Skip if not within radius
             if (sqrDstToNeighbour > sqrRadius) continue;
 
+            float weight = LiquidWeight(neighbourIndex);
+            if (weight <= 0) continue;
+
             // Calculate pressure force
             float densityNeighbour = Densities[neighbourIndex][0];
             float nearDensityNeighbour = Densities[neighbourIndex][1];
@@ -440,10 +471,10 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
             neighbourCount++;
 
             // Update pressure force
-            pressureForce += dirToNeighbour * DensityDerivative(dstToNeighbour, smoothingRadius) * sharedPressure / densityNeighbour;
+            pressureForce += weight * dirToNeighbour * DensityDerivative(dstToNeighbour, smoothingRadius) * sharedPressure / densityNeighbour;
             pressureForce += dirToNeighbour * NearDensityDerivative(dstToNeighbour, smoothingRadius) * sharedNearPressure / nearDensityNeighbour;
             if (floorSupport && SupportsFloorMirror(neighbourPos))
-                pressureForce += FloorPressureForce(pos, neighbourPos,
+                pressureForce += weight * FloorPressureForce(pos, neighbourPos,
                     float2(densityNeighbour, nearDensityNeighbour), pressure, nearPressure);
 
             // ---- White Particle 'Trapped Air' Calculation ----
@@ -568,7 +599,7 @@ void CalculateViscosity(uint3 id : SV_DispatchThreadID)
             // Calculate viscosity
             float dst = sqrt(sqrDstToNeighbour);
             float3 neighbourVelocity = Velocities[neighbourIndex];
-            viscosityForce += (neighbourVelocity - velocity) * SmoothingKernelPoly6(dst, smoothingRadius);
+            viscosityForce += LiquidWeight(neighbourIndex) * (neighbourVelocity - velocity) * SmoothingKernelPoly6(dst, smoothingRadius);
         }
     }
     Velocities[id.x] += viscosityForce * viscosityStrength * deltaTime;
