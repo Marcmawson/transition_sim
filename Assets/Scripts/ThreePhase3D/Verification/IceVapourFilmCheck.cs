@@ -1,6 +1,7 @@
 using System;
 using System.Linq;
 using PhysicsSim.ThreePhase3D.Core;
+using PhysicsSim.ThreePhase3D.Diagnostics;
 using PhysicsSim.ThreePhase3D.Flow;
 using PhysicsSim.ThreePhase3D.Geometry;
 using PhysicsSim.ThreePhase3D.Materials;
@@ -171,6 +172,25 @@ namespace PhysicsSim.ThreePhase3D.Verification
             var moved = HumidGasAdvection.Advance(plan, flow, volumes, gas,
                 (reservoirDensity * (1 - ambient), reservoirDensity * ambient, 1e4, default),
                 donorEntropy, reservoirDensity * reservoirSpecificEntropy);
+            var beforeStorage = new EntropyInventory();
+            var afterStorage = new EntropyInventory();
+            for (int group = 0; group < gas.Length; group++)
+            {
+                double beforeMass = gas[group].DryAirKg + gas[group].VapourKg;
+                double afterMass = moved.Gas[group].DryAirKg + moved.Gas[group].VapourKg;
+                beforeStorage.AddMaterial(beforeMass, humid.ReferenceRhoT(temperature,
+                    beforeMass / volumes[group], gas[group].VapourKg / beforeMass));
+                afterStorage.AddMaterial(afterMass, humid.ReferenceRhoT(temperature,
+                    afterMass / plan.Volumes[group], moved.Gas[group].VapourKg / afterMass));
+            }
+            var entropyLedger = new ConservationLedger(new InventoryState(), new ConservationTolerance());
+            entropyLedger.RecordExternalEntropy(ExternalChannel.OpenBoundary, 0, -moved.EntropyOutJPerK);
+            double gasEntropyBalance = entropyLedger.InferEntropyProductionJPerK(
+                beforeStorage.TotalJPerK, afterStorage.TotalJPerK);
+            // The prescribed-temperature fixture omits heat associated with its volume adjustment.
+            // Only equilibrium is expected to close without that heat term.
+            if (transferredVapour == 0 && Math.Abs(gasEntropyBalance) > 1e-14)
+                throw new InvalidOperationException("V41 equilibrium gas entropy did not close.");
             double outwardVolume = 0, expectedEntropy = 0;
             for (int face = 0; face < plan.FaceCount; face++)
             {

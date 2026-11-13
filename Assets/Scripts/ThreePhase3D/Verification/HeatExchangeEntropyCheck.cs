@@ -1,4 +1,5 @@
 using System;
+using PhysicsSim.ThreePhase3D.Diagnostics;
 using PhysicsSim.ThreePhase3D.Flow;
 
 namespace PhysicsSim.ThreePhase3D.Verification
@@ -23,8 +24,10 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         coldCapacity, hotCapacity, cold, hot, duration / steps);
                     cold += energy / coldCapacity;
                     hot -= energy / hotCapacity;
-                    double nextEntropy = coldCapacity * Math.Log(cold / initialCold) +
-                        hotCapacity * Math.Log(hot / initialHot);
+                    var storage = new EntropyInventory();
+                    storage.AddSensibleStorage(coldCapacity, cold, initialCold);
+                    storage.AddSensibleStorage(hotCapacity, hot, initialHot);
+                    double nextEntropy = storage.TotalJPerK;
                     if (nextEntropy < entropy - 1e-13 || cold > hot + 1e-12 ||
                         Math.Abs(coldCapacity * cold + hotCapacity * hot - initialEnergy) > 1e-10)
                         throw new InvalidOperationException("V42 heat exchange failed energy conservation or entropy monotonicity.");
