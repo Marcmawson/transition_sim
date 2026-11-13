@@ -707,9 +707,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 // the remaining gas rather than leave energy in an empty phase.
                 // Material inconsistencies still fail validation.
                 if (increments != null && liquid == 0 && gas > 0 &&
-                    Math.Abs(next[2][c]) <= 1e-15 &&
-                    Math.Abs(next[2][c]) <= 1e-12 *
-                        (Math.Abs(fields[2][c]) + Math.Abs(increments.LiquidEnergyJ[c])))
+                    Math.Abs(next[2][c]) <= 1e-15)
                 {
                     next[3][c] += next[2][c];
                     next[2][c] = 0;
