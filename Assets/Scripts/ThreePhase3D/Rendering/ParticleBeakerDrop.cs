@@ -216,8 +216,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             // The legacy particle scene keeps its own tuning.
             if (meshWater)
             {
-                pressureMultiplier = 1.2f;
-                nearPressureMultiplier = .004f;
+                pressureMultiplier = 2.7f;
+                nearPressureMultiplier = .0433f;
                 viscosityStrength = .00000002f;
             }
             ApplySceneSettings();
@@ -616,8 +616,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 float pascalsPerMultiplier = referencePressure * spacingScale;
 
                 float bulkPressurePa = fluid.pressureMultiplier * referencePressure;
-                bulkPressurePa = Slider($"Bulk pressure at 2× target density  {bulkPressurePa:F2} Pa",
-                    bulkPressurePa, 0, 6 * pascalsPerMultiplier);
+                const float waterBulkModulusPa = 2.2e9f;
+                float bulkStiffnessPpm = bulkPressurePa / waterBulkModulusPa * 1e6f;
+                bulkStiffnessPpm = Slider($"Effective bulk modulus  {bulkPressurePa:F2} Pa",
+                    bulkStiffnessPpm, 0, 6 * pascalsPerMultiplier / waterBulkModulusPa * 1e6f);
+                bulkPressurePa = bulkStiffnessPpm * 1e-6f * waterBulkModulusPa;
+                GUILayout.Label($"Water reference  2.2 GPa · solver {bulkStiffnessPpm:F3} ppm of reference");
                 fluid.pressureMultiplier = bulkPressurePa / referencePressure;
 
                 float nearPressurePa = fluid.nearPressureMultiplier * referencePressure;
