@@ -9,6 +9,11 @@ internal static class FlowMain
 {
     public static int Main(string[] args)
     {
+        if (args.Length == 1 && args[0] == "--entropy-conduction")
+        {
+            HeatExchangeEntropyCheck.Run(Console.WriteLine);
+            return 0;
+        }
         if (args.Length == 1 && args[0] == "--ice-vapour")
         {
             IceVapourFilmCheck.Run(Console.WriteLine);
