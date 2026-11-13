@@ -16,6 +16,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly List<Texture2D> metalNormals = new List<Texture2D>();
         private Transform flameCore, flameSheath;
         private Light burnerGlow;
+        private readonly List<Mesh> burnerMeshes = new List<Mesh>();
 
         private void Start()
         {
@@ -36,7 +37,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             DetailBeaker(setup);
             cylinder = BuildCylinder();
             var iron = CreateMaterial(new Color(.19f, .185f, .18f), .8f, .24f);
-            var steel = CreateMaterial(new Color(.72f, .74f, .77f), 1f, .82f);
+            var rayShader = Resources.Load<Shader>("ThreePhase3D/BurnerRayReflections");
+            var steel = CreateMaterial(new Color(.72f, .74f, .77f), 1f, .82f,
+                rayShader != null && rayShader.isSupported ? rayShader : null);
             SetMetalGrain(iron, false);
             SetMetalGrain(steel, true);
             foreach (var renderer in setup.GetComponentsInChildren<MeshRenderer>())
@@ -48,19 +51,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
 
             BuildDaylightStage();
-            Part("Burner base", PrimitiveType.Cylinder, new Vector3(0, .007f, 0),
-                new Vector3(.052f, .007f, .052f), steel);
-            Part("Burner barrel", PrimitiveType.Cylinder, new Vector3(0, .042f, 0),
-                new Vector3(.015f, .034f, .015f), steel);
-            Part("Air collar", PrimitiveType.Cylinder, new Vector3(0, .029f, 0),
-                new Vector3(.021f, .007f, .021f), steel);
-            for (int ring = 0; ring < 5; ring++)
-                Part("Collar ridge", PrimitiveType.Cylinder, new Vector3(0, .024f + ring * .002f, 0),
-                    new Vector3(.022f, .00045f, .022f), steel);
-            Part("Burner nozzle", PrimitiveType.Cylinder, new Vector3(0, .075f, 0),
-                new Vector3(.018f, .004f, .018f), steel);
-            Part("Nozzle opening", PrimitiveType.Cylinder, new Vector3(0, .0791f, 0),
-                new Vector3(.013f, .00015f, .013f), iron);
+            BuildBurner(steel, iron);
 
             flameSheath = Flame("Blue flame envelope", new Color(.04f, .24f, 1f, .32f), .006f, .034f);
             flameCore = Flame("Cyan inner cone", new Color(.16f, .64f, 1f, .78f), .0036f, .019f);
@@ -79,6 +70,52 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             probe.resolution = 128;
             probe.size = new Vector3(2, 2, 2);
             probe.RenderProbe();
+        }
+
+        private void BuildBurner(Material steel, Material iron)
+        {
+            MeshPart("Stepped stainless base", steel, new[]
+            {
+                new Vector2(0, .002f), new Vector2(.024f, .002f), new Vector2(.026f, .0035f),
+                new Vector2(.026f, .0075f), new Vector2(.025f, .009f), new Vector2(.021f, .010f),
+                new Vector2(.0205f, .0114f), new Vector2(.012f, .013f), new Vector2(.010f, .016f),
+                new Vector2(0, .016f)
+            });
+            MeshPart("Burner tube and hollow rolled nozzle", steel, new[]
+            {
+                new Vector2(0, .014f), new Vector2(.0077f, .014f), new Vector2(.0084f, .017f),
+                new Vector2(.0074f, .023f), new Vector2(.0074f, .0695f), new Vector2(.0083f, .072f),
+                new Vector2(.0092f, .074f), new Vector2(.0092f, .0778f),
+                new Vector2(.0088f, .0792f), new Vector2(.0072f, .0794f),
+                new Vector2(.0064f, .0785f), new Vector2(.0064f, .067f)
+            });
+            MeshPart("Recessed nozzle interior", iron, new[]
+            {
+                new Vector2(.0064f, .067f), new Vector2(.0064f, .066f), new Vector2(0, .066f)
+            });
+
+            var collar = new List<Vector2> { new Vector2(.0074f, .022f), new Vector2(.0096f, .022f) };
+            for (int ridge = 0; ridge < 6; ridge++)
+            {
+                float y = .023f + ridge * .00175f;
+                collar.Add(new Vector2(.0096f, y));
+                collar.Add(new Vector2(.0108f, y + .00035f));
+                collar.Add(new Vector2(.0108f, y + .0008f));
+                collar.Add(new Vector2(.0096f, y + .00115f));
+            }
+            collar.Add(new Vector2(.0093f, .034f));
+            collar.Add(new Vector2(.0074f, .034f));
+            MeshPart("Ribbed air adjustment collar", steel, collar.ToArray());
+        }
+
+        private void MeshPart(string label, Material material, Vector2[] profile)
+        {
+            var part = new GameObject(label);
+            part.transform.SetParent(stage.transform, false);
+            var mesh = Revolve(profile, 128, label);
+            burnerMeshes.Add(mesh);
+            part.AddComponent<MeshFilter>().sharedMesh = mesh;
+            part.AddComponent<MeshRenderer>().sharedMaterial = material;
         }
 
         private void Update()
@@ -363,25 +400,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
         }
 
-        private Material CreateMaterial(Color colour, float metallic, float smoothness)
+        private Material CreateMaterial(Color colour, float metallic, float smoothness, Shader shader = null)
         {
-            var material = new Material(Shader.Find("Standard")) { color = colour };
+            var material = new Material(shader ?? Shader.Find("Standard")) { color = colour };
             material.SetFloat("_Metallic", metallic);
             material.SetFloat("_Glossiness", smoothness);
             materials.Add(material);
             return material;
-        }
-
-        private void Part(string label, PrimitiveType type, Vector3 position, Vector3 size, Material material)
-        {
-            var part = GameObject.CreatePrimitive(type);
-            part.name = label;
-            part.transform.SetParent(stage.transform, false);
-            part.transform.localPosition = position;
-            part.transform.localScale = size;
-            if (type == PrimitiveType.Cylinder) part.GetComponent<MeshFilter>().sharedMesh = cylinder;
-            part.GetComponent<Renderer>().sharedMaterial = material;
-            Destroy(part.GetComponent<Collider>());
         }
 
         private void OnDestroy()
@@ -391,6 +416,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (backdrop != null) Destroy(backdrop);
             if (cylinder != null) Destroy(cylinder);
             foreach (var mesh in flameMeshes) Destroy(mesh);
+            foreach (var mesh in burnerMeshes) Destroy(mesh);
             foreach (var texture in metalNormals) Destroy(texture);
             foreach (var material in materials) Destroy(material);
         }
