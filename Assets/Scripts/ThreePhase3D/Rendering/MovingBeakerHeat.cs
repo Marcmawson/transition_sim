@@ -64,7 +64,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly Vector4[] flowSnapshot;
         private FlowSample sampledFlow;
         public string FlowDescription => sampledFlow.Describe();
-        private readonly double maxStep, particleCapacity;
+        private readonly double maxStep, particleCapacity, initialParticleMassKg;
         private readonly float[] solidSnapshot, particleSnapshot;
         private ComputeBuffer glassRead, glassWrite, burnerEntropy;
         private float[] burnerEntropySnapshot;
@@ -73,7 +73,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private double inputJ, nextSampleTime;
         private int sampleRevision;
         private bool samplePending, sampleDirty;
-        public float VapourGeneratedKg { get; private set; }
+        public double SampledLiquidMassKg { get; private set; }
+        public double VapourGeneratedKg { get; private set; }
         private readonly ComputeBuffer vapourProduction;
         private readonly float[] vapourSnapshot;
         private readonly float saturationRiseK, latentHeatJkg;
@@ -97,7 +98,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             double spacing = Math.Pow(particleVolume, 1.0 / 3);
             var water = new Water95();
             var state = water.Evaluate(293.15, 101325, WaterBranch.Liquid);
-            particleCapacity = particleVolume * state.DensityKgM3 * state.CpJkgK;
+            initialParticleMassKg = particleVolume * state.DensityKgM3;
+            particleCapacity = initialParticleMassKg * state.CpJkgK;
             double perArea = CoupledHeatFaces.HeatRateW(1, 2, 1, geometry.baseThicknessM / (2 * Depth),
                 1.2, 0, spacing / 2, water.ConductivityWmK(state));
             double width = geometry.innerRadiusM / Rings;
@@ -187,6 +189,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     shader.SetBuffer(boil, "TemperatureRise", fluid.TemperatureRise);
                     shader.SetBuffer(boil, "ParticleGain", particleGain);
                     shader.SetBuffer(boil, "VapourProduction", vapourProduction);
+                    shader.SetBuffer(boil, "LiquidFraction", fluid.LiquidFraction);
                     shader.SetFloat("SaturationRiseK", saturationRiseK);
                     shader.SetFloat("ParticleMassKg", (float)(particleVolume * state.DensityKgM3));
                     shader.SetFloat("LatentHeatJkg", latentHeatJkg);
@@ -217,6 +220,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             samplePending = sampleDirty = false;
             sampledFlow = default;
             VapourGeneratedKg = 0;
+            SampledLiquidMassKg = particleSnapshot.Length * initialParticleMassKg;
             if (vapourProduction != null)
             {
                 Array.Clear(vapourSnapshot, 0, vapourSnapshot.Length);
@@ -266,6 +270,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             vapourProduction.SetData(vapourSnapshot);
         }
 
+        public double VapourSensibleHeatJ => VapourGeneratedKg * saturationRiseK * particleCapacity / initialParticleMassKg;
         public double VapourLatentHeatJ => (double)VapourGeneratedKg * latentHeatJkg;
 
         public void SampleIfDue(double now)
@@ -284,7 +289,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             double sampledInput = inputJ, solidJ = 0, waterJ = 0;
             double solidEntropy = 0, waterEntropy = 0, inputEntropy = 0;
             bool failed = false;
-            int remaining = 4;
+            bool trackMass = fluid.trackLiquidMass;
+            float[] temperatures = trackMass ? new float[particleSnapshot.Length] : null;
+            float[] weights = trackMass ? new float[particleSnapshot.Length] : null;
+            int remaining = trackMass ? 5 : 4;
             FlowSample flow = default;
             shader.Dispatch(measureFlow, particleGroups, 1, 1);
 
@@ -293,6 +301,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (--remaining != 0 || revision != sampleRevision) return;
                 samplePending = false;
                 if (failed) { sampleDirty = true; return; }
+                if (trackMass)
+                {
+                    SampledLiquidMassKg = weights.Sum(weight => (double)weight) * initialParticleMassKg;
+                    for (int i = 0; i < weights.Length; i++)
+                    {
+                        waterJ += temperatures[i] * weights[i] * particleCapacity;
+                        waterEntropy += SpecificEntropyFactor(temperatures[i]) * weights[i] * particleCapacity;
+                    }
+                }
                 PublishSample(sampledInput, solidJ, waterJ, solidEntropy + waterEntropy, inputEntropy);
                 sampledFlow = flow;
             }
@@ -321,14 +338,26 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     var data = result.GetData<float>();
                     for (int i = 0; i < data.Length; i++)
                     {
-                        waterJ += data[i];
-                        waterEntropy += SpecificEntropyFactor(data[i]);
+                        if (trackMass) temperatures[i] = data[i];
+                        else
+                        {
+                            waterJ += data[i];
+                            waterEntropy += SpecificEntropyFactor(data[i]);
+                        }
                     }
                     waterJ *= particleCapacity;
                     waterEntropy *= particleCapacity;
                 }
                 Complete();
             });
+            if (trackMass)
+                AsyncGPUReadback.Request(fluid.LiquidFraction, result =>
+                {
+                    if (revision != sampleRevision) return;
+                    failed |= result.hasError;
+                    if (!result.hasError) result.GetData<float>().CopyTo(weights);
+                    Complete();
+                });
             AsyncGPUReadback.Request(burnerEntropy, result =>
             {
                 if (revision != sampleRevision) return;
@@ -374,14 +403,20 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             glassRead.GetData(solidSnapshot);
             fluid.TemperatureRise.GetData(particleSnapshot);
             double solidJ = solidSnapshot.Select((value, i) => value * mesh.CapacityJPerK[i]).Sum();
-            double liquidJ = particleSnapshot.Sum(value => (double)value) * particleCapacity;
+            var weights = fluid.trackLiquidMass ? new float[particleSnapshot.Length] : null;
+            if (weights != null)
+            {
+                fluid.LiquidFraction.GetData(weights);
+                SampledLiquidMassKg = weights.Sum(weight => (double)weight) * initialParticleMassKg;
+            }
+            double liquidJ = particleSnapshot.Select((rise, i) => (double)rise * (weights?[i] ?? 1)).Sum() * particleCapacity;
             sampleRevision++;
             samplePending = sampleDirty = false;
             burnerEntropy.GetData(burnerEntropySnapshot);
             double storedEntropy = solidSnapshot.Select((rise, i) => mesh.CapacityJPerK[i] * SpecificEntropyFactor(rise)).Sum() +
-                particleSnapshot.Sum(SpecificEntropyFactor) * particleCapacity;
+                particleSnapshot.Select((rise, i) => SpecificEntropyFactor(rise) * (weights?[i] ?? 1)).Sum() * particleCapacity;
             PublishSample(inputJ, solidJ, liquidJ, storedEntropy, burnerEntropySnapshot.Sum(value => (double)value));
-            double residual = solidJ + liquidJ + VapourLatentHeatJ - inputJ;
+            double residual = solidJ + liquidJ + VapourLatentHeatJ + VapourSensibleHeatJ - inputJ;
             return FormattableString.Invariant($"burner {inputJ:F4} J · solids {solidJ:F4} J · water {liquidJ:F4} J · residual {residual:G4} J · entropy change {SampledStoredEntropyJPerK:G4} J/K · inferred production {SampledProducedEntropyJPerK:G4} J/K · {FlowDescription}");
         }
 
