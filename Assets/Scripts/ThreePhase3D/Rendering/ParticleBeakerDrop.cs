@@ -105,6 +105,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private Transform iceVisual;
         private BoxCollider iceCollider;
         private Material iceMaterial;
+        private Mesh iceMesh;
         private GameObject iceContacts;
         private float iceSide, iceMass, iceHeat, iceSpawnY, iceFloor;
         private const float IceStartC = -5f;
@@ -522,6 +523,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             cube.transform.SetPositionAndRotation(Vector3.up * iceSpawnY, Quaternion.Euler(13, 19, 9));
             var mesh = GameObject.CreatePrimitive(PrimitiveType.Cube);
             mesh.name = "Ice cube mesh";
+            if (iceMesh == null) iceMesh = BuildIceMesh();
+            mesh.GetComponent<MeshFilter>().sharedMesh = iceMesh;
             mesh.transform.SetParent(cube.transform, false);
             mesh.transform.localScale = Vector3.one * iceSide;
             iceVisual = mesh.transform;
@@ -531,10 +534,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             iceCollider.contactOffset = .0003f;
             if (iceMaterial == null)
             {
-                iceMaterial = new Material(Shader.Find("Standard"))
-                    { color = new Color(.65f, .78f, .84f) };
-                iceMaterial.SetFloat("_Glossiness", .82f);
-                iceMaterial.SetFloat("_Metallic", 0);
+                var shader = Resources.Load<Shader>("ThreePhase3D/BeakerIceSurface");
+                iceMaterial = shader != null && shader.isSupported
+                    ? new Material(shader)
+                    : new Material(Shader.Find("Standard")) { color = new Color(.65f, .78f, .84f) };
             }
             mesh.GetComponent<MeshRenderer>().sharedMaterial = iceMaterial;
             ice = cube.AddComponent<Rigidbody>();
@@ -545,6 +548,39 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             ice.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
             ice.centerOfMass = iceSide * new Vector3(.08f, -.05f, .06f);
             iceHeat = 0;
+        }
+
+        private static Mesh BuildIceMesh()
+        {
+            const int segments = 16;
+            var vertices = new System.Collections.Generic.List<Vector3>();
+            var triangles = new System.Collections.Generic.List<int>();
+            foreach (var normal in new[] { Vector3.up, Vector3.down, Vector3.right,
+                Vector3.left, Vector3.forward, Vector3.back })
+            {
+                Vector3 tangent = Mathf.Abs(normal.y) > .5f ? Vector3.right : Vector3.up;
+                Vector3 bitangent = Vector3.Cross(normal, tangent);
+                int first = vertices.Count;
+                for (int row = 0; row <= segments; row++)
+                for (int column = 0; column <= segments; column++)
+                {
+                    Vector3 p = normal * .5f + tangent * ((float)column / segments - .5f)
+                        + bitangent * ((float)row / segments - .5f);
+                    Vector3 inset = new Vector3(Mathf.Clamp(p.x, -.45f, .45f),
+                        Mathf.Clamp(p.y, -.45f, .45f), Mathf.Clamp(p.z, -.45f, .45f));
+                    float ripple = Mathf.Sin(19 * p.x + 9 * p.y) * Mathf.Sin(23 * p.z - 13 * p.y);
+                    vertices.Add(inset + (p - inset).normalized * (.047f + .003f * ripple));
+                    if (row == segments || column == segments) continue;
+                    int a = first + row * (segments + 1) + column;
+                    int b = a + segments + 1;
+                    triangles.AddRange(new[] { a, a + 1, b, a + 1, b + 1, b });
+                }
+            }
+            var mesh = new Mesh { name = "Irregular bevelled ice" };
+            mesh.SetVertices(vertices);
+            mesh.SetTriangles(triangles, 0);
+            mesh.RecalculateNormals();
+            return mesh;
         }
 
         private void AddContact(Vector3 centre, Vector3 size, float yaw)
@@ -891,6 +927,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (ice != null) Destroy(ice.gameObject);
             if (iceContacts != null) Destroy(iceContacts);
             if (iceMaterial != null) Destroy(iceMaterial);
+            if (iceMesh != null) Destroy(iceMesh);
             movingHeat?.Dispose();
             plume?.Dispose();
             if (vapour != null) Destroy(vapour.gameObject);
