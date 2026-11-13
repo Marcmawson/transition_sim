@@ -25,6 +25,12 @@ namespace Seb.Fluid.Simulation
 
 			foreach (SpawnRegion region in spawnRegions)
 			{
+				if (region.cylinderRadius > 0 && region.cylinderHeight > 0)
+				{
+					SpawnCylinder(region, allPoints, allVelocities);
+					continue;
+				}
+
 				int particlesPerAxis = region.CalculateParticleCountPerAxis(particleSpawnDensity);
 				(float3[] points, float3[] velocities) = SpawnCube(particlesPerAxis, region.centre, Vector3.one * region.size);
 				allPoints.AddRange(points);
@@ -32,6 +38,32 @@ namespace Seb.Fluid.Simulation
 			}
 
 			return new SpawnData() { points = allPoints.ToArray(), velocities = allVelocities.ToArray() };
+		}
+
+		void SpawnCylinder(SpawnRegion region, List<float3> points, List<float3> velocities)
+		{
+			float radius = region.cylinderRadius;
+			float height = region.cylinderHeight;
+			float spacing = Mathf.Pow(1f / particleSpawnDensity, 1f / 3f);
+			int width = Mathf.Max(1, Mathf.RoundToInt(2 * radius / spacing));
+			int layers = Mathf.Max(1, Mathf.RoundToInt(height / spacing));
+			float radialStep = 2 * radius / width;
+			float verticalStep = height / layers;
+			float jitter = Mathf.Min(jitterStrength, .25f * Mathf.Min(radialStep, verticalStep));
+
+			for (int x = 0; x < width; x++)
+			for (int z = 0; z < width; z++)
+			{
+				float px = (x + .5f) * radialStep - radius;
+				float pz = (z + .5f) * radialStep - radius;
+				if (px * px + pz * pz > (radius - jitter) * (radius - jitter)) continue;
+				for (int y = 0; y < layers; y++)
+				{
+					var offset = new Vector3(px, (y + .5f) * verticalStep - height / 2, pz);
+					points.Add((float3)(region.centre + offset + UnityEngine.Random.insideUnitSphere * jitter));
+					velocities.Add(initialVel);
+				}
+			}
 		}
 
 		(float3[] p, float3[] v) SpawnCube(int numPerAxis, Vector3 centre, Vector3 size)
@@ -79,7 +111,9 @@ namespace Seb.Fluid.Simulation
 				{
 					debug_spawn_volume += region.Volume;
 					int numPerAxis = region.CalculateParticleCountPerAxis(particleSpawnDensity);
-					debug_num_particles += numPerAxis * numPerAxis * numPerAxis;
+					debug_num_particles += region.cylinderRadius > 0 && region.cylinderHeight > 0
+						? Mathf.RoundToInt(region.Volume * particleSpawnDensity)
+						: numPerAxis * numPerAxis * numPerAxis;
 				}
 			}
 		}
@@ -91,7 +125,9 @@ namespace Seb.Fluid.Simulation
 				foreach (SpawnRegion region in spawnRegions)
 				{
 					Gizmos.color = region.debugDisplayCol;
-					Gizmos.DrawWireCube(region.centre, Vector3.one * region.size);
+					Gizmos.DrawWireCube(region.centre, region.cylinderRadius > 0 && region.cylinderHeight > 0
+						? new Vector3(2 * region.cylinderRadius, region.cylinderHeight, 2 * region.cylinderRadius)
+						: Vector3.one * region.size);
 				}
 			}
 		}
@@ -101,9 +137,11 @@ namespace Seb.Fluid.Simulation
 		{
 			public Vector3 centre;
 			public float size;
+			public float cylinderRadius, cylinderHeight;
 			public Color debugDisplayCol;
 
-			public float Volume => size * size * size;
+			public float Volume => cylinderRadius > 0 && cylinderHeight > 0
+				? Mathf.PI * cylinderRadius * cylinderRadius * cylinderHeight : size * size * size;
 
 			public int CalculateParticleCountPerAxis(int particleDensity)
 			{
