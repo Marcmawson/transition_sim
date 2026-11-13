@@ -102,6 +102,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private float waterTint;
         [SerializeField] private bool spawnIce;
         private Rigidbody ice;
+        private Transform iceVisual;
+        private BoxCollider iceCollider;
         private Material iceMaterial;
         private GameObject iceContacts;
         private float iceSide, iceMass, iceHeat, iceSpawnY, iceFloor;
@@ -478,7 +480,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void SetRunning(bool value)
         {
             running = value;
-            if (ice != null) ice.isKinematic = !value;
+            if (ice != null)
+            {
+                ice.isKinematic = !value;
+                ice.collisionDetectionMode = value
+                    ? CollisionDetectionMode.ContinuousDynamic : CollisionDetectionMode.ContinuousSpeculative;
+            }
             pendingSeconds = 0;
             lastTick = Time.realtimeSinceStartupAsDouble;
         }
@@ -500,36 +507,43 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 iceContacts = new GameObject("Ice beaker contacts");
                 float radius = (float)geometry.innerRadiusM;
                 float height = (float)geometry.cavityHeightM;
-                AddContact(Vector3.up * (iceFloor - .005f), new Vector3(2 * radius, .01f, 2 * radius), 0);
+                AddContact(Vector3.up * (iceFloor - .005f), new Vector3(2 * radius + .008f, .01f, 2 * radius + .008f), 0);
                 const int wallCount = 24;
                 for (int i = 0; i < wallCount; i++)
                 {
                     float angle = i * 360f / wallCount;
                     Vector3 radial = Quaternion.Euler(0, angle, 0) * Vector3.forward;
                     AddContact(Vector3.up * (iceFloor + height * .5f) + radial * (radius + .002f),
-                        new Vector3(2 * radius * Mathf.Tan(Mathf.PI / wallCount), height, .004f), angle);
+                        new Vector3(2 * (radius + .004f) * Mathf.Tan(Mathf.PI / wallCount), height, .004f), angle);
                 }
             }
 
-            var cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            cube.name = "Ice cube";
+            var cube = new GameObject("Ice cube");
             cube.transform.SetPositionAndRotation(Vector3.up * iceSpawnY, Quaternion.Euler(13, 19, 9));
-            cube.transform.localScale = Vector3.one * iceSide;
+            var mesh = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            mesh.name = "Ice cube mesh";
+            mesh.transform.SetParent(cube.transform, false);
+            mesh.transform.localScale = Vector3.one * iceSide;
+            iceVisual = mesh.transform;
+            mesh.GetComponent<BoxCollider>().enabled = false;
+            iceCollider = cube.AddComponent<BoxCollider>();
+            iceCollider.size = Vector3.one * iceSide;
+            iceCollider.contactOffset = .0003f;
             if (iceMaterial == null)
             {
-                var shader = Resources.Load<Shader>("ThreePhase3D/BeakerRefraction");
-                iceMaterial = new Material(shader != null && shader.isSupported ? shader : Shader.Find("Standard"));
-                iceMaterial.SetFloat("_RefractiveIndex", 1.31f);
-                iceMaterial.SetFloat("_NormalReflectance", .018f);
+                iceMaterial = new Material(Shader.Find("Standard"))
+                    { color = new Color(.65f, .78f, .84f) };
+                iceMaterial.SetFloat("_Glossiness", .82f);
+                iceMaterial.SetFloat("_Metallic", 0);
             }
-            cube.GetComponent<MeshRenderer>().sharedMaterial = iceMaterial;
+            mesh.GetComponent<MeshRenderer>().sharedMaterial = iceMaterial;
             ice = cube.AddComponent<Rigidbody>();
             ice.mass = iceMass;
             ice.useGravity = false;
             ice.interpolation = RigidbodyInterpolation.Interpolate;
-            ice.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
-            ice.centerOfMass = iceSide * new Vector3(.08f, -.05f, .06f);
             ice.isKinematic = true;
+            ice.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
+            ice.centerOfMass = iceSide * new Vector3(.08f, -.05f, .06f);
             iceHeat = 0;
         }
 
@@ -538,7 +552,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             var contact = new GameObject("Glass contact");
             contact.transform.SetParent(iceContacts.transform, false);
             contact.transform.SetPositionAndRotation(centre, Quaternion.Euler(0, yaw, 0));
-            contact.AddComponent<BoxCollider>().size = size;
+            var collider = contact.AddComponent<BoxCollider>();
+            collider.size = size;
+            collider.contactOffset = .0003f;
         }
 
         private void FixedUpdate()
@@ -553,16 +569,21 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             float warmup = iceMass * IceHeatCapacity * -IceStartC;
             float latent = iceMass * IceLatentHeat;
             float temperature = Mathf.Min(0, IceStartC + iceHeat / (iceMass * IceHeatCapacity));
-            float area = 6 * ice.transform.localScale.x * ice.transform.localScale.x;
+            float area = 6 * iceCollider.size.x * iceCollider.size.x;
             float burner = ice.position.y - iceFloor < iceSide ? absorbedBurnerWatts : 0;
             iceHeat += (8f * area * (20 - temperature) + burner) * seconds;
             float remaining = 1 - Mathf.Clamp01((iceHeat - warmup) / latent);
             if (remaining > .0001f)
             {
                 float side = iceSide * Mathf.Pow(remaining, 1f / 3f);
-                ice.transform.localScale = Vector3.one * side;
-                ice.mass = iceMass * remaining;
-                ice.centerOfMass = side * new Vector3(.08f, -.05f, .06f);
+                if (side < iceCollider.size.x - .0001f)
+                {
+                    iceVisual.localScale = Vector3.one * side;
+                    iceCollider.size = Vector3.one * side;
+                    ice.mass = iceMass * remaining;
+                    ice.ResetInertiaTensor();
+                    ice.centerOfMass = side * new Vector3(.08f, -.05f, .06f);
+                }
                 return;
             }
 
