@@ -23,6 +23,11 @@ namespace PhysicsSim.ThreePhase3D.Verification
             var gas = humid.ReferenceTp(initialGas, pressure, fraction);
             double initialEnergy = (dryAir + initialVapour) * gas.EnthalpyJkg;
             double initialEntropy = (dryAir + initialVapour) * gas.EntropyJkgK;
+            // A separate saturated pool supplies the incoming steam pulse.
+            var boiling = new PureWaterStefanInterface(pressure, 370, 377, 100, 0);
+            var steam = boiling.Transfer(area, 0.1, 1e-5, 0);
+            double steamEntropy = steam.WaterKg * boiling.Saturation.Vapour.EntropyJkgK;
+            Near(Math.Abs(steam.LiquidEnthalpyJ + steam.VapourEnthalpyJ), 1e-14);
             var coarse = Run(8);
             var fine = Run(16);
             var reference = Run(32);
@@ -30,7 +35,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 Math.Abs(fine.Back - reference.Back) >= Math.Abs(coarse.Back - reference.Back))
                 throw new InvalidOperationException("Finite-wall condensation did not refine with timestep.");
             log(FormattableString.Invariant(
-                $"S12 spatial-wall condensation passed: inner glass {reference.Wall:F6} K, outer glass {reference.Back:F6} K, gas {reference.Gas:F6} K, condensate {reference.Mass:G8} kg, burner heat {burnerPower * burnerDuration:G8} J, room heat {reference.RoomHeat:G8} J, entropy produced {reference.Entropy:G8} J/K."));
+                $"S12 spatial-wall condensation passed: inner glass {reference.Wall:F6} K, outer glass {reference.Back:F6} K, gas {reference.Gas:F6} K, steam in {steam.WaterKg:G8} kg, condensate {reference.Mass:G8} kg, burner heat {burnerPower * burnerDuration:G8} J, room heat {reference.RoomHeat:G8} J, entropy produced {reference.Entropy:G8} J/K."));
 
             (double Wall, double Back, double Gas, double Mass, double RoomHeat, double Entropy) Run(int steps)
             {
@@ -43,8 +48,17 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 {
                     dryAirKg = dryAir, vapourKg = initialVapour, internalEnergyJ = initialEnergy
                 }, new ConservationTolerance { massKg = 1e-18, energyJ = 1e-10 });
-                double gasK = initialGas, vapour = initialVapour;
-                double liquid = 0, gasEnergy = initialEnergy, production = 0;
+                ledger.RecordExternal(ExternalChannel.Injection, FluxDirection.IntoDomain,
+                    steam.WaterKg, 0, steam.VapourEnthalpyJ);
+                ledger.RecordExternalEntropy(ExternalChannel.Injection, 0, steamEntropy);
+                double vapour = initialVapour + steam.WaterKg;
+                double liquid = 0, gasEnergy = initialEnergy + steam.VapourEnthalpyJ;
+                double gasK = RecoverGas(gasEnergy, vapour);
+                var mixed = humid.ReferenceTp(gasK, pressure, vapour / (dryAir + vapour));
+                double production = ledger.InferEntropyProductionJPerK(initialEntropy,
+                    (dryAir + vapour) * mixed.EntropyJkgK);
+                if (!(production > 0))
+                    throw new InvalidOperationException("Steam mixing did not produce positive entropy.");
                 for (int step = 0; step < steps; step++)
                 {
                     double wallK = glass.TemperatureK[0];
@@ -61,7 +75,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     double conductionIn = dt * glassConductance * (glass.TemperatureK[1] - wallK);
                     double mass = dryAir + vapour;
                     double humidity = vapour / mass;
-                    gasK = Recover(gasEnergy, t => mass * humid.ReferenceTp(t, pressure, humidity).EnthalpyJkg);
+                    gasK = RecoverGas(gasEnergy, vapour);
                     double contactK = Recover(contactEnergy + conductionIn, t => wallCapacity * (t - wallK) +
                         liquid * water.Evaluate(t, pressure, WaterBranch.Liquid).EnthalpyJkg);
                     var gasState = humid.ReferenceTp(gasK, pressure, humidity);
@@ -106,6 +120,12 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     gasK < initialGas && ledger.EnergyOutJ > 0 && production > 0))
                     throw new InvalidOperationException("Finite-wall condensation failed its thermal checks.");
                 return (glass.TemperatureK[0], glass.TemperatureK[1], gasK, liquid, ledger.EnergyOutJ, production);
+            }
+
+            double RecoverGas(double energy, double vapour)
+            {
+                double mass = dryAir + vapour;
+                return Recover(energy, t => mass * humid.ReferenceTp(t, pressure, vapour / mass).EnthalpyJkg);
             }
 
             double Recover(double target, Func<double, double> enthalpy)
