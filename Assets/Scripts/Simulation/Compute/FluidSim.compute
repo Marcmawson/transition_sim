@@ -18,6 +18,7 @@
 #pragma kernel SumThermalNeighbours
 #pragma kernel DiffuseLiquidHeat
 #pragma kernel CommitLiquidHeat
+#pragma kernel CalculateThermalPressureForce THERMAL_PRESSURE
 
 // Includes
 #include "./FluidMaths3D.hlsl"
@@ -440,14 +441,14 @@ float3 CalculateOrthonormal(float3 dir)
 }
 
 
-float3 FloorPressureForce(float3 pos, float3 neighbour, float2 neighbourDensity, float pressure, float nearPressure)
+float3 FloorPressureForce(float3 pos, float3 neighbour, float2 neighbourDensity, float pressure, float nearPressure, float wallPressure)
 {
     float3 offset = FloorMirror(neighbour) - pos;
     float d2 = dot(offset, offset);
     if (d2 <= 0 || d2 >= smoothingRadius * smoothingRadius) return 0;
     float d = sqrt(d2);
     // Extend the neighbour pressure below the floor with the hydrostatic gradient.
-    float ghostPressure = PressureFromDensity(neighbourDensity.x) +
+    float ghostPressure = wallPressure +
         neighbourDensity.x * abs(gravity) * 2 * (neighbour.y - beakerGlassFloorY);
     float sharedWallPressure = max(0, .5 * (pressure + ghostPressure));
     float sharedNear = .5 * (nearPressure + NearPressureFromDensity(neighbourDensity.y));
@@ -456,8 +457,28 @@ float3 FloorPressureForce(float3 pos, float3 neighbour, float2 neighbourDensity,
         NearDensityDerivative(d, smoothingRadius) * sharedNear / neighbourDensity.y);
 }
 
+float LiquidPressure(float density, uint index)
+{
+#ifdef THERMAL_PRESSURE
+    if (ThermalBuoyancy > .5)
+    {
+        float row = clamp(TemperatureRise[index], 0, (float)(BuoyancyDensityCount - 1));
+        int low = min((int)row, BuoyancyDensityCount - 2);
+        float ratio = lerp(BuoyancyDensity[low], BuoyancyDensity[low + 1], row - low) / BuoyancyDensity[0];
+        // Particle masses remain fixed during thermal expansion. Warm water
+        // reaches zero pressure at a lower SPH mass density.
+        return (density - targetDensity * ratio) * pressureMultiplier;
+    }
+#endif
+    return PressureFromDensity(density);
+}
+
 [numthreads(ThreadGroupSize, 1, 1)]
+#ifdef THERMAL_PRESSURE
+void CalculateThermalPressureForce(uint3 id : SV_DispatchThreadID)
+#else
 void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
+#endif
 {
     if (id.x >= numParticles)
         return;
@@ -468,7 +489,7 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
     // Calculate pressure
     float density = Densities[id.x][0];
     float densityNear = Densities[id.x][1];
-    float pressure = PressureFromDensity(density);
+    float pressure = LiquidPressure(density, id.x);
     float nearPressure = NearPressureFromDensity(densityNear);
     float3 pressureForce = 0;
     float3 velocity = Velocities[id.x];
@@ -479,7 +500,7 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
     int neighbourCount = 0;
     bool floorSupport = BeakerFloorPressure > .5 && SupportsFloorMirror(pos) && pos.y - beakerGlassFloorY < smoothingRadius;
     if (floorSupport)
-        pressureForce += selfWeight * FloorPressureForce(pos, pos, float2(density, densityNear), pressure, nearPressure);
+        pressureForce += selfWeight * FloorPressureForce(pos, pos, float2(density, densityNear), pressure, nearPressure, pressure);
 
     // Foam variables
     float weightedVelocityDifference = 0;
@@ -517,7 +538,7 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
             // Calculate pressure force
             float densityNeighbour = Densities[neighbourIndex][0];
             float nearDensityNeighbour = Densities[neighbourIndex][1];
-            float neighbourPressure = PressureFromDensity(densityNeighbour);
+            float neighbourPressure = LiquidPressure(densityNeighbour, neighbourIndex);
             float neighbourPressureNear = NearPressureFromDensity(nearDensityNeighbour);
 
             float sharedPressure = (pressure + neighbourPressure) / 2;
@@ -532,7 +553,7 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
             pressureForce += weight * dirToNeighbour * NearDensityDerivative(dstToNeighbour, smoothingRadius) * sharedNearPressure / nearDensityNeighbour;
             if (floorSupport && SupportsFloorMirror(neighbourPos))
                 pressureForce += weight * FloorPressureForce(pos, neighbourPos,
-                    float2(densityNeighbour, nearDensityNeighbour), pressure, nearPressure);
+                    float2(densityNeighbour, nearDensityNeighbour), pressure, nearPressure, neighbourPressure);
 
             // ---- White Particle 'Trapped Air' Calculation ----
             float3 relativeVelocity = velocity - Velocities[neighbourIndex];
