@@ -103,8 +103,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private double StepSeconds => StepMicroseconds / 1_000_000.0;
         [SerializeField, Range(1f, BeakerRenderMockup.MaxMarkedVolumeMl), Tooltip("Cylindrical release volume in mL. Set before pressing Play.")]
         private float meshReleaseVolumeMl = 9f;
-        [SerializeField, Range(0f, 150f), Tooltip("Gap in millimetres from the beaker rim to the bottom of the suspended water cylinder. Set before Play.")]
-        private float spawnHeightAboveRimMm = 10f;
+        [SerializeField, Range(0f, 150f), Tooltip("Height in millimetres from the inside floor of the beaker to the bottom of the water cylinder. Set before Play.")]
+        private float spawnHeightAboveBottomMm = 100f;
         private float releaseVolumeMl;
         private Vector3 releaseViewCentre;
         private float releaseViewHeight;
@@ -158,7 +158,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             float cylinderRadius = Mathf.Min((float)geometry.innerRadiusM * .9f,
                 Mathf.Pow(volumeM3 / (2 * Mathf.PI), 1f / 3f));
             float cylinderHeight = volumeM3 / (Mathf.PI * cylinderRadius * cylinderRadius);
-            float dropBottom = meshWater ? rim + Mathf.Clamp(spawnHeightAboveRimMm, 0f, 150f) * .001f : floor + DropGapM;
+            float dropBottom = meshWater ? floor + Mathf.Clamp(spawnHeightAboveBottomMm, 0f, 150f) * .001f : floor + DropGapM;
             if (meshWater)
             {
                 float apparatusTop = dropBottom + cylinderHeight;
@@ -582,7 +582,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     if (fluid.worldSpaceSurface)
                     {
                         fluid.densityTextureRes = 96;
-                        beakerCamera?.FrameRelease(releaseViewCentre, releaseViewHeight);
                     }
                     fluid.ResetParticles();
                     ResetHeat();
