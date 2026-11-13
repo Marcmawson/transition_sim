@@ -27,6 +27,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private double initialLiquidDensity;
         private const float SmallVolumeMl = 9;
         private const float LargeVolumeMl = 250;
+        private const int MaxMeshDropParticles = 100000;
         private const float DropGapM = .01f;
         private const int TargetFrameRate = 60;
         private const int BenchmarkMicroseconds = 400000;
@@ -100,7 +101,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private int StepMicroseconds => (int)Timesteps[timestepIndex];
         private double StepSeconds => StepMicroseconds / 1_000_000.0;
-        [SerializeField, Range(1f, 50f), Tooltip("Cylindrical release volume in mL. Set before pressing Play.")]
+        [SerializeField, Range(1f, BeakerRenderMockup.MaxMarkedVolumeMl), Tooltip("Cylindrical release volume in mL. Set before pressing Play.")]
         private float meshReleaseVolumeMl = 9f;
         [SerializeField, Range(0f, 150f), Tooltip("Gap in millimetres from the beaker rim to the bottom of the suspended water cylinder. Set before Play.")]
         private float spawnHeightAboveRimMm = 10f;
@@ -151,10 +152,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             bool meshWater = surfaceShader != null && surfaceArguments != null && !heatMovingWater;
             float floor = (float)(geometry.externalBaseHeightM + geometry.baseThicknessM);
             float rim = (float)geometry.RimHeightM;
-            if (meshWater) releaseVolumeMl = Mathf.Clamp(meshReleaseVolumeMl, 1f, 50f);
+            if (meshWater) releaseVolumeMl = Mathf.Clamp(meshReleaseVolumeMl, 1f, BeakerRenderMockup.MaxMarkedVolumeMl);
             float volumeM3 = releaseVolumeMl * 1e-6f;
             float side = Mathf.Pow(volumeM3, 1f / 3f);
-            float cylinderRadius = Mathf.Min((float)geometry.innerRadiusM * .72f,
+            float cylinderRadius = Mathf.Min((float)geometry.innerRadiusM * .9f,
                 Mathf.Pow(volumeM3 / (2 * Mathf.PI), 1f / 3f));
             float cylinderHeight = volumeM3 / (Mathf.PI * cylinderRadius * cylinderRadius);
             float dropBottom = meshWater ? rim + Mathf.Clamp(spawnHeightAboveRimMm, 0f, 150f) * .001f : floor + DropGapM;
@@ -176,7 +177,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 solverObject.transform.localScale = new Vector3(width, height, width);
             }
             var spawner = solverObject.AddComponent<Spawner3D>();
-            spawner.particleSpawnDensity = Mathf.RoundToInt(700000000f * (meshWater ? particleDensityMultiplier : 1));
+            // Keep full-scale releases within the same approximate GPU particle budget.
+            spawner.particleSpawnDensity = meshWater
+                ? Mathf.RoundToInt(Mathf.Min(700000000f * particleDensityMultiplier, MaxMeshDropParticles / volumeM3))
+                : 700000000;
             spawner.spawnRegions = new[]
             {
                 new Spawner3D.SpawnRegion
