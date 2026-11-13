@@ -291,12 +291,15 @@ MonoBehaviour:
   fluidCompute: {fileID: 7200000, guid: 9443696acfd0ebe4fb503b56d952256c, type: 3}
   particleShader: {fileID: 4800000, guid: 13de1318fe7184e48bdf807b928b641b, type: 3}
   largerBeaker: 0
+  gravity: 0
   particleDensityMultiplier: 1.5
   surfaceShader: {fileID: 4800000, guid: 7e91d02de256491986dbc6cd241213cb, type: 3}
   surfaceArguments: {fileID: 7200000, guid: 4cfa81b3afd387a48959c41b5ef371b0, type: 3}
   heatMovingWater: 0
   absorbedBurnerWatts: 100
   showBoiling: 0
+  meshReleaseVolumeMl: 103
+  spawnHeightAboveBottomMm: 100
 --- !u!1 &3000
 GameObject:
   m_ObjectHideFlags: 0
