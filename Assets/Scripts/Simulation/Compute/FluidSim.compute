@@ -75,6 +75,7 @@ const float interactionInputRadius;
 // Volume texture settings
 RWTexture3D<float> DensityMap;
 const uint3 densityMapSize;
+float3 densityMapCentre;
 
 // ---- Foam, spray, and bubbles ----
 struct WhiteParticle
@@ -710,7 +711,7 @@ void UpdateDensityTexture(uint3 id : SV_DispatchThreadID)
 
     // Convert threadID to a world-space position, and sample the fluid density at that point
     float3 texturePos = id / (densityMapSize - 1.0);
-    float3 worldPos = (texturePos - 0.5) * boundsSize;
+    float3 worldPos = (texturePos - 0.5) * boundsSize + densityMapCentre;
     DensityMap[id] = CalculateDensitiesAtPoint(worldPos)[0];
 }
 
