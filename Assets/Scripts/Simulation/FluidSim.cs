@@ -102,6 +102,7 @@ namespace Seb.Fluid.Simulation
 		float[] initialTemperature;
 		int activeReorderKernel = reorderKernel, activeCopyBackKernel = reorderCopybackKernel;
 		int activeExternalForcesKernel = externalForcesKernel;
+		int activePressureKernel = pressureKernel;
 		[HideInInspector] public Vector4 beakerCollision; // Centre X/Z, inner radius, floor height.
 		[HideInInspector] public float beakerRimY;
 		public float SimulatedSeconds => (float)simTimer;
@@ -180,13 +181,13 @@ namespace Seb.Fluid.Simulation
 				compute.SetBuffer(activeCopyBackKernel, "SortedTemperatureRise", sortedTemperature);
 				if (buoyancyDensityByDegree != null && buoyancyDensityByDegree.Length >= 2)
 				{
-					activeExternalForcesKernel = compute.FindKernel("ExternalForcesWithHeat");
+					activePressureKernel = compute.FindKernel("CalculateThermalPressureForce");
 					var densityTable = CreateStructuredBuffer<float>(buoyancyDensityByDegree.Length);
 					bufferNameLookup.Add(densityTable, "BuoyancyDensity");
 					densityTable.SetData(buoyancyDensityByDegree);
 					compute.SetInt("BuoyancyDensityCount", buoyancyDensityByDegree.Length);
-					compute.SetBuffer(activeExternalForcesKernel, "BuoyancyDensity", densityTable);
-					compute.SetBuffer(activeExternalForcesKernel, "TemperatureRise", TemperatureRise);
+					compute.SetBuffer(activePressureKernel, "BuoyancyDensity", densityTable);
+					compute.SetBuffer(activePressureKernel, "TemperatureRise", TemperatureRise);
 				}
 			}
 
@@ -197,7 +198,7 @@ namespace Seb.Fluid.Simulation
 			bufferNameLookup.Add(sortedFraction, "SortedLiquidFraction");
 			initialLiquidFraction = new float[LiquidFraction.count];
 			for (int i = 0; i < initialLiquidFraction.Length; i++) initialLiquidFraction[i] = 1;
-			foreach (int kernel in new[] { densityKernel, pressureKernel, viscosityKernel, renderKernel })
+			foreach (int kernel in new[] { densityKernel, activePressureKernel, viscosityKernel, renderKernel })
 				compute.SetBuffer(kernel, "LiquidFraction", LiquidFraction);
 			if (trackLiquidMass)
 			{
@@ -282,7 +283,7 @@ namespace Seb.Fluid.Simulation
 			});
 
 			// Pressure kernel
-			SetBuffers(compute, pressureKernel, bufferNameLookup, new ComputeBuffer[]
+			SetBuffers(compute, activePressureKernel, bufferNameLookup, new ComputeBuffer[]
 			{
 				predictedPositionsBuffer,
 				densityBuffer,
@@ -441,7 +442,7 @@ namespace Seb.Fluid.Simulation
 			}
 
 			Dispatch(compute, positionBuffer.count, kernelIndex: densityKernel);
-			Dispatch(compute, positionBuffer.count, kernelIndex: pressureKernel);
+			Dispatch(compute, positionBuffer.count, kernelIndex: activePressureKernel);
 			if (viscosityStrength != 0) Dispatch(compute, positionBuffer.count, kernelIndex: viscosityKernel);
 			Dispatch(compute, positionBuffer.count, kernelIndex: updatePositionsKernel);
 		}
@@ -480,7 +481,7 @@ namespace Seb.Fluid.Simulation
 			compute.SetFloat("gravity", gravity);
 			compute.SetFloat("BeakerFloorPressure", beakerFloorPressure ? 1f : 0f);
 			compute.SetFloat("beakerGlassFloorY", beakerGlassFloorY);
-			if (activeExternalForcesKernel != externalForcesKernel)
+			if (activePressureKernel != pressureKernel)
 				compute.SetFloat("ThermalBuoyancy", thermalBuoyancy ? 1f : 0f);
 			compute.SetFloat("collisionDamping", collisionDamping);
 			compute.SetFloat("smoothingRadius", smoothingRadius);
