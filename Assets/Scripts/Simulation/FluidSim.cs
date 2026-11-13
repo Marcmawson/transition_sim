@@ -40,6 +40,7 @@ namespace Seb.Fluid.Simulation
 
 		[Header("Volumetric Render Settings")] public bool renderToTex3D;
 		public int densityTextureRes;
+		[HideInInspector] public bool worldSpaceSurface;
 
 		[Header("References")] public ComputeShader compute;
 		public Spawner3D spawner;
@@ -413,9 +414,10 @@ namespace Seb.Fluid.Simulation
 			int w = Mathf.RoundToInt(transform.localScale.x / maxAxis * densityTextureRes);
 			int h = Mathf.RoundToInt(transform.localScale.y / maxAxis * densityTextureRes);
 			int d = Mathf.RoundToInt(transform.localScale.z / maxAxis * densityTextureRes);
-			CreateRenderTexture3D(ref DensityMap, w, h, d, UnityEngine.Experimental.Rendering.GraphicsFormat.R16_SFloat, TextureWrapMode.Clamp);
+			CreateRenderTexture3D(ref DensityMap, w, h, d, (worldSpaceSurface ? UnityEngine.Experimental.Rendering.GraphicsFormat.R32_SFloat : UnityEngine.Experimental.Rendering.GraphicsFormat.R16_SFloat), TextureWrapMode.Clamp);
 			//Debug.Log(w + " " + h + "  " + d);
 			compute.SetTexture(renderKernel, "DensityMap", DensityMap);
+			compute.SetVector("densityMapCentre", worldSpaceSurface ? transform.position : Vector3.zero);
 			compute.SetInts("densityMapSize", DensityMap.width, DensityMap.height, DensityMap.volumeDepth);
 			Dispatch(compute, DensityMap.width, DensityMap.height, DensityMap.volumeDepth, renderKernel);
 		}
@@ -563,6 +565,7 @@ namespace Seb.Fluid.Simulation
 			}
 
 			spatialHash?.Release();
+			if (DensityMap != null) { DensityMap.Release(); Destroy(DensityMap); }
 		}
 
 
