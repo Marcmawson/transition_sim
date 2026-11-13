@@ -29,6 +29,8 @@ Shader "Fluid/ParticleBillboard" {
 			float temperatureView;
 
 			float scale;
+			StructuredBuffer<float> LiquidFraction;
+			int TrackLiquidMass;
 			float3 colour;
 
 			float4x4 localToWorld;
@@ -48,7 +50,8 @@ Shader "Fluid/ParticleBillboard" {
 				o.normal = v.normal;
 				
 				float3 centreWorld = Positions[instanceID];
-				float3 objectVertPos = v.vertex * scale * 2;
+				float weight = TrackLiquidMass != 0 ? LiquidFraction[instanceID] : 1;
+				float3 objectVertPos = v.vertex * scale * 2 * pow(max(0, weight), 1.0 / 3.0);
 				float4 viewPos = mul(UNITY_MATRIX_V, float4(centreWorld, 1)) + float4(objectVertPos, 0);
 				o.pos = mul(UNITY_MATRIX_P, viewPos);
 
