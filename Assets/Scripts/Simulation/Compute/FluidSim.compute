@@ -123,16 +123,47 @@ float iceHalfExtent;
 float4x4 iceWorldToLocal, iceLocalToWorld;
 float3 iceVelocity, iceAngularVelocity, iceMassCentre;
 
-void ResolveIce(inout float3 position, inout float3 velocity)
+void ResolveIce(float3 previous, inout float3 position, inout float3 velocity)
 {
     if (iceHalfExtent <= 0) return;
-    float3 local = mul(iceWorldToLocal, float4(position, 1)).xyz;
-    float3 distance = iceHalfExtent - abs(local);
-    if (min(distance.x, min(distance.y, distance.z)) <= 0) return;
-    float3 axis = distance.x <= min(distance.y, distance.z) ? float3(1,0,0)
-        : distance.y <= distance.z ? float3(0,1,0) : float3(0,0,1);
-    float3 normal = mul((float3x3)iceLocalToWorld, axis * (dot(axis, local) < 0 ? -1 : 1));
-    position += normal * (dot(distance, axis) + .00005);
+    const float separation = .00005;
+    float3 start = mul(iceWorldToLocal, float4(previous, 1)).xyz;
+    float3 end = mul(iceWorldToLocal, float4(position, 1)).xyz;
+    float3 inside = iceHalfExtent - abs(end);
+    float3 axis;
+    float signNormal;
+
+    if (all(abs(start) < iceHalfExtent))
+    {
+        // A moving solid can engulf a particle between updates.
+        if (any(inside <= 0)) return;
+        axis = inside.x <= min(inside.y, inside.z) ? float3(1,0,0)
+            : inside.y <= inside.z ? float3(0,1,0) : float3(0,0,1);
+        signNormal = dot(axis, end) < 0 ? -1 : 1;
+        end += axis * signNormal * (dot(inside, axis) + separation);
+    }
+    else
+    {
+        // Find the first crossed face, including a segment that exits the far side.
+        float3 motion = end - start;
+        float3 direction = step(0, motion) * 2 - 1;
+        if (any((abs(motion) < 1e-8) & (abs(start) >= iceHalfExtent))) return;
+        float3 reciprocal = direction / max(abs(motion), 1e-8);
+        float3 first = (-iceHalfExtent - start) * reciprocal;
+        float3 second = (iceHalfExtent - start) * reciprocal;
+        float3 nearFace = min(first, second);
+        float3 farFace = max(first, second);
+        float entry = max(nearFace.x, max(nearFace.y, nearFace.z));
+        float exitTime = min(farFace.x, min(farFace.y, farFace.z));
+        if (entry < 0 || entry > 1 || exitTime < entry) return;
+        axis = nearFace.x >= max(nearFace.y, nearFace.z) ? float3(1,0,0)
+            : nearFace.y >= nearFace.z ? float3(0,1,0) : float3(0,0,1);
+        signNormal = -dot(axis, direction);
+        end = lerp(start, end, entry) + axis * signNormal * separation;
+    }
+
+    position = mul(iceLocalToWorld, float4(end, 1)).xyz;
+    float3 normal = mul((float3x3)iceLocalToWorld, axis * signNormal);
     float3 surfaceVelocity = iceVelocity + cross(iceAngularVelocity, position - iceMassCentre);
     velocity -= normal * min(0, dot(velocity - surfaceVelocity, normal));
 }
@@ -221,7 +252,11 @@ void ApplyExternalForces(uint3 id)
     Velocities[id.x] += float3(0, acceleration, 0) * deltaTime;
 
     // Predict
-    PredictedPositions[id.x] = Positions[id.x] + Velocities[id.x] * predictionTime;
+    float3 previous = Positions[id.x];
+    float3 predictedVelocity = Velocities[id.x];
+    float3 predicted = previous + predictedVelocity * predictionTime;
+    ResolveIce(previous, predicted, predictedVelocity);
+    PredictedPositions[id.x] = predicted;
 }
 
 [numthreads(ThreadGroupSize, 1, 1)]
@@ -713,7 +748,7 @@ void UpdatePositions(uint3 id : SV_DispatchThreadID)
     float3 previous = Positions[id.x];
     float3 pos = previous + vel * deltaTime;
 
-    ResolveIce(pos, vel);
+    ResolveIce(previous, pos, vel);
     ResolveBeaker(previous, pos, vel);
     ResolveCollisions(pos, vel, collisionDamping);
 
@@ -731,6 +766,11 @@ void UpdateDensityTexture(uint3 id : SV_DispatchThreadID)
     // Convert threadID to a world-space position, and sample the fluid density at that point
     float3 texturePos = id / (densityMapSize - 1.0);
     float3 worldPos = (texturePos - 0.5) * boundsSize + densityMapCentre;
+    if (iceHalfExtent > 0 && all(abs(mul(iceWorldToLocal, float4(worldPos, 1)).xyz) < iceHalfExtent))
+    {
+        DensityMap[id] = 0;
+        return;
+    }
     DensityMap[id] = CalculateDensitiesAtPoint(worldPos)[0];
 }
 
