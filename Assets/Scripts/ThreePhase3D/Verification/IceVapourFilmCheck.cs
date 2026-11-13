@@ -45,6 +45,20 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     if (Math.Abs(iceChange - expectedIceChange) > volumeTolerance ||
                         Math.Abs(fluidChange + expectedIceChange) > volumeTolerance)
                         throw new InvalidOperationException("V41 rebuilt geometry did not close the ice and gas volumes.");
+                    var gasCells = before.FluidVolumeM3.Select(volume =>
+                        (DryAirKg: volume * 1.2 * (1 - ambient), VapourKg: volume * 1.2 * ambient,
+                            EnthalpyJ: volume * 1e4)).ToArray();
+                    var remapped = IceVapourFilm.RemapPlanarGas(before, after, gasCells,
+                        result.VapourKg, result.GasEnthalpyJ);
+                    for (int cell = 0; cell < gasCells.Length; cell++)
+                        if (remapped[cell].DryAirKg != gasCells[cell].DryAirKg ||
+                            (before.FluidVolumeM3[cell] == after.FluidVolumeM3[cell] && remapped[cell] != gasCells[cell]))
+                            throw new InvalidOperationException("V41 gas remap changed dry air or an untouched cell.");
+                    if (Math.Abs(remapped.Sum(cell => cell.VapourKg) - gasCells.Sum(cell => cell.VapourKg) -
+                            result.VapourKg) > 1e-20 ||
+                        Math.Abs(remapped.Sum(cell => cell.EnthalpyJ) - gasCells.Sum(cell => cell.EnthalpyJ) -
+                            result.GasEnthalpyJ) > 1e-15)
+                        throw new InvalidOperationException("V41 gas remap did not conserve vapour or enthalpy.");
                     // Integrate the constant-flux species ODE across the film and
                     // compare the recovered ambient composition to its boundary value.
                     double recovered = 1 - (1 - saturated) *
