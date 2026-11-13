@@ -32,6 +32,7 @@ RWStructuredBuffer<float3> Positions;
 RWStructuredBuffer<float3> PredictedPositions;
 RWStructuredBuffer<float3> Velocities;
 RWStructuredBuffer<float> TemperatureRise;
+StructuredBuffer<float> PressureTemperatureRise;
 StructuredBuffer<float> BuoyancyDensity;
 int BuoyancyDensityCount;
 float ThermalBuoyancy;
@@ -462,7 +463,7 @@ float LiquidPressure(float density, uint index)
 #ifdef THERMAL_PRESSURE
     if (ThermalBuoyancy > .5)
     {
-        float row = clamp(TemperatureRise[index], 0, (float)(BuoyancyDensityCount - 1));
+        float row = clamp(PressureTemperatureRise[index], 0, (float)(BuoyancyDensityCount - 1));
         int low = min((int)row, BuoyancyDensityCount - 2);
         float ratio = lerp(BuoyancyDensity[low], BuoyancyDensity[low + 1], row - low) / BuoyancyDensity[0];
         // Particle masses remain fixed during thermal expansion. Warm water
