@@ -34,7 +34,7 @@ namespace Seb.Fluid.Rendering
 
         public ComputeBuffer Run(RenderTexture densityTexture, Vector3 scale, float isoLevel)
         {
-            CreateTriangleBuffer(densityTexture.width);
+            CreateTriangleBuffer(densityTexture.width, densityTexture.height, densityTexture.volumeDepth);
             ApplyComputeSettings(densityTexture, scale, isoLevel, triangleBuffer);
 
             int numVoxelsPerX = densityTexture.width - 1;
@@ -45,11 +45,10 @@ namespace Seb.Fluid.Rendering
             return triangleBuffer;
         }
 
-        void CreateTriangleBuffer(int resolution, bool warnIfExceedsMaxTheoreticalSize = false)
+        void CreateTriangleBuffer(int width, int height, int depth, bool warnIfExceedsMaxTheoreticalSize = false)
         {
             // ComputeHelper.Release(triangleBuffer);
-            int numVoxelsPerAxis = resolution - 1;
-            int numVoxels = numVoxelsPerAxis * numVoxelsPerAxis * numVoxelsPerAxis;
+            int numVoxels = (width - 1) * (height - 1) * (depth - 1);
             int maxTriangleCount = numVoxels * 5;
             int byteSize = ComputeHelper.GetStride<Triangle>();
             const uint maxBytes = 2147483648;
