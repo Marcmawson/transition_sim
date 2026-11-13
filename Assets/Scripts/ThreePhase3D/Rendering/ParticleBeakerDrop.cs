@@ -199,6 +199,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 ParticleDisplay3D.TextureFromGradient(ref temperatureLegend, 64, temperatureColours);
             }
             solverObject.SetActive(true);
+            SetRunning(true);
         }
 
         private static float[] BuildBuoyancyDensityTable()
