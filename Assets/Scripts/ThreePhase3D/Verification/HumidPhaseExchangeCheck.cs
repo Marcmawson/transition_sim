@@ -14,6 +14,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
         {
             const double pressure = 101325, initialWall = 283.15, initialGas = 293.15;
             const double dryAir = 1e-5, wallCapacity = 0.02, area = 1e-4, film = 0.001;
+            const double roomK = initialWall, roomConductance = 0.02;
             var humid = new HumidGas();
             var water = new Water95();
             double fraction = 0.85 * humid.EquilibriumWithLiquid(initialGas, pressure).WaterMassFraction;
@@ -28,15 +29,19 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 Math.Abs(fine.Back - reference.Back) >= Math.Abs(coarse.Back - reference.Back))
                 throw new InvalidOperationException("Finite-wall condensation did not refine with timestep.");
             log(FormattableString.Invariant(
-                $"S12 spatial-wall condensation passed: inner glass {reference.Wall:F6} K, outer glass {reference.Back:F6} K, gas {reference.Gas:F6} K, condensate {reference.Mass:G8} kg, entropy produced {reference.Entropy:G8} J/K."));
+                $"S12 spatial-wall condensation passed: inner glass {reference.Wall:F6} K, outer glass {reference.Back:F6} K, gas {reference.Gas:F6} K, condensate {reference.Mass:G8} kg, room heat {reference.RoomHeat:G8} J, entropy produced {reference.Entropy:G8} J/K."));
 
-            (double Wall, double Back, double Gas, double Mass, double Entropy) Run(int steps)
+            (double Wall, double Back, double Gas, double Mass, double RoomHeat, double Entropy) Run(int steps)
             {
                 const double glassConductance = 0.04;
                 double dt = 0.2 / steps;
                 var glass = new SolidConduction(new[] { wallCapacity, wallCapacity },
                     new[] { initialWall, initialWall }, new[] { new SolidConduction.Face(0, 1, glassConductance) });
                 var power = new double[2];
+                var ledger = new ConservationLedger(new InventoryState
+                {
+                    dryAirKg = dryAir, vapourKg = initialVapour, internalEnergyJ = initialEnergy
+                }, new ConservationTolerance { massKg = 1e-18, energyJ = 1e-10 });
                 double gasK = initialGas, vapour = initialVapour;
                 double liquid = 0, gasEnergy = initialEnergy, production = 0;
                 for (int step = 0; step < steps; step++)
@@ -63,26 +68,36 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     // Apply only the interface energy remaining after condensate storage.
                     // SolidConduction applies the glass-to-glass exchange once.
                     power[0] = (contactEnergy - liquid * liquidState.EnthalpyJkg) / dt;
+                    power[1] = roomConductance * (roomK - glass.TemperatureK[1]);
+                    double roomHeat = -power[1] * dt;
+                    ledger.RecordExternal(ExternalChannel.OpenBoundary, FluxDirection.OutOfDomain, 0, 0, roomHeat);
+                    ledger.RecordExternalEntropy(ExternalChannel.OpenBoundary, -roomHeat / roomK, 0);
                     glass.Step(dt, power);
                     Near(Math.Abs(glass.TemperatureK[0] - contactK), 1e-8);
                     double backK = glass.TemperatureK[1];
-                    Near(Math.Abs(vapour + liquid - initialVapour), 1e-18);
-                    Near(Math.Abs(mass * gasState.EnthalpyJkg + liquid * liquidState.EnthalpyJkg +
-                        wallCapacity * (glass.TemperatureK[0] + backK - 2 * initialWall) - initialEnergy), 1e-10);
+                    var current = new InventoryState
+                    {
+                        dryAirKg = dryAir, vapourKg = vapour, liquidKg = liquid,
+                        // At prescribed pressure the fixture audits enthalpy.
+                        internalEnergyJ = mass * gasState.EnthalpyJkg + liquid * liquidState.EnthalpyJkg,
+                        solidInternalEnergyJ = wallCapacity * (glass.TemperatureK[0] + backK - 2 * initialWall)
+                    };
+                    if (!ledger.Audit(current).passed)
+                        throw new InvalidOperationException("Condensation and room heat failed the inventory audit.");
                     var storage = new EntropyInventory();
                     storage.AddMaterial(mass, gasState);
                     storage.AddMaterial(liquid, liquidState);
                     storage.AddSensibleStorage(wallCapacity, glass.TemperatureK[0], initialWall);
                     storage.AddSensibleStorage(wallCapacity, backK, initialWall);
-                    double nextProduction = storage.TotalJPerK - initialEntropy;
+                    double nextProduction = ledger.InferEntropyProductionJPerK(initialEntropy, storage.TotalJPerK);
                     if (!(nextProduction >= production - 1e-12))
                         throw new InvalidOperationException("Finite-wall condensation entropy decreased.");
                     production = nextProduction;
                 }
                 if (!(glass.TemperatureK[0] > glass.TemperatureK[1] && glass.TemperatureK[1] > initialWall &&
-                    gasK < initialGas && production > 0))
+                    gasK < initialGas && ledger.EnergyOutJ > 0 && production > 0))
                     throw new InvalidOperationException("Finite-wall condensation failed its thermal checks.");
-                return (glass.TemperatureK[0], glass.TemperatureK[1], gasK, liquid, production);
+                return (glass.TemperatureK[0], glass.TemperatureK[1], gasK, liquid, ledger.EnergyOutJ, production);
             }
 
             double Recover(double target, Func<double, double> enthalpy)
