@@ -498,6 +498,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
             readbackPending = true;
             float floor = fluid.beakerCollision.w;
+            float glassFloor = fluid.beakerGlassFloorY;
+            float graduationRadius = (float)geometry.innerRadiusM;
             float rim = fluid.beakerRimY;
             float radius = fluid.beakerCollision.z;
             AsyncGPUReadback.Request(fluid.positionBuffer, result =>
@@ -513,6 +515,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 int nonfinite = 0, outsideBelowRim = 0, inside = 0;
                 float lowY = float.PositiveInfinity, radialExtent = 0;
                 var positions = result.GetData<Vector3>();
+                var centralHeights = new System.Collections.Generic.List<float>();
                 foreach (var p in positions)
                 {
                     if (!SiUnits.IsFinite(p.x) || !SiUnits.IsFinite(p.y) || !SiUnits.IsFinite(p.z))
@@ -526,11 +529,25 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     if (p.y < rim && (p.y < floor - .00001f || radial > radius + .00001f))
                         outsideBelowRim++;
                     else if (p.y < rim)
+                    {
                         inside++;
+                        if (radial < radius * .5f)
+                            centralHeights.Add(p.y - glassFloor);
+                    }
                 }
                 float containedMl = releaseVolumeMl * inside / positions.Length;
                 evidence = FormattableString.Invariant(
                     $"{timing} · {containedMl:F1} mL represented by {inside} particles inside the beaker · {positions.Length} particles · {nonfinite} nonfinite · {outsideBelowRim} outside below rim · lowest Y {lowY * 1000:F2} mm · radial extent {radialExtent * 1000:F2} mm");
+                if (centralHeights.Count > 0)
+                {
+                    centralHeights.Sort();
+                    // Use the upper 1% boundary near the centre to reject isolated spray.
+                    float depth = centralHeights[Mathf.FloorToInt(.99f * (centralHeights.Count - 1))];
+                    float area = Mathf.PI * graduationRadius * graduationRadius;
+                    float expectedDepth = containedMl * 1e-6f / area;
+                    evidence += FormattableString.Invariant(
+                        $" · central particle depth (99th percentile) {depth * 1000:F1} mm · expected graduation depth {expectedDepth * 1000:F1} mm");
+                }
                 Debug.Log(evidence, this);
             });
         }
