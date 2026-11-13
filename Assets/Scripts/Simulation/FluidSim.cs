@@ -96,6 +96,8 @@ namespace Seb.Fluid.Simulation
 		public ComputeBuffer LiquidFraction { get; private set; }
 		float[] initialLiquidFraction;
 		int sortLiquidMassKernel, copyLiquidMassKernel;
+		[HideInInspector] public float liquidThermalDiffusivity;
+		int sumThermalKernel, diffuseHeatKernel, commitHeatKernel;
 		ComputeBuffer sortedTemperature;
 		float[] initialTemperature;
 		int activeReorderKernel = reorderKernel, activeCopyBackKernel = reorderCopybackKernel;
@@ -207,6 +209,23 @@ namespace Seb.Fluid.Simulation
 					compute.SetBuffer(kernel, "LiquidFraction", LiquidFraction);
 					compute.SetBuffer(kernel, "SortedLiquidFraction", sortedFraction);
 				}
+			}
+
+			if (transportTemperature && liquidThermalDiffusivity > 0)
+			{
+				sumThermalKernel = compute.FindKernel("SumThermalNeighbours");
+				diffuseHeatKernel = compute.FindKernel("DiffuseLiquidHeat");
+				commitHeatKernel = compute.FindKernel("CommitLiquidHeat");
+				var weights = CreateStructuredBuffer<float>(numParticles);
+				bufferNameLookup.Add(weights, "ThermalNeighbourWeight");
+				foreach (int kernel in new[] { sumThermalKernel, diffuseHeatKernel })
+					SetBuffers(compute, kernel, bufferNameLookup, new[] { weights, LiquidFraction,
+						predictedPositionsBuffer, spatialHash.SpatialKeys, spatialHash.SpatialOffsets });
+				compute.SetBuffer(diffuseHeatKernel, "TemperatureRise", TemperatureRise);
+				compute.SetBuffer(diffuseHeatKernel, "SortedTemperatureRise", sortedTemperature);
+				compute.SetBuffer(commitHeatKernel, "TemperatureRise", TemperatureRise);
+				compute.SetBuffer(commitHeatKernel, "SortedTemperatureRise", sortedTemperature);
+				compute.SetFloat("LiquidThermalDiffusivity", liquidThermalDiffusivity);
 			}
 
 			// Set buffer data
@@ -414,6 +433,12 @@ namespace Seb.Fluid.Simulation
 			}
 			Dispatch(compute, positionBuffer.count, kernelIndex: activeReorderKernel);
 			Dispatch(compute, positionBuffer.count, kernelIndex: activeCopyBackKernel);
+			if (commitHeatKernel != 0)
+			{
+				Dispatch(compute, positionBuffer.count, kernelIndex: sumThermalKernel);
+				Dispatch(compute, positionBuffer.count, kernelIndex: diffuseHeatKernel);
+				Dispatch(compute, positionBuffer.count, kernelIndex: commitHeatKernel);
+			}
 
 			Dispatch(compute, positionBuffer.count, kernelIndex: densityKernel);
 			Dispatch(compute, positionBuffer.count, kernelIndex: pressureKernel);
