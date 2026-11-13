@@ -49,6 +49,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
             thermalReferenceK + (enthalpyJ / massKg - InitialLiquidEnthalpyJ / InitialLiquidMassKg) /
                 LiquidSpecificHeatJkgK;
 
+        public double RoomHeatJ { get; private set; }
+        private double[] roomConductance;
         public double ThermalResidualJ { get; private set; }
         private BeakerSolidMesh thermalMesh;
         private SolidConduction glass;
@@ -135,16 +137,27 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return c < 0 ? 0 : State.LiquidM3[c] / Plan.Volumes[c];
         }
 
-        public void EnableFloorHeating(double initialTemperatureK, double? glassTemperatureK = null)
+        public void EnableFloorHeating(double initialTemperatureK, double? glassTemperatureK = null, double roomFilmWm2K = 0)
         {
             if (Steps != 0 || glass != null) throw new InvalidOperationException("Enable heating before the first step.");
             var input = GeometryInputsForPreview();
+            if (!SiUnits.IsFinite(roomFilmWm2K) || roomFilmWm2K < 0 || roomFilmWm2K > 30)
+                throw new ArgumentOutOfRangeException(nameof(roomFilmWm2K));
             thermalReferenceK = initialTemperatureK;
             initialGlassTemperatureK = glassTemperatureK ?? initialTemperatureK;
             thermalMesh = new BeakerSolidMesh(input);
             glass = new SolidConduction(thermalMesh.CapacityJPerK,
                 Enumerable.Repeat(initialGlassTemperatureK, thermalMesh.CapacityJPerK.Length).ToArray(), thermalMesh.Faces);
             glassPower = new double[thermalMesh.CapacityJPerK.Length];
+            var exposedArea = (double[])thermalMesh.ExposedAreaM2.Clone();
+            // Cavity faces exchange heat with the contents. The room film is external.
+            for (int ring = 0; ring < BeakerSolidMesh.InnerRadialCells; ring++)
+                exposedArea[(ring + 1) * BeakerSolidMesh.BaseDepthCells - 1] = 0;
+            for (int cell = thermalMesh.LowerWall; cell < thermalMesh.Ring; cell += BeakerSolidMesh.WallRadialCells)
+                exposedArea[cell] = Math.Max(0, exposedArea[cell] -
+                    2 * Math.PI * input.innerRadiusM * input.cavityHeightM /
+                    ((thermalMesh.Ring - thermalMesh.LowerWall) / BeakerSolidMesh.WallRadialCells));
+            roomConductance = exposedArea.Select(area => area * roomFilmWm2K).ToArray();
             var grid = Geometry.Grid;
             double floor = input.externalBaseHeightM + input.baseThicknessM;
             int j = (int)Math.Ceiling((floor - grid.Frame.Origin.Y) / grid.Spacing.Y);
@@ -168,7 +181,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
         {
             const double liquidConductivity = .6, glassConductivity = 1.2;
             var input = GeometryInputsForPreview();
-            for (int i = 0; i < glassPower.Length; i++) glassPower[i] = watts * thermalMesh.BurnerWeights[i];
+            double roomPower = 0;
+            for (int i = 0; i < glassPower.Length; i++)
+            {
+                double lossW = roomConductance[i] * (glass.TemperatureK[i] - thermalReferenceK);
+                glassPower[i] = watts * thermalMesh.BurnerWeights[i] - lossW;
+                roomPower += lossW;
+            }
             double heat = 0;
             // Cell-centre floor contact with a volume-fraction estimate of wet area.
             foreach (var contact in floorContacts)
@@ -192,10 +211,11 @@ namespace PhysicsSim.ThreePhase3D.Flow
             }
             glass.Step(dt, glassPower);
             LiquidHeatJ += heat;
+            RoomHeatJ += roomPower * dt;
             burnerEnergyJ += watts * thermalMesh.BurnerWeights.Sum() * dt;
             double glassStored = glass.TemperatureK.Select((temperature, i) =>
                 (temperature - initialGlassTemperatureK) * thermalMesh.CapacityJPerK[i]).Sum();
-            ThermalResidualJ = fields.LiquidEnergyJ.Sum() - InitialLiquidEnthalpyJ + glassStored - burnerEnergyJ;
+            ThermalResidualJ = fields.LiquidEnergyJ.Sum() - InitialLiquidEnthalpyJ + glassStored + RoomHeatJ - burnerEnergyJ;
         }
 
         public void Step(Func<CutCellInventories, FlowStep, CutCellCoupledStep> advance, double burnerWatts = 0)
