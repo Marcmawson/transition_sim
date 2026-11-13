@@ -6,6 +6,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     [RequireComponent(typeof(Beaker3DSetup))]
     public sealed class BeakerRenderMockup : MonoBehaviour
     {
+        internal const int MaxMarkedVolumeMl = 250;
+
         private readonly List<Material> materials = new List<Material>();
         private GameObject stage;
         private Mesh detailedGlass;
@@ -338,7 +340,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             glass.sharedMesh = detailedGlass;
 
             float labelAngle = -.85f;
-            for (int millilitres = 25; millilitres <= 250; millilitres += 25)
+            for (int millilitres = 25; millilitres <= MaxMarkedVolumeMl; millilitres += 25)
             {
                 float y = floor + millilitres * 1e-6f / (Mathf.PI * Mathf.Pow((float)geometry.innerRadiusM, 2));
                 bool major = millilitres % 50 == 0;
