@@ -82,6 +82,18 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             transform.position += Vector3.ClampMagnitude(movement, 1f) * (speed * Mathf.Min(Time.unscaledDeltaTime, .1f));
         }
 
+        public void FrameRelease(Vector3 target, float height)
+        {
+            ReleaseMouse();
+            IsUndersideView = false;
+            var rotation = homeRotation;
+            float distance = Mathf.Max(.18f, height / (2f * Mathf.Tan(homeFieldOfView * Mathf.Deg2Rad / 2f)) * 1.35f);
+            transform.SetPositionAndRotation(target - rotation * Vector3.forward * distance, rotation);
+            view.fieldOfView = homeFieldOfView;
+            view.orthographicSize = Mathf.Max(.08f, height * .68f);
+            SetLookAngles();
+        }
+
         public void ToggleUndersideView(float baseHeight, float outerRadius)
         {
             if (IsUndersideView)
