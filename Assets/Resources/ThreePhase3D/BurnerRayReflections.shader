@@ -6,13 +6,18 @@ Shader "PhysicsSim/BurnerRayReflections"
         _Metallic ("Metallic", Range(0,1)) = 1
         _Glossiness ("Smoothness", Range(0,1)) = .82
         _BumpMap ("Brushed grain", 2D) = "bump" {}
+        [HideInInspector] _BenchMin ("Bench min", Vector) = (0,0,0,0)
+        [HideInInspector] _BenchMax ("Bench max", Vector) = (0,0,0,0)
+        [HideInInspector] _GroundY ("Ground height", Float) = -.84
+        [HideInInspector] _BenchColour ("Bench colour", Color) = (1,1,1,1)
+        [HideInInspector] _GroundColour ("Ground colour", Color) = (1,1,1,1)
     }
 
     SubShader
     {
         Tags { "RenderType"="Opaque" }
         CGPROGRAM
-        #pragma surface surf Standard fullforwardshadows
+        #pragma surface surf Standard fullforwardshadows noforwardadd
         #pragma target 3.0
         #include "UnityCG.cginc"
 
@@ -20,6 +25,9 @@ Shader "PhysicsSim/BurnerRayReflections"
         half4 _Color;
         half _Metallic;
         half _Glossiness;
+        float3 _BenchMin, _BenchMax;
+        float _GroundY;
+        half4 _BenchColour, _GroundColour;
 
         struct Input
         {
@@ -28,23 +36,18 @@ Shader "PhysicsSim/BurnerRayReflections"
             INTERNAL_DATA
         };
 
-        // Trace against a finite rectangle in stage coordinates. The nearest hit wins.
-        float Panel(float3 origin, float3 ray, float3 centre, float2 halfSize, inout float nearest)
+        // Slab intersection in the same coordinates as the generated bench.
+        float BenchHit(float3 origin, float3 ray)
         {
-            float3 normal = normalize(centre);
-            float denominator = dot(ray, normal);
-            if (denominator <= 1e-5) return 0;
-            float distance = dot(centre - origin, normal) / denominator;
-            if (distance <= 0 || distance >= nearest) return 0;
-
-            float3 right = normalize(cross(float3(0, 1, 0), normal));
-            float3 up = cross(normal, right);
-            float3 offset = origin + distance * ray - centre;
-            float2 uv = abs(float2(dot(offset, right), dot(offset, up))) / halfSize;
-            if (any(uv >= 1)) return 0;
-            nearest = distance;
-            float2 edge = 1 - smoothstep(.76, 1, uv);
-            return edge.x * edge.y;
+            float3 signRay = step(0, ray) * 2 - 1;
+            float3 inverseRay = signRay / max(abs(ray), 1e-6);
+            float3 a = (_BenchMin - origin) * inverseRay;
+            float3 b = (_BenchMax - origin) * inverseRay;
+            float3 lo = min(a, b);
+            float3 hi = max(a, b);
+            float entry = max(max(lo.x, lo.y), lo.z);
+            float exit = min(min(hi.x, hi.y), hi.z);
+            return exit >= max(entry, .0001) && entry > .0001 ? entry : 1e6;
         }
 
         void surf(Input input, inout SurfaceOutputStandard output)
@@ -61,28 +64,17 @@ Shader "PhysicsSim/BurnerRayReflections"
             float3 origin = mul(unity_WorldToObject, float4(input.worldPos, 1)).xyz;
             float3 ray = normalize(mul((float3x3)unity_WorldToObject, reflected));
 
-            // Clip reflections at the worktop and at the back wall approximation.
-            float nearest = 100;
-            if (ray.y < -1e-5)
-            {
-                float distance = -origin.y / ray.y;
-                float3 hit = origin + ray * distance;
-                if (distance > 0 && abs(hit.x) <= 4 && hit.z >= -4 && hit.z <= .55)
-                    nearest = distance;
-            }
-            if (ray.z > 1e-5)
-            {
-                float distance = (.91 - origin.z) / ray.z;
-                float3 hit = origin + ray * distance;
-                if (distance > 0 && abs(hit.x) <= 4 && hit.y >= .36 && hit.y <= 3)
-                    nearest = min(nearest, distance);
-            }
-
-            half3 reflection = 0;
-            float fill = Panel(origin, ray, float3(.33, .20, .45), float2(.09, .27), nearest);
-            reflection = lerp(reflection, half3(.28,.36,.51), fill);
-            float window = Panel(origin, ray, float3(-.45, .30, -.40), float2(.13, .29), nearest);
-            reflection = lerp(reflection, half3(.76,.64,.47), window);
+            float benchDistance = BenchHit(origin, ray);
+            float groundDistance = ray.y < -1e-5 ? (_GroundY - origin.y) / ray.y : 1e6;
+            float2 floorPoint = origin.xz + ray.xz * groundDistance;
+            bool hitsGround = groundDistance > 0 && groundDistance < 1e6 && all(abs(floorPoint) <= 16);
+            half3 reflection;
+            if (benchDistance < (hitsGround ? groundDistance : 1e6))
+                reflection = _BenchColour.rgb * .45;
+            else if (hitsGround)
+                reflection = _GroundColour.rgb * .42;
+            else
+                reflection = lerp(half3(.47,.59,.75), half3(.14,.32,.62), saturate(ray.y)) * .42;
             output.Emission = reflection * _Color.rgb * _Metallic;
         }
         ENDCG

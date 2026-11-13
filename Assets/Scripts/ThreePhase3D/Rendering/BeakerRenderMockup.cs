@@ -11,7 +11,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly List<Material> materials = new List<Material>();
         private GameObject stage;
         private Mesh detailedGlass;
-        private Mesh backdrop;
         private Mesh cylinder;
         private readonly List<Texture2D> metalNormals = new List<Texture2D>();
         private Transform flameCore, flameSheath;
@@ -50,7 +49,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 renderer.GetComponent<MeshFilter>().sharedMesh = cylinder;
             }
 
-            BuildDaylightStage();
+            BuildDaylightStage(steel);
             BuildBurner(steel, iron);
 
             flameSheath = Flame("Blue flame envelope", new Color(.04f, .24f, 1f, .32f), .006f, .034f);
@@ -238,51 +237,65 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
         }
 
-        private void BuildDaylightStage()
+        private void BuildDaylightStage(Material steel)
         {
-            var surface = CreateMaterial(new Color(.35f, .41f, .39f), 0, .2f);
-            // The worktop bends into the rear wall, so the camera sees a
-            // continuous surface through the glass and around the tripod.
-            const int segments = 24;
-            const float radius = .36f;
-            var profile = new List<Vector2> { new Vector2(-4, 0), new Vector2(.55f, 0) };
-            for (int row = 1; row <= segments; row++)
+            const float groundY = -.84f;
+            var benchSize = new Vector3(1.28f, .055f, .66f);
+            var benchCentre = new Vector3(0, -benchSize.y * .5f, 0);
+            var timber = CreateMaterial(new Color(.47f, .29f, .15f), 0, .28f);
+            var frame = CreateMaterial(new Color(.11f, .13f, .12f), .65f, .35f);
+            var paving = CreateMaterial(new Color(.56f, .55f, .51f), 0, .18f);
+            Box("Timber bench top", benchCentre, benchSize, timber);
+            for (int x = -1; x <= 1; x += 2)
+            for (int z = -1; z <= 1; z += 2)
+                Box("Bench leg", new Vector3(x * .55f, (groundY - benchSize.y) * .5f, z * .26f),
+                    new Vector3(.055f, -groundY - benchSize.y, .055f), frame);
+            for (int z = -1; z <= 1; z += 2)
+                Box("Bench crossbar", new Vector3(0, -.105f, z * .26f), new Vector3(1.1f, .075f, .035f), frame);
+            Box("Outdoor concrete floor", new Vector3(0, groundY - .06f, 0), new Vector3(32, .12f, 32), paving);
+
+            if (steel.HasProperty("_GroundY"))
             {
-                float angle = .5f * Mathf.PI * row / segments;
-                profile.Add(new Vector2(.55f + radius * Mathf.Sin(angle), radius * (1 - Mathf.Cos(angle))));
-            }
-            profile.Add(new Vector2(.55f + radius, 3));
-
-            var vertices = new List<Vector3>();
-            var triangles = new List<int>();
-            for (int row = 0; row < profile.Count; row++)
-            {
-                Vector2 point = profile[row];
-                vertices.Add(new Vector3(-4, point.y, point.x));
-                vertices.Add(new Vector3(4, point.y, point.x));
-                if (row == 0) continue;
-                int a = 2 * (row - 1);
-                triangles.AddRange(new[] { a, a + 2, a + 1, a + 1, a + 2, a + 3 });
+                steel.SetFloat("_GroundY", groundY);
+                steel.SetVector("_BenchMin", benchCentre - benchSize * .5f);
+                steel.SetVector("_BenchMax", benchCentre + benchSize * .5f);
+                steel.SetColor("_BenchColour", timber.color);
+                steel.SetColor("_GroundColour", paving.color);
             }
 
-            backdrop = new Mesh { name = "Curved worktop and backdrop" };
-            backdrop.SetVertices(vertices);
-            backdrop.SetTriangles(triangles, 0);
-            backdrop.RecalculateNormals();
-            backdrop.RecalculateBounds();
-            var sweep = new GameObject("Sage backdrop");
-            sweep.transform.SetParent(stage.transform, false);
-            sweep.AddComponent<MeshFilter>().sharedMesh = backdrop;
-            sweep.AddComponent<MeshRenderer>().sharedMaterial = surface;
-
-            var sun = new GameObject("Window sunlight").AddComponent<Light>();
+            var sun = new GameObject("Direct sunlight").AddComponent<Light>();
             sun.transform.SetParent(stage.transform, false);
-            sun.transform.localRotation = Quaternion.LookRotation(new Vector3(.65f, -.55f, .75f));
+            sun.transform.localRotation = Quaternion.LookRotation(new Vector3(.45f, -.78f, .43f));
             sun.type = LightType.Directional;
-            sun.color = new Color(1, .92f, .79f);
-            sun.intensity = 1.15f;
-            sun.shadows = LightShadows.Soft;
-            sun.shadowStrength = .75f;
+            sun.color = new Color(1, .95f, .85f);
+            sun.intensity = 1.25f;
+            sun.shadows = LightShadows.Hard;
+            sun.shadowStrength = .9f;
+
+            var skyShader = Shader.Find("Skybox/Procedural");
+            if (skyShader != null)
+            {
+                var sky = new Material(skyShader);
+                materials.Add(sky);
+                var camera = Camera.main;
+                if (camera != null)
+                {
+                    camera.clearFlags = CameraClearFlags.Skybox;
+                    camera.gameObject.AddComponent<Skybox>().material = sky;
+                }
+                RenderSettings.sun = sun;
+            }
+        }
+
+        private void Box(string label, Vector3 centre, Vector3 size, Material material)
+        {
+            var box = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            box.name = label;
+            box.transform.SetParent(stage.transform, false);
+            box.transform.localPosition = centre;
+            box.transform.localScale = size;
+            box.GetComponent<MeshRenderer>().sharedMaterial = material;
+            Destroy(box.GetComponent<Collider>());
         }
 
         private void DetailBeaker(Beaker3DSetup setup)
@@ -291,7 +304,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             foreach (var candidate in setup.GetComponentsInChildren<MeshFilter>())
                 if (candidate.gameObject.name == "Glass beaker") glass = candidate;
             if (glass == null) return;
-            glass.GetComponent<MeshRenderer>().sharedMaterial.SetFloat("_StudioReflections", 1);
+            glass.GetComponent<MeshRenderer>().sharedMaterial.SetFloat("_StudioReflections", 0);
 
             var geometry = setup.scenario.physical.geometry;
             float rim = (float)geometry.RimHeightM;
@@ -413,7 +426,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             if (stage != null) Destroy(stage);
             if (detailedGlass != null) Destroy(detailedGlass);
-            if (backdrop != null) Destroy(backdrop);
             if (cylinder != null) Destroy(cylinder);
             foreach (var mesh in flameMeshes) Destroy(mesh);
             foreach (var mesh in burnerMeshes) Destroy(mesh);

@@ -24,7 +24,7 @@ RenderSettings:
   m_AmbientEquatorColor: {r: 0.114, g: 0.125, b: 0.133, a: 1}
   m_AmbientGroundColor: {r: 0.047, g: 0.043, b: 0.035, a: 1}
   m_AmbientIntensity: 1
-  m_AmbientMode: 3
+  m_AmbientMode: 1
   m_SubtractiveShadowColor: {r: 0.42, g: 0.478, b: 0.627, a: 1}
   m_SkyboxMaterial: {fileID: 0}
   m_HaloStrength: 0.5
@@ -292,7 +292,7 @@ MonoBehaviour:
   particleShader: {fileID: 4800000, guid: 13de1318fe7184e48bdf807b928b641b, type: 3}
   largerBeaker: 0
   solverTimestep: 400
-  gravity: 0
+  gravity: 9.81
   particleDensityMultiplier: 1.5
   surfaceShader: {fileID: 4800000, guid: 7e91d02de256491986dbc6cd241213cb, type: 3}
   surfaceArguments: {fileID: 7200000, guid: 4cfa81b3afd387a48959c41b5ef371b0, type: 3}
@@ -342,7 +342,7 @@ Light:
   m_Type: 1
   m_Shape: 0
   m_Color: {r: 1, g: 0.96, b: 0.9, a: 1}
-  m_Intensity: 0.4
+  m_Intensity: 0
   m_Range: 2
   m_SpotAngle: 80
   m_InnerSpotAngle: 60
@@ -409,7 +409,7 @@ Light:
   m_Type: 1
   m_Shape: 0
   m_Color: {r: 0.93, g: 0.96, b: 1, a: 1}
-  m_Intensity: 0.32
+  m_Intensity: 0
   m_Range: 2
   m_SpotAngle: 80
   m_InnerSpotAngle: 60
