@@ -447,8 +447,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (movingHeat != null)
                 {
                     double solid = movingHeat.SampledSolidJ, water = movingHeat.SampledWaterJ;
-                    GUILayout.Label($"Absorbed {movingHeat.SampledInputJ:F4} J · Accounted {solid + water + movingHeat.VapourLatentHeatJ + movingHeat.VapourSensibleHeatJ:F4} J");
-                    GUILayout.Label($"Entropy change {movingHeat.SampledStoredEntropyJPerK:G4} J/K · Inferred production {movingHeat.SampledProducedEntropyJPerK:G4} J/K");
+                    GUILayout.Label($"Absorbed {movingHeat.SampledInputJ:F4} J · Stored in glass and liquid {solid + water:F4} J");
+                    GUILayout.Label($"Heat to room {movingHeat.SampledRoomHeatJ:F4} J");
+                    GUILayout.Label($"Entropy change {movingHeat.SampledStoredEntropyJPerK:G4} J/K · (glass and liquid only)");
                     GUILayout.Label($"Solids {solid:F4} J · Water {water:F4} J");
                     GUILayout.Label(movingHeat.FlowDescription);
                     if (showBoiling)

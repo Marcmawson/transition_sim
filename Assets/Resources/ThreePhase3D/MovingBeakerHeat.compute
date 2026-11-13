@@ -117,6 +117,9 @@ void ReduceRingHeat(uint3 group : SV_GroupID, uint lane : SV_GroupIndex)
     if (lane == 0) RingGain[group.x] = partial[0];
 }
 
+StructuredBuffer<float> RoomConductance;
+RWStructuredBuffer<float> RoomHeatJ;
+
 [numthreads(64,1,1)]
 void ConductGlass(uint3 id : SV_DispatchThreadID)
 {
@@ -130,6 +133,9 @@ void ConductGlass(uint3 id : SV_DispatchThreadID)
         Link link = FaceLinks[i];
         power += link.Conductance * (GlassRead[link.Other] - rise);
     }
+    float roomPower = RoomConductance[cell] * rise;
+    RoomHeatJ[cell] += Dt * roomPower;
+    power -= roomPower;
     uint ring = cell / BaseDepth;
     float loss = cell % BaseDepth == BaseDepth - 1 && ring < RingCount ? RingGain[ring] : 0;
     GlassWrite[cell] = rise + (Dt * power - loss) / GlassCapacity[cell];
