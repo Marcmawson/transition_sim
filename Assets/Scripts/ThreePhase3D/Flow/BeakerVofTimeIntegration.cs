@@ -38,7 +38,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
         private BeakerSolidMesh thermalMesh;
         private SolidConduction glass;
         private double[] glassPower;
-        private double thermalReferenceK, burnerEnergyJ, floorLiquidDistanceM;
+        private double thermalReferenceK, burnerEnergyJ, floorLiquidDistanceM, initialGlassTemperatureK;
         private (int Group, int Glass, double Area)[] floorContacts;
         public double LiquidDriftM3 => State.LiquidM3.Sum() - InitialLiquidVolumeM3;
         public double MaxDualMassErrorKg { get; private set; }
@@ -120,14 +120,15 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return c < 0 ? 0 : State.LiquidM3[c] / Plan.Volumes[c];
         }
 
-        public void EnableFloorHeating(double initialTemperatureK)
+        public void EnableFloorHeating(double initialTemperatureK, double? glassTemperatureK = null)
         {
             if (Steps != 0 || glass != null) throw new InvalidOperationException("Enable heating before the first step.");
             var input = GeometryInputsForPreview();
             thermalReferenceK = initialTemperatureK;
+            initialGlassTemperatureK = glassTemperatureK ?? initialTemperatureK;
             thermalMesh = new BeakerSolidMesh(input);
             glass = new SolidConduction(thermalMesh.CapacityJPerK,
-                Enumerable.Repeat(initialTemperatureK, thermalMesh.CapacityJPerK.Length).ToArray(), thermalMesh.Faces);
+                Enumerable.Repeat(initialGlassTemperatureK, thermalMesh.CapacityJPerK.Length).ToArray(), thermalMesh.Faces);
             glassPower = new double[thermalMesh.CapacityJPerK.Length];
             var grid = Geometry.Grid;
             double floor = input.externalBaseHeightM + input.baseThicknessM;
@@ -179,7 +180,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             LiquidHeatJ += heat;
             burnerEnergyJ += watts * thermalMesh.BurnerWeights.Sum() * dt;
             double glassStored = glass.TemperatureK.Select((temperature, i) =>
-                (temperature - thermalReferenceK) * thermalMesh.CapacityJPerK[i]).Sum();
+                (temperature - initialGlassTemperatureK) * thermalMesh.CapacityJPerK[i]).Sum();
             ThermalResidualJ = fields.LiquidEnergyJ.Sum() - InitialLiquidEnthalpyJ + glassStored - burnerEnergyJ;
         }
 
