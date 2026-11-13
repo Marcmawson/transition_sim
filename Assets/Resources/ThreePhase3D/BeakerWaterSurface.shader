@@ -11,12 +11,14 @@ Shader "PhysicsSim/BeakerWaterSurface"
 
 		Pass
 		{
+			Tags { "LightMode"="ForwardBase" }
 			ZWrite On
 			CGPROGRAM
 			#pragma target 4.5
 			#pragma vertex vert
 			#pragma fragment frag
 			#include "UnityCG.cginc"
+			#include "UnityLightingCommon.cginc"
 
 			struct v2f
 			{
@@ -56,17 +58,36 @@ Shader "PhysicsSim/BeakerWaterSurface"
 			{
 				float3 n = normalize(i.normal);
                 float3 view = normalize(_WorldSpaceCameraPos - i.world);
-                float fresnel = .02 + .98 * pow(1 - saturate(dot(n, view)), 5);
-                float3 light = normalize(float3(-.65, .75, -.75));
-                float spec = pow(saturate(dot(n, normalize(light + view))), 96);
+                const float waterIndex = 1.333;
+                const float normalReflectance = .02037;
+                float fresnel = normalReflectance + (1 - normalReflectance)
+                    * pow(1 - saturate(dot(n, view)), 5);
+                float3 reflected = reflect(-view, n);
+                float3 sky = lerp(float3(.72, .81, .91), float3(.18, .39, .71),
+                    saturate(reflected.y));
+                float3 environment = lerp(float3(.25, .21, .16), sky,
+                    smoothstep(-.09, .04, reflected.y));
+
+                // Widen the sun glint by the pixel footprint to limit sparkle on moving triangles.
+                float3 toSun = normalize(_WorldSpaceLightPos0.xyz);
+                float sunAlignment = saturate(dot(reflected, toSun));
+                float feather = max(fwidth(sunAlignment), .0001);
+                float sunGlint = smoothstep(.9986 - feather, .9998 + feather, sunAlignment)
+                    * smoothstep(0, .05, dot(n, toSun));
+                environment += _LightColor0.rgb * sunGlint * 12;
                 // Use water's refractive index and approximate the refracted ray in screen space.
-                float3 transmitted = refract(-view, n, 1.0 / 1.333);
-                float4 grab = ComputeGrabScreenPos(UnityWorldToClipPos(
-                    i.world + (transmitted + view) * .012));
-                float3 background = tex2D(_BeakerWaterBackground, saturate(grab.xy / max(grab.w, 1e-5))).rgb;
+                float3 transmitted = refract(-view, n, 1.0 / waterIndex);
+                float4 baseGrab = ComputeGrabScreenPos(UnityWorldToClipPos(i.world));
+                float4 bentGrab = ComputeGrabScreenPos(UnityWorldToClipPos(
+                    i.world + (transmitted + view) * .018));
+                float2 uv = bentGrab.xy / max(bentGrab.w, 1e-5);
+                float2 edge = min(uv, 1 - uv);
+                float edgeFade = smoothstep(0, .025, min(edge.x, edge.y));
+                float3 background = tex2D(_BeakerWaterBackground,
+                    lerp(baseGrab.xy / max(baseGrab.w, 1e-5), uv, edgeFade)).rgb;
                 float3 transmission = lerp(float3(.99, .997, 1), float3(.045, .19, .58), saturate(col.a));
                 return float4(background * transmission * (1 - fresnel)
-                    + float3(.48, .55, .63) * fresnel + spec * .32, 1);
+                    + environment * fresnel, 1);
 			}
 
 			ENDCG
