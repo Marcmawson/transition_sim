@@ -30,6 +30,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
         public readonly double LiquidDensityKgM3;
         public double InitialLiquidMassKg => InitialLiquidVolumeM3 * LiquidDensityKgM3;
         public double TimeS { get; private set; }
+        public double InitialLiquidEnthalpyJ { get; }
+        public double LiquidEnthalpyDriftJ => State.LiquidEnergyJ.Sum() - InitialLiquidEnthalpyJ;
         public double LiquidDriftM3 => State.LiquidM3.Sum() - InitialLiquidVolumeM3;
         public double MaxDualMassErrorKg { get; private set; }
         public double MaxMomentumLedgerErrorKgMPerS { get; private set; }
@@ -42,7 +44,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
         };
 
         public BeakerVofTimeIntegration(PeriodicVofProjection.PressureSolve pressure = null)
-            : this(pressure, null, LiquidDensity, 0) { }
+            : this(pressure, null, LiquidDensity, 0, 0) { }
 
         public static BeakerVofTimeIntegration CreateRelease(double amount, bool specifiedByMass,
             double temperatureK, double pressurePa, double surfaceJitterM = 0)
@@ -53,11 +55,11 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 throw new ArgumentOutOfRangeException(nameof(surfaceJitterM));
             var water = new Water95().Evaluate(temperatureK, pressurePa, WaterBranch.Liquid);
             double density = water.DensityKgM3;
-            return new BeakerVofTimeIntegration(null, specifiedByMass ? amount / density : amount, density, surfaceJitterM);
+            return new BeakerVofTimeIntegration(null, specifiedByMass ? amount / density : amount, density, surfaceJitterM, water.EnthalpyJkg);
         }
 
         private BeakerVofTimeIntegration(PeriodicVofProjection.PressureSolve pressure, double? releaseVolumeM3,
-            double liquidDensityKgM3, double surfaceJitterM)
+            double liquidDensityKgM3, double surfaceJitterM, double liquidEnthalpyJkg)
         {
             LiquidDensityKgM3 = liquidDensityKgM3;
             var input = GeometryInputsForPreview();
@@ -80,7 +82,10 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 liquid = CreateCirculationVolumes(topology, input, loop, slice);
             }
             var gas = topology.Volumes.Select((v,c) => v-liquid[c]).ToArray();
-            State = new CutCellInventories(liquid,gas,new double[liquid.Length],new double[liquid.Length],new double[liquid.Length]);
+            // Advect the released liquid's thermal inventory with its volume.
+            var liquidEnthalpy = liquid.Select(volume => volume * liquidDensityKgM3 * liquidEnthalpyJkg).ToArray();
+            InitialLiquidEnthalpyJ = liquidEnthalpy.Sum();
+            State = new CutCellInventories(liquid, gas, liquidEnthalpy, new double[liquid.Length], new double[liquid.Length]);
             InitialLiquidVolumeM3 = liquid.Sum();
 
             Plan = new VariableCoefficientProjection(Geometry, BoundaryConditions3D.Closed, cell =>
@@ -116,6 +121,12 @@ namespace PhysicsSim.ThreePhase3D.Flow
             if (Math.Abs(trial.Transport.Fields.LiquidM3.Sum()-InitialLiquidVolumeM3) > 1e-12 ||
                 trial.Momentum.MaxDualMassErrorKg > 1e-10)
                 throw new InvalidOperationException("The beaker transport ledger did not close.");
+
+            // Closed, source-free transport conserves the liquid enthalpy tracer.
+            double enthalpyError = trial.Transport.Fields.LiquidEnergyJ.Sum() - InitialLiquidEnthalpyJ;
+            double enthalpyTolerance = Math.Max(1e-10, Math.Abs(InitialLiquidEnthalpyJ) * 1e-6);
+            if (!(Math.Abs(enthalpyError) <= enthalpyTolerance))
+                throw new InvalidOperationException($"The beaker liquid enthalpy ledger did not close: {enthalpyError:E3} J.");
 
             var prior = new double[3];
             var transported = new double[3];
