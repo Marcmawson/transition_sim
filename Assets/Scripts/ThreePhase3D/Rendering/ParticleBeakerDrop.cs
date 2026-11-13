@@ -104,7 +104,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         [SerializeField] private bool spawnIce;
         private Rigidbody ice;
         private Scene icePhysicsScene;
-        private const double IceContactInterval = .002;
         private bool hasWater, samplingWaterline;
         private int waterlineVersion, waterBatches;
         private float waterline, sampledWaterline, nextWaterlineSample, waterVolumeMl, activeIceFraction;
@@ -377,11 +376,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (steps == 0) return;
             if (ice != null)
             {
-                int contactSteps = Math.Max(1, (int)Math.Round(IceContactInterval / stepSeconds));
-                for (int remaining = steps; remaining > 0;)
+                float dt = (float)stepSeconds;
+                for (int remaining = steps; remaining > 0; remaining--)
                 {
-                    int batch = Math.Min(remaining, contactSteps);
-                    float dt = (float)(batch * stepSeconds);
                     if (ice != null)
                     {
                         ApplyIceForces(dt);
@@ -391,10 +388,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     UpdateIceWaterContact();
                     if (hasWater)
                     {
-                        AdvanceDrop(stepSeconds, batch, remaining == batch);
-                        solverSteps += batch;
+                        AdvanceDrop(stepSeconds, 1, remaining == 1);
+                        solverSteps++;
                     }
-                    remaining -= batch;
                 }
             }
             else if (hasWater)
@@ -595,10 +591,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 iceContactMaterial = new PhysicMaterial("Ice on glass")
                 {
-                    bounciness = .42f,
+                    bounciness = .52f,
                     bounceCombine = PhysicMaterialCombine.Maximum,
-                    staticFriction = .18f,
-                    dynamicFriction = .12f,
+                    staticFriction = .14f,
+                    dynamicFriction = .09f,
                     frictionCombine = PhysicMaterialCombine.Minimum
                 };
             }

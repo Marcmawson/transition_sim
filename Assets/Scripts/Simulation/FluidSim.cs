@@ -613,12 +613,20 @@ namespace Seb.Fluid.Simulation
 		void ReleaseParticleBuffers()
 		{
 			if (bufferNameLookup != null)
-			foreach (var kvp in bufferNameLookup)
 			{
-				Release(kvp.Key);
+				foreach (var buffer in bufferNameLookup.Keys)
+				{
+					// SpatialHash owns these buffers and releases them together with its sorter.
+					if (spatialHash != null && (buffer == spatialHash.SpatialKeys ||
+						buffer == spatialHash.SpatialOffsets || buffer == spatialHash.SpatialIndices))
+						continue;
+					Release(buffer);
+				}
+				bufferNameLookup = null;
 			}
 
 			spatialHash?.Release();
+			spatialHash = null;
 		}
 
 		void OnDestroy()
