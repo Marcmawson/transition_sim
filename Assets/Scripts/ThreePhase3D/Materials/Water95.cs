@@ -72,7 +72,8 @@ namespace PhysicsSim.ThreePhase3D.Materials
                 Jet2 lf=Helmholtz(new Jet2(t,1),new Jet2(rl,0,1)),vf=Helmholtz(new Jet2(t,1),new Jet2(rv,0,1));
                 double lp=rl*rl*lf.Y,vp=rv*rv*vf.Y;
                 double fp=lp-vp,fg=lf.V+rl*lf.Y-vf.V-rv*vf.Y;
-                if(Math.Abs(fp)<Math.Max(2e-5,1e-10*vp)&&Math.Abs(fg)<2e-7)return new SaturationState(ReferenceRhoT(t,rl),ReferenceRhoT(t,rv));
+                // Dense-liquid pressure can oscillate at the cancellation floor.
+                if(Math.Abs(fp)<Math.Max(1e-4,1e-10*vp)&&Math.Abs(fg)<2e-7)return new SaturationState(ReferenceRhoT(t,rl),ReferenceRhoT(t,rv));
                 double ld=2*rl*lf.Y+rl*rl*lf.YY,vd=2*rv*vf.Y+rv*rv*vf.YY;
                 double a=rl*ld,b=-rv*vd,c=ld,d=-vd,det=a*d-b*c;
                 double dl=(-fp*d+b*fg)/det,dv=(-a*fg+c*fp)/det;

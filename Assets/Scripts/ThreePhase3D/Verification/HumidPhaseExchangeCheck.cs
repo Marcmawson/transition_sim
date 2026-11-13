@@ -9,9 +9,83 @@ namespace PhysicsSim.ThreePhase3D.Verification
 {
     public static class HumidPhaseExchangeCheck
     {
+        private static void CheckFiniteWallCondensation(Action<string> log)
+        {
+            const double pressure = 101325, initialWall = 283.15, initialGas = 293.15;
+            const double dryAir = 1e-5, wallCapacity = 0.02, area = 1e-4, film = 0.001;
+            var humid = new HumidGas();
+            var water = new Water95();
+            double fraction = 0.85 * humid.EquilibriumWithLiquid(initialGas, pressure).WaterMassFraction;
+            double initialVapour = dryAir * fraction / (1 - fraction);
+            var gas = humid.ReferenceTp(initialGas, pressure, fraction);
+            double initialEnergy = (dryAir + initialVapour) * gas.EnthalpyJkg;
+            double initialEntropy = (dryAir + initialVapour) * gas.EntropyJkgK;
+            var coarse = Run(8);
+            var fine = Run(16);
+            var reference = Run(32);
+            if (Math.Abs(fine.Wall - reference.Wall) >= Math.Abs(coarse.Wall - reference.Wall))
+                throw new InvalidOperationException("Finite-wall condensation did not refine with timestep.");
+            log(FormattableString.Invariant(
+                $"S12 finite-wall condensation passed: wall {reference.Wall:F6} K, gas {reference.Gas:F6} K, condensate {reference.Mass:G8} kg, entropy produced {reference.Entropy:G8} J/K."));
+
+            (double Wall, double Gas, double Mass, double Entropy) Run(int steps)
+            {
+                double wallK = initialWall, gasK = initialGas, vapour = initialVapour;
+                double liquid = 0, gasEnergy = initialEnergy, wallEnergy = 0, production = 0;
+                for (int step = 0; step < steps; step++)
+                {
+                    var solved = HumidInterfaceFlux.SolveTemperature(pressure, vapour / (dryAir + vapour),
+                        film, wallK, gasK, 1000, 25, 283.15, 298.15);
+                    var transfer = HumidInterfaceFlux.InventoryTransfer(solved, area, 0.2 / steps, liquid, vapour);
+                    if (!(transfer.WaterKg < 0))
+                        throw new InvalidOperationException("Finite-wall fixture stopped condensing.");
+                    vapour += transfer.WaterKg;
+                    liquid -= transfer.WaterKg;
+                    gasEnergy += transfer.GasEnthalpyJ;
+                    wallEnergy += transfer.LiquidEnthalpyJ;
+                    double mass = dryAir + vapour;
+                    double humidity = vapour / mass;
+                    gasK = Recover(gasEnergy, t => mass * humid.ReferenceTp(t, pressure, humidity).EnthalpyJkg);
+                    wallK = Recover(wallEnergy, t => wallCapacity * (t - initialWall) +
+                        liquid * water.Evaluate(t, pressure, WaterBranch.Liquid).EnthalpyJkg);
+                    var gasState = humid.ReferenceTp(gasK, pressure, humidity);
+                    var liquidState = water.Evaluate(wallK, pressure, WaterBranch.Liquid);
+                    Near(Math.Abs(vapour + liquid - initialVapour), 1e-18);
+                    Near(Math.Abs(mass * gasState.EnthalpyJkg + liquid * liquidState.EnthalpyJkg +
+                        wallCapacity * (wallK - initialWall) - initialEnergy), 1e-10);
+                    var storage = new EntropyInventory();
+                    storage.AddMaterial(mass, gasState);
+                    storage.AddMaterial(liquid, liquidState);
+                    storage.AddSensibleStorage(wallCapacity, wallK, initialWall);
+                    double nextProduction = storage.TotalJPerK - initialEntropy;
+                    if (!(nextProduction >= production - 1e-12))
+                        throw new InvalidOperationException("Finite-wall condensation entropy decreased.");
+                    production = nextProduction;
+                }
+                if (!(wallK > initialWall && gasK < initialGas && production > 0))
+                    throw new InvalidOperationException("Finite-wall condensation failed its thermal checks.");
+                return (wallK, gasK, liquid, production);
+            }
+
+            double Recover(double target, Func<double, double> enthalpy)
+            {
+                double low = 283.15, high = 298.15;
+                if (!(target >= enthalpy(low) && target <= enthalpy(high)))
+                    throw new InvalidOperationException("Finite-wall inventory left the enthalpy bracket.");
+                for (int i = 0; i < 40; i++)
+                {
+                    double mid = (low + high) * 0.5;
+                    if (enthalpy(mid) < target) low = mid;
+                    else high = mid;
+                }
+                return (low + high) * 0.5;
+            }
+        }
+
         public static void RunTransientCondensation(Action<string> log)
         {
             if (log == null) throw new ArgumentNullException(nameof(log));
+            CheckFiniteWallCondensation(log);
             const double pressure = 101325, surfaceK = 283.15, bulkK = 293.15;
             const double dryAir = 1e-5, area = 1e-4, film = 0.001;
             var humid = new HumidGas();
