@@ -100,6 +100,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private int StepMicroseconds => (int)Timesteps[timestepIndex];
         private double StepSeconds => StepMicroseconds / 1_000_000.0;
+        [SerializeField, Range(1f, 50f), Tooltip("Cylindrical release volume in mL. Set before pressing Play.")]
+        private float meshReleaseVolumeMl = 9f;
         private float releaseVolumeMl;
 
         private void OnEnable()
@@ -145,7 +147,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             bool meshWater = surfaceShader != null && surfaceArguments != null && !heatMovingWater;
             float floor = (float)(geometry.externalBaseHeightM + geometry.baseThicknessM);
             float rim = (float)geometry.RimHeightM;
-            float side = Mathf.Pow(releaseVolumeMl * 1e-6f, 1f / 3f);
+            if (meshWater) releaseVolumeMl = Mathf.Clamp(meshReleaseVolumeMl, 1f, 50f);
+            float volumeM3 = releaseVolumeMl * 1e-6f;
+            float side = Mathf.Pow(volumeM3, 1f / 3f);
+            float cylinderRadius = Mathf.Min((float)geometry.innerRadiusM * .72f,
+                Mathf.Pow(volumeM3 / (2 * Mathf.PI), 1f / 3f));
+            float cylinderHeight = volumeM3 / (Mathf.PI * cylinderRadius * cylinderRadius);
+            float dropBottom = meshWater ? rim + DropGapM : floor + DropGapM;
             solverObject = new GameObject("GPU liquid particles");
             solverObject.SetActive(false);
             solverObject.transform.position = new Vector3(0, .175f, 0);
@@ -153,7 +161,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (meshWater)
             {
                 float width = (float)geometry.OuterRadiusM * 2 + .018f;
-                float height = Mathf.Max(rim - floor, DropGapM + side) + .024f;
+                float height = dropBottom + cylinderHeight - floor + .024f;
                 solverObject.transform.position = Vector3.up * (floor + height / 2 - .012f);
                 solverObject.transform.localScale = new Vector3(width, height, width);
             }
@@ -163,17 +171,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 new Spawner3D.SpawnRegion
                 {
-                    centre = new Vector3(0, floor + DropGapM + side / 2, 0),
-                    size = side
+                    centre = new Vector3(0, dropBottom + (meshWater ? cylinderHeight : side) / 2, 0),
+                    size = side,
+                    cylinderRadius = meshWater ? cylinderRadius : 0,
+                    cylinderHeight = meshWater ? cylinderHeight : 0
                 }
             };
 
             if (meshWater)
-            {
-                int baseline = spawner.spawnRegions[0].CalculateParticleCountPerAxis(700000000);
-                int actual = spawner.spawnRegions[0].CalculateParticleCountPerAxis(spawner.particleSpawnDensity);
-                spacingScale = (baseline - 1f) / (actual - 1f);
-            }
+                spacingScale = Mathf.Pow(700000000f / spawner.particleSpawnDensity, 1f / 3f);
             spawner.jitterStrength = .00018f * spacingScale;
 
             computeInstance = Instantiate(fluidCompute);
