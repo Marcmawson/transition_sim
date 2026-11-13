@@ -46,10 +46,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             acceleration.Length > 0 ? BeakerVofTimeIntegration.ReleaseMaxStepS : (double?)null,
             BeakerVofTimeIntegration.IterationLimit);
 
-        internal void StepRelease(double gravityY, double maximumStepS, int pressureIterations) =>
-            StepCore(new D3(0, gravityY, 0), maximumStepS, pressureIterations);
+        internal void StepRelease(double gravityY, double maximumStepS, int pressureIterations, double burnerWatts = 0) =>
+            StepCore(new D3(0, gravityY, 0), maximumStepS, pressureIterations, burnerWatts);
 
-        private void StepCore(D3 gravity, double? maximumStepS, int pressureIterations)
+        private void StepCore(D3 gravity, double? maximumStepS, int pressureIterations, double burnerWatts = 0)
         {
             int contacts = 0;
             Simulation.Step((state, flow) =>
@@ -60,7 +60,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     : scalars.AdvanceCoupledWithWetting(state, flow, momentum, pressure, traction);
                 contacts = step.Momentum.ContactTractionPatches;
                 return step;
-            });
+            }, burnerWatts);
             ContactPatches += contacts;
         }
 
