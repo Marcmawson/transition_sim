@@ -122,7 +122,7 @@ void ClipCutFaces(uint3 id : SV_DispatchThreadID)
     // slab is always measured from zero. Tiny widths retain precision.
     float3 n = job.w < 0 ? plane.xyz * (1-2*slab) : plane.xyz;
     float lo = dot(min(n,0),float3(1,1,1)), hi = dot(max(n,0),float3(1,1,1));
-    for (int i = 0; i < 25; i++)
+    for (int interceptIteration = 0; interceptIteration < 25; interceptIteration++)
     {
         float middle = .5*(lo+hi);
         if (Integrate(job,n,middle,0,0,false) < plane.w) lo = middle;
@@ -130,7 +130,7 @@ void ClipCutFaces(uint3 id : SV_DispatchThreadID)
     }
     float intercept = .5*(lo+hi);
     lo = 0; hi = 1;
-    for (int i = 0; i < 36; i++)
+    for (int edgeIteration = 0; edgeIteration < 36; edgeIteration++)
     {
         float middle = .5*(lo+hi);
         if (Integrate(job,slab,middle,0,0,false) < volume.y) lo = middle;
