@@ -38,7 +38,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
         private BeakerSolidMesh thermalMesh;
         private SolidConduction glass;
         private double[] glassPower;
-        private double thermalReferenceK, burnerEnergyJ;
+        private double thermalReferenceK, burnerEnergyJ, floorLiquidDistanceM;
         private (int Group, int Glass, double Area)[] floorContacts;
         public double LiquidDriftM3 => State.LiquidM3.Sum() - InitialLiquidVolumeM3;
         public double MaxDualMassErrorKg { get; private set; }
@@ -131,7 +131,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
             glassPower = new double[thermalMesh.CapacityJPerK.Length];
             var grid = Geometry.Grid;
             double floor = input.externalBaseHeightM + input.baseThicknessM;
-            int j = (int)Math.Floor((floor - grid.Frame.Origin.Y) / grid.Spacing.Y);
+            int j = (int)Math.Ceiling((floor - grid.Frame.Origin.Y) / grid.Spacing.Y);
+            floorLiquidDistanceM = grid.Centre(0, j, 0).Y - floor;
             var contacts = new System.Collections.Generic.List<(int, int, double)>();
             for (int k = 0; k < grid.Cells.Z; k++)
             for (int i = 0; i < grid.Cells.X; i++)
@@ -166,7 +167,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 double glassK = glass.TemperatureK[contact.Glass];
                 double rate = CoupledHeatFaces.HeatRateW(contact.Area * volume / Plan.Volumes[group],
                     glassK, liquidK, input.baseThicknessM / (2 * BeakerSolidMesh.BaseDepthCells),
-                    glassConductivity, 0, Geometry.Grid.Spacing.Y / 2, liquidConductivity);
+                    glassConductivity, 0, floorLiquidDistanceM, liquidConductivity);
                 double equilibriumHeat = (glassK - liquidK) /
                     (1 / capacity + 1 / thermalMesh.CapacityJPerK[contact.Glass]);
                 double transfer = Math.Sign(rate) * Math.Min(Math.Abs(rate * dt), Math.Abs(equilibriumHeat));
