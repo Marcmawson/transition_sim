@@ -10,7 +10,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         public bool InvertMouseY { get; private set; }
         private Vector3 homePosition;
         private Quaternion homeRotation;
-        private float homeSize, yaw, pitch;
+        private float homeSize, homeFieldOfView, yaw, pitch;
         private bool looking;
         public bool IsUndersideView { get; private set; }
         private Vector3 freePosition;
@@ -26,6 +26,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             homePosition = transform.position;
             homeRotation = transform.rotation;
             homeSize = view.orthographicSize;
+            homeFieldOfView = view.fieldOfView;
             SetLookAngles();
         }
 
@@ -42,6 +43,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 transform.SetPositionAndRotation(homePosition, homeRotation);
                 view.orthographicSize = homeSize;
+                view.fieldOfView = homeFieldOfView;
                 SetLookAngles();
             }
 
@@ -65,7 +67,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
             float scroll = Input.mouseScrollDelta.y;
             if (scroll != 0)
-                view.orthographicSize = Mathf.Clamp(view.orthographicSize * Mathf.Pow(.85f, scroll), .02f, .65f);
+            {
+                float zoom = Mathf.Pow(.85f, scroll);
+                if (view.orthographic)
+                    view.orthographicSize = Mathf.Clamp(view.orthographicSize * zoom, .02f, .65f);
+                else
+                    view.fieldOfView = Mathf.Clamp(view.fieldOfView * zoom, 15f, 85f);
+            }
 
             var movement = transform.right * Axis(KeyCode.D, KeyCode.A) +
                 transform.forward * Axis(KeyCode.W, KeyCode.S) + Vector3.up * Axis(KeyCode.E, KeyCode.Q);
