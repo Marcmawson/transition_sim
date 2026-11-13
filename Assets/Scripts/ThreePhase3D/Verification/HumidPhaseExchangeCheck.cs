@@ -5,6 +5,7 @@ using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
 using PhysicsSim.ThreePhase3D.Geometry;
 using PhysicsSim.ThreePhase3D.Materials;
+using PhysicsSim.ThreePhase3D.Thermal;
 namespace PhysicsSim.ThreePhase3D.Verification
 {
     public static class HumidPhaseExchangeCheck
@@ -23,48 +24,65 @@ namespace PhysicsSim.ThreePhase3D.Verification
             var coarse = Run(8);
             var fine = Run(16);
             var reference = Run(32);
-            if (Math.Abs(fine.Wall - reference.Wall) >= Math.Abs(coarse.Wall - reference.Wall))
+            if (Math.Abs(fine.Wall - reference.Wall) >= Math.Abs(coarse.Wall - reference.Wall) ||
+                Math.Abs(fine.Back - reference.Back) >= Math.Abs(coarse.Back - reference.Back))
                 throw new InvalidOperationException("Finite-wall condensation did not refine with timestep.");
             log(FormattableString.Invariant(
-                $"S12 finite-wall condensation passed: wall {reference.Wall:F6} K, gas {reference.Gas:F6} K, condensate {reference.Mass:G8} kg, entropy produced {reference.Entropy:G8} J/K."));
+                $"S12 spatial-wall condensation passed: inner glass {reference.Wall:F6} K, outer glass {reference.Back:F6} K, gas {reference.Gas:F6} K, condensate {reference.Mass:G8} kg, entropy produced {reference.Entropy:G8} J/K."));
 
-            (double Wall, double Gas, double Mass, double Entropy) Run(int steps)
+            (double Wall, double Back, double Gas, double Mass, double Entropy) Run(int steps)
             {
-                double wallK = initialWall, gasK = initialGas, vapour = initialVapour;
-                double liquid = 0, gasEnergy = initialEnergy, wallEnergy = 0, production = 0;
+                const double glassConductance = 0.04;
+                double dt = 0.2 / steps;
+                var glass = new SolidConduction(new[] { wallCapacity, wallCapacity },
+                    new[] { initialWall, initialWall }, new[] { new SolidConduction.Face(0, 1, glassConductance) });
+                var power = new double[2];
+                double gasK = initialGas, vapour = initialVapour;
+                double liquid = 0, gasEnergy = initialEnergy, production = 0;
                 for (int step = 0; step < steps; step++)
                 {
+                    double wallK = glass.TemperatureK[0];
+                    double oldLiquidEnergy = liquid * water.Evaluate(wallK, pressure, WaterBranch.Liquid).EnthalpyJkg;
                     var solved = HumidInterfaceFlux.SolveTemperature(pressure, vapour / (dryAir + vapour),
                         film, wallK, gasK, 1000, 25, 283.15, 298.15);
-                    var transfer = HumidInterfaceFlux.InventoryTransfer(solved, area, 0.2 / steps, liquid, vapour);
+                    var transfer = HumidInterfaceFlux.InventoryTransfer(solved, area, dt, liquid, vapour);
                     if (!(transfer.WaterKg < 0))
                         throw new InvalidOperationException("Finite-wall fixture stopped condensing.");
                     vapour += transfer.WaterKg;
                     liquid -= transfer.WaterKg;
                     gasEnergy += transfer.GasEnthalpyJ;
-                    wallEnergy += transfer.LiquidEnthalpyJ;
+                    double contactEnergy = oldLiquidEnergy + transfer.LiquidEnthalpyJ;
+                    double conductionIn = dt * glassConductance * (glass.TemperatureK[1] - wallK);
                     double mass = dryAir + vapour;
                     double humidity = vapour / mass;
                     gasK = Recover(gasEnergy, t => mass * humid.ReferenceTp(t, pressure, humidity).EnthalpyJkg);
-                    wallK = Recover(wallEnergy, t => wallCapacity * (t - initialWall) +
+                    double contactK = Recover(contactEnergy + conductionIn, t => wallCapacity * (t - wallK) +
                         liquid * water.Evaluate(t, pressure, WaterBranch.Liquid).EnthalpyJkg);
                     var gasState = humid.ReferenceTp(gasK, pressure, humidity);
-                    var liquidState = water.Evaluate(wallK, pressure, WaterBranch.Liquid);
+                    var liquidState = water.Evaluate(contactK, pressure, WaterBranch.Liquid);
+                    // Apply only the interface energy remaining after condensate storage.
+                    // SolidConduction applies the glass-to-glass exchange once.
+                    power[0] = (contactEnergy - liquid * liquidState.EnthalpyJkg) / dt;
+                    glass.Step(dt, power);
+                    Near(Math.Abs(glass.TemperatureK[0] - contactK), 1e-8);
+                    double backK = glass.TemperatureK[1];
                     Near(Math.Abs(vapour + liquid - initialVapour), 1e-18);
                     Near(Math.Abs(mass * gasState.EnthalpyJkg + liquid * liquidState.EnthalpyJkg +
-                        wallCapacity * (wallK - initialWall) - initialEnergy), 1e-10);
+                        wallCapacity * (glass.TemperatureK[0] + backK - 2 * initialWall) - initialEnergy), 1e-10);
                     var storage = new EntropyInventory();
                     storage.AddMaterial(mass, gasState);
                     storage.AddMaterial(liquid, liquidState);
-                    storage.AddSensibleStorage(wallCapacity, wallK, initialWall);
+                    storage.AddSensibleStorage(wallCapacity, glass.TemperatureK[0], initialWall);
+                    storage.AddSensibleStorage(wallCapacity, backK, initialWall);
                     double nextProduction = storage.TotalJPerK - initialEntropy;
                     if (!(nextProduction >= production - 1e-12))
                         throw new InvalidOperationException("Finite-wall condensation entropy decreased.");
                     production = nextProduction;
                 }
-                if (!(wallK > initialWall && gasK < initialGas && production > 0))
+                if (!(glass.TemperatureK[0] > glass.TemperatureK[1] && glass.TemperatureK[1] > initialWall &&
+                    gasK < initialGas && production > 0))
                     throw new InvalidOperationException("Finite-wall condensation failed its thermal checks.");
-                return (wallK, gasK, liquid, production);
+                return (glass.TemperatureK[0], glass.TemperatureK[1], gasK, liquid, production);
             }
 
             double Recover(double target, Func<double, double> enthalpy)
