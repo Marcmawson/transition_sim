@@ -4,6 +4,7 @@ using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Geometry;
 using PhysicsSim.ThreePhase3D.Materials;
 using PhysicsSim.ThreePhase3D.PhaseChange;
+using PhysicsSim.ThreePhase3D.Thermal;
 
 namespace PhysicsSim.ThreePhase3D.Flow
 {
@@ -31,7 +32,14 @@ namespace PhysicsSim.ThreePhase3D.Flow
         public double InitialLiquidMassKg => InitialLiquidVolumeM3 * LiquidDensityKgM3;
         public double TimeS { get; private set; }
         public double InitialLiquidEnthalpyJ { get; }
-        public double LiquidEnthalpyDriftJ => State.LiquidEnergyJ.Sum() - InitialLiquidEnthalpyJ;
+        public double LiquidEnthalpyDriftJ => State.LiquidEnergyJ.Sum() - InitialLiquidEnthalpyJ - LiquidHeatJ;
+        public double LiquidHeatJ { get; private set; }
+        public double ThermalResidualJ { get; private set; }
+        private BeakerSolidMesh thermalMesh;
+        private SolidConduction glass;
+        private double[] glassPower;
+        private double thermalReferenceK, burnerEnergyJ;
+        private (int Group, int Glass, double Area)[] floorContacts;
         public double LiquidDriftM3 => State.LiquidM3.Sum() - InitialLiquidVolumeM3;
         public double MaxDualMassErrorKg { get; private set; }
         public double MaxMomentumLedgerErrorKgMPerS { get; private set; }
@@ -112,9 +120,73 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return c < 0 ? 0 : State.LiquidM3[c] / Plan.Volumes[c];
         }
 
-        public void Step(Func<CutCellInventories, FlowStep, CutCellCoupledStep> advance)
+        public void EnableFloorHeating(double initialTemperatureK)
+        {
+            if (Steps != 0 || glass != null) throw new InvalidOperationException("Enable heating before the first step.");
+            var input = GeometryInputsForPreview();
+            thermalReferenceK = initialTemperatureK;
+            thermalMesh = new BeakerSolidMesh(input);
+            glass = new SolidConduction(thermalMesh.CapacityJPerK,
+                Enumerable.Repeat(initialTemperatureK, thermalMesh.CapacityJPerK.Length).ToArray(), thermalMesh.Faces);
+            glassPower = new double[thermalMesh.CapacityJPerK.Length];
+            var grid = Geometry.Grid;
+            double floor = input.externalBaseHeightM + input.baseThicknessM;
+            int j = (int)Math.Floor((floor - grid.Frame.Origin.Y) / grid.Spacing.Y);
+            var contacts = new System.Collections.Generic.List<(int, int, double)>();
+            for (int k = 0; k < grid.Cells.Z; k++)
+            for (int i = 0; i < grid.Cells.X; i++)
+            {
+                var centre = grid.Centre(i, j, k);
+                double radius = Math.Sqrt(centre.X * centre.X + centre.Z * centre.Z);
+                int group = Plan.GroupByCell[grid.Cells.Index(i, j, k)];
+                if (group < 0 || radius >= input.innerRadiusM) continue;
+                int ring = (int)(radius / input.innerRadiusM * BeakerSolidMesh.InnerRadialCells);
+                int surface = (ring + 1) * BeakerSolidMesh.BaseDepthCells - 1;
+                contacts.Add((group, surface, grid.Spacing.X * grid.Spacing.Z));
+            }
+            floorContacts = contacts.ToArray();
+        }
+
+        private void ExchangeFloorHeat(CutCellInventories fields, double dt, double watts)
+        {
+            const double liquidCp = 4180, liquidConductivity = .6, glassConductivity = 1.2;
+            var input = GeometryInputsForPreview();
+            double referenceEnthalpy = InitialLiquidEnthalpyJ / InitialLiquidMassKg;
+            for (int i = 0; i < glassPower.Length; i++) glassPower[i] = watts * thermalMesh.BurnerWeights[i];
+            double heat = 0;
+            // Cell-centre floor contact with a volume-fraction estimate of wet area.
+            foreach (var contact in floorContacts)
+            {
+                int group = contact.Group;
+                double volume = fields.LiquidM3[group];
+                if (volume <= 0) continue;
+                double capacity = volume * LiquidDensityKgM3 * liquidCp;
+                double liquidK = thermalReferenceK +
+                    (fields.LiquidEnergyJ[group] - volume * LiquidDensityKgM3 * referenceEnthalpy) / capacity;
+                double glassK = glass.TemperatureK[contact.Glass];
+                double rate = CoupledHeatFaces.HeatRateW(contact.Area * volume / Plan.Volumes[group],
+                    glassK, liquidK, input.baseThicknessM / (2 * BeakerSolidMesh.BaseDepthCells),
+                    glassConductivity, 0, Geometry.Grid.Spacing.Y / 2, liquidConductivity);
+                double equilibriumHeat = (glassK - liquidK) /
+                    (1 / capacity + 1 / thermalMesh.CapacityJPerK[contact.Glass]);
+                double transfer = Math.Sign(rate) * Math.Min(Math.Abs(rate * dt), Math.Abs(equilibriumHeat));
+                glassPower[contact.Glass] -= transfer / dt;
+                fields.LiquidEnergyJ[group] += transfer;
+                heat += transfer;
+            }
+            glass.Step(dt, glassPower);
+            LiquidHeatJ += heat;
+            burnerEnergyJ += watts * thermalMesh.BurnerWeights.Sum() * dt;
+            double glassStored = glass.TemperatureK.Select((temperature, i) =>
+                (temperature - thermalReferenceK) * thermalMesh.CapacityJPerK[i]).Sum();
+            ThermalResidualJ = fields.LiquidEnergyJ.Sum() - InitialLiquidEnthalpyJ + glassStored - burnerEnergyJ;
+        }
+
+        public void Step(Func<CutCellInventories, FlowStep, CutCellCoupledStep> advance, double burnerWatts = 0)
         {
             if (advance == null) throw new ArgumentNullException(nameof(advance));
+            if (!SiUnits.IsFinite(burnerWatts) || burnerWatts < 0) throw new ArgumentOutOfRangeException(nameof(burnerWatts));
+            if (burnerWatts > 0 && glass == null) throw new InvalidOperationException("Floor heating is disabled.");
             var trial = advance(State,Pressure);
             if (trial == null || !trial.Pressure.Diagnostics.Converged)
                 throw new InvalidOperationException("The beaker pressure solve did not converge.");
@@ -123,7 +195,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 throw new InvalidOperationException("The beaker transport ledger did not close.");
 
             // Closed, source-free transport conserves the liquid enthalpy tracer.
-            double enthalpyError = trial.Transport.Fields.LiquidEnergyJ.Sum() - InitialLiquidEnthalpyJ;
+            double enthalpyError = trial.Transport.Fields.LiquidEnergyJ.Sum() - InitialLiquidEnthalpyJ - LiquidHeatJ;
             double enthalpyTolerance = Math.Max(1e-10, Math.Abs(InitialLiquidEnthalpyJ) * 1e-6);
             if (!(Math.Abs(enthalpyError) <= enthalpyTolerance))
                 throw new InvalidOperationException($"The beaker liquid enthalpy ledger did not close: {enthalpyError:E3} J.");
@@ -144,6 +216,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             if (error > 1e-10)
                 throw new InvalidOperationException("The beaker momentum remap ledger did not close.");
 
+            if (glass != null) ExchangeFloorHeat(trial.Transport.Fields, trial.Pressure.Diagnostics.Dt, burnerWatts);
             TimeS += trial.Pressure.Diagnostics.Dt;
             State = trial.Transport.Fields;
             Pressure = trial.Pressure;
