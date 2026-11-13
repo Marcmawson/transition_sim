@@ -160,7 +160,14 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.trackLiquidMass = showBoiling && heatMovingWater;
             if (fluid.trackLiquidMass)
                 initialLiquidDensity = new Water95().Evaluate(293.15, 101325, WaterBranch.Liquid).DensityKgM3;
-            if (heatMovingWater) fluid.buoyancyDensityByDegree = BuildBuoyancyDensityTable();
+            if (heatMovingWater)
+            {
+                fluid.buoyancyDensityByDegree = BuildBuoyancyDensityTable();
+                var water = new Water95();
+                var state = water.Evaluate(293.15, 101325, WaterBranch.Liquid);
+                fluid.liquidThermalDiffusivity = (float)(water.ConductivityWmK(state) /
+                    (state.DensityKgM3 * state.CpJkgK));
+            }
             // Start from the demo's liquid parameters scaled to metre-sized particles.
             fluid.smoothingRadius = .002f;
             fluid.targetDensity = 630e6f;
