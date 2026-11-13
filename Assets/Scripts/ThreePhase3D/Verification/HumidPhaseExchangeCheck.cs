@@ -10,8 +10,11 @@ namespace PhysicsSim.ThreePhase3D.Verification
 {
     public static class HumidPhaseExchangeCheck
     {
-        private static void CheckFiniteWallCondensation(Action<string> log)
+        public static void RunCoupledBeaker(
+            Func<VariableCoefficientProjection, float[], double, double[], FlowStep> project, Action<string> log)
         {
+            if (project == null) throw new ArgumentNullException(nameof(project));
+            if (log == null) throw new ArgumentNullException(nameof(log));
             const double pressure = 101325, initialWall = 283.15, initialGas = 293.15;
             const double dryAir = 1e-5, wallCapacity = 0.02, area = 1e-4, film = 0.001;
             const double roomK = initialWall, roomConductance = 0.02;
@@ -125,8 +128,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     double mass = air + vapour;
                     var donor = humid.ReferenceTp(gasK, pressure, vapour / mass);
                     double freeVolume = mass / donor.DensityKgM3;
-                    var projected = FlowCpuReference.Project(vent, new float[vent.FaceCount], dt, 32768,
-                        null, new[] { (headspaceVolume - freeVolume) / dt });
+                    var projected = project(vent, new float[vent.FaceCount], dt,
+                        new[] { (headspaceVolume - freeVolume) / dt });
                     var exchange = HumidGasAdvection.Advance(vent, projected, new[] { freeVolume },
                         new[] { (air, vapour, gasEnergy, default(D3)) }, reservoir,
                         new[] { mass * donor.EntropyJkgK }, gas.DensityKgM3 * gas.EntropyJkgK);
@@ -237,7 +240,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
         public static void RunTransientCondensation(Action<string> log)
         {
             if (log == null) throw new ArgumentNullException(nameof(log));
-            CheckFiniteWallCondensation(log);
+            RunCoupledBeaker((plan, velocity, dt, source) =>
+                FlowCpuReference.Project(plan, velocity, dt, 32768, null, source), log);
             const double pressure = 101325, surfaceK = 283.15, bulkK = 293.15;
             const double dryAir = 1e-5, area = 1e-4, film = 0.001;
             var humid = new HumidGas();
