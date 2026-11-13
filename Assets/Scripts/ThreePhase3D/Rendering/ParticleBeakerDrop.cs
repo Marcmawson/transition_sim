@@ -1,5 +1,7 @@
 using System;
 using PhysicsSim.ThreePhase3D.Core;
+using PhysicsSim.ThreePhase3D.Flow;
+using PhysicsSim.ThreePhase3D.Geometry;
 using PhysicsSim.ThreePhase3D.Materials;
 using Seb.Fluid.Rendering;
 using Seb.Fluid.Simulation;
@@ -13,9 +15,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     {
         [SerializeField] private bool showBoiling;
         private ParticleSystem vapour;
+        private VapourPlume plume;
+        private readonly ParticleSystem.Particle[] vapourMarkers = new ParticleSystem.Particle[4096];
         private Material vapourMaterial;
         private Vector3[] vapourSources;
-        private double nextVapourSampleS;
+        private double vapourStepSeconds;
         private double pendingVapourKg;
         private const float VapourWhiteSpeedMps = .35f;
         private const float SmallVolumeMl = 9;
@@ -257,11 +261,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (showBoiling && movingHeat != null)
             {
                 if (vapour == null) CreateVapourDisplay();
-                if (fluid.SimulatedSeconds >= nextVapourSampleS)
+                vapourStepSeconds += dt;
+                if (vapourStepSeconds >= .05)
                 {
                     movingHeat.CollectVapour(vapourSources, EmitVapour);
-                    nextVapourSampleS = fluid.SimulatedSeconds + .05;
+                    if (movingHeat.VapourGeneratedKg > 0) plume.Step(vapourStepSeconds);
+                    vapourStepSeconds = 0;
                 }
+                int count = vapour.GetParticles(vapourMarkers);
+                for (int i = 0; i < count; i++)
+                    vapourMarkers[i].velocity = plume.VelocityAt(vapourMarkers[i].position);
+                vapour.SetParticles(vapourMarkers, count);
                 vapour.Simulate((float)dt, false, false, false);
             }
         }
@@ -270,11 +280,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             movingHeat?.Reset();
             vapour?.Clear();
-            pendingVapourKg = nextVapourSampleS = 0;
+            plume?.Reset();
+            pendingVapourKg = vapourStepSeconds = 0;
         }
 
         private void CreateVapourDisplay()
         {
+            plume = new VapourPlume(geometry);
             var display = new GameObject("Vapour parcels");
             display.transform.SetParent(transform, false);
             vapour = display.AddComponent<ParticleSystem>();
@@ -297,10 +309,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
             var emission = vapour.emission;
             emission.enabled = false;
-            var lift = vapour.velocityOverLifetime;
-            lift.enabled = true;
-            lift.space = ParticleSystemSimulationSpace.World;
-            lift.y = new ParticleSystem.MinMaxCurve(1, AnimationCurve.Linear(0, 0, 1, .30f));
             var colours = vapour.colorBySpeed;
             colours.enabled = true;
             colours.range = new Vector2(0, VapourWhiteSpeedMps);
@@ -315,11 +323,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void EmitVapour(Vector3 origin, float massKg)
         {
             const double displayParcelKg = 1e-8;
+            origin.y = Mathf.Max(origin.y, (float)geometry.RimHeightM + .0001f);
+            plume.Inject(origin, massKg);
             pendingVapourKg += massKg;
             int count = (int)Math.Min(32, pendingVapourKg / displayParcelKg);
             if (count == 0) return;
             pendingVapourKg -= count * displayParcelKg;
-            vapour.Emit(new ParticleSystem.EmitParams { position = origin, velocity = Vector3.up * .05f }, count);
+            vapour.Emit(new ParticleSystem.EmitParams { position = origin, velocity = plume.VelocityAt(origin) }, count);
         }
 
         private void SetRunning(bool value)
@@ -536,6 +546,94 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (speedLegend != null) Destroy(speedLegend);
             if (solverObject != null) Destroy(solverObject);
             if (computeInstance != null) Destroy(computeInstance);
+        }
+    }
+    // Boussinesq air plume above the rim. Vapour markers follow the projected air.
+    internal sealed class VapourPlume
+    {
+        private const double AirDensity = 1.2;
+        private readonly Grid3D grid;
+        private readonly VariableCoefficientProjection plan;
+        private readonly ComputeShader shader;
+        private (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[] gas;
+        private FlowStep flow;
+
+        internal VapourPlume(GeometryInputs geometry)
+        {
+            double width = geometry.OuterRadiusM * 4;
+            grid = new Grid3D(8, 12, 8, new D3(width / 8, width / 8, width / 8),
+                RigidFrame.Euler(new D3(-width / 2, geometry.RimHeightM, -width / 2), 0, 0, 0));
+            var sides = new FlowBoundary[6];
+            sides[3] = new FlowBoundary(FlowBoundaryKind.OpenPressure);
+            plan = new VariableCoefficientProjection(CutCellGeometry.Build(grid),
+                new BoundaryConditions3D(sides), _ => AirDensity, _ => 0);
+            shader = Resources.Load<ComputeShader>("ThreePhase3D/SinglePhaseFlow");
+            if (shader == null) throw new InvalidOperationException("Vapour pressure shader unavailable.");
+            Reset();
+        }
+
+        internal void Reset()
+        {
+            flow = null;
+            gas = new (double, double, double, D3)[plan.GroupCount];
+            for (int i = 0; i < gas.Length; i++) gas[i].DryAirKg = AirDensity * plan.Volumes[i];
+        }
+
+        internal void Inject(Vector3 origin, double massKg)
+        {
+            if (TryCell(origin, out int i, out int j, out int k))
+                gas[plan.PressureGroup(i, j, k)].VapourKg += massKg;
+        }
+
+        internal void Step(double seconds)
+        {
+            // Advect a vapour mass tracer in a constant-reference-density air solve.
+            // The buoyancy term uses the dilute ideal-gas composition correction.
+            var predicted = HumidGasAdvection.PredictFaces(plan, gas);
+            for (int index = 0; index < predicted.Length; index++)
+            {
+                var face = plan.Faces[index];
+                if (face.Active == 0 || face.Axis != 1) continue;
+                int low = face.Low < 0 ? face.High : face.Low;
+                int high = face.High < 0 ? low : face.High;
+                double fraction = .5 * (Fraction(low) + Fraction(high));
+                predicted[index] += (float)(seconds * 9.81 * .378 * fraction);
+            }
+            flow = FlowGpuSolver.Project(plan, shader, predicted, seconds, 4096);
+            for (int k = 0; k < grid.Cells.Z; k++)
+            for (int j = 0; j < grid.Cells.Y; j++)
+            for (int i = 0; i < grid.Cells.X; i++)
+            {
+                int group = plan.PressureGroup(i, j, k);
+                Vector3 velocity = CellVelocity(i, j, k);
+                gas[group].MomentumKgMPerS = new D3(velocity.x, velocity.y, velocity.z) *
+                    (gas[group].DryAirKg + gas[group].VapourKg);
+            }
+            gas = HumidGasAdvection.Advance(plan, flow, plan.Volumes, gas,
+                (AirDensity, 0, 0, default(D3))).Gas;
+        }
+
+        private double Fraction(int group) => gas[group].VapourKg /
+            (gas[group].DryAirKg + gas[group].VapourKg);
+
+        internal Vector3 VelocityAt(Vector3 point) => flow != null && TryCell(point, out int i, out int j, out int k)
+            ? CellVelocity(i, j, k) : Vector3.zero;
+
+        private bool TryCell(Vector3 point, out int i, out int j, out int k)
+        {
+            i = Mathf.FloorToInt((float)((point.x - grid.Frame.Origin.X) / grid.Spacing.X));
+            j = Mathf.FloorToInt((float)((point.y - grid.Frame.Origin.Y) / grid.Spacing.Y));
+            k = Mathf.FloorToInt((float)((point.z - grid.Frame.Origin.Z) / grid.Spacing.Z));
+            return grid.Cells.Interior(i, j, k);
+        }
+
+        private Vector3 CellVelocity(int i, int j, int k)
+        {
+            var u = flow.VelocityMPerS;
+            return .5f * new Vector3(
+                u[plan.FaceIndex(0, i, j, k)] + u[plan.FaceIndex(0, i + 1, j, k)],
+                u[plan.FaceIndex(1, i, j, k)] + u[plan.FaceIndex(1, i, j + 1, k)],
+                u[plan.FaceIndex(2, i, j, k)] + u[plan.FaceIndex(2, i, j, k + 1)]);
         }
     }
 }
