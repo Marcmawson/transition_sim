@@ -105,6 +105,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private Transform iceVisual;
         private BoxCollider iceCollider;
         private Material iceMaterial;
+        private PhysicMaterial iceContactMaterial;
+        private float? previousBounceThreshold;
         private Mesh iceMesh;
         private GameObject iceContacts;
         private float iceSide, iceMass, iceHeat, iceSpawnY, iceFloor;
@@ -501,7 +503,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
             if (iceContacts != null) iceContacts.SetActive(spawnIce);
             waterSurface.enabled = !spawnIce;
-            if (!spawnIce) return;
+            if (!spawnIce)
+            {
+                RestoreBounceThreshold();
+                return;
+            }
+
+            if (!previousBounceThreshold.HasValue)
+            {
+                previousBounceThreshold = Physics.bounceThreshold;
+                Physics.bounceThreshold = Mathf.Min(Physics.bounceThreshold, .3f);
+            }
 
             if (iceContacts == null)
             {
@@ -532,6 +544,18 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             iceCollider = cube.AddComponent<BoxCollider>();
             iceCollider.size = Vector3.one * iceSide;
             iceCollider.contactOffset = .0003f;
+            if (iceContactMaterial == null)
+            {
+                iceContactMaterial = new PhysicMaterial("Ice on glass")
+                {
+                    bounciness = .42f,
+                    bounceCombine = PhysicMaterialCombine.Maximum,
+                    staticFriction = .18f,
+                    dynamicFriction = .12f,
+                    frictionCombine = PhysicMaterialCombine.Minimum
+                };
+            }
+            iceCollider.sharedMaterial = iceContactMaterial;
             if (iceMaterial == null)
             {
                 var shader = Resources.Load<Shader>("ThreePhase3D/BeakerIceSurface");
@@ -629,6 +653,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             meltCentre.y = Mathf.Min(meltCentre.y, originalCentre.y);
             Destroy(ice.gameObject);
             ice = null;
+            RestoreBounceThreshold();
             waterSurface.enabled = true;
             fluid.ReleaseMeltwater(meltCentre);
             lastTick = Time.realtimeSinceStartupAsDouble;
@@ -922,8 +947,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.collisionDamping = wallBounce;
         }
 
+        private void RestoreBounceThreshold()
+        {
+            if (!previousBounceThreshold.HasValue) return;
+            Physics.bounceThreshold = previousBounceThreshold.Value;
+            previousBounceThreshold = null;
+        }
+
         private void OnDestroy()
         {
+            RestoreBounceThreshold();
+            if (iceContactMaterial != null) Destroy(iceContactMaterial);
             if (ice != null) Destroy(ice.gameObject);
             if (iceContacts != null) Destroy(iceContacts);
             if (iceMaterial != null) Destroy(iceMaterial);
