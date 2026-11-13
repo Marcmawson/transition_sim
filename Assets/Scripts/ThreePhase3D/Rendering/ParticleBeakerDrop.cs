@@ -104,7 +104,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private Rigidbody ice;
         private bool hasWater, samplingWaterline;
         private int waterlineVersion, waterBatches;
-        private float waterline, nextWaterlineSample, waterVolumeMl, activeIceFraction;
+        private float waterline, sampledWaterline, nextWaterlineSample, waterVolumeMl, activeIceFraction;
         private Transform iceVisual;
         private BoxCollider iceCollider;
         private Material iceMaterial;
@@ -503,7 +503,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             waterBatches = hasWater ? 1 : 0;
             waterVolumeMl = hasWater ? releaseVolumeMl : 0;
             waterlineVersion++;
-            waterline = iceFloor;
+            waterline = sampledWaterline = iceFloor;
             fluid.iceHalfExtent = 0;
             if (ice != null)
             {
@@ -640,7 +640,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             if (!running || ice == null) return;
             ice.AddForce(Vector3.up * fluid.gravity, ForceMode.Acceleration);
-            if (!hasWater || waterline <= iceFloor) return;
+            if (!hasWater || (sampledWaterline <= iceFloor && waterline <= iceFloor)) return;
+            float blend = 1 - Mathf.Exp(-Time.fixedDeltaTime / .12f);
+            waterline = Mathf.Lerp(waterline, sampledWaterline, blend);
+            if (waterline - iceFloor < .0001f) return;
 
             // Integrate the submerged box volume with evenly spaced sample points.
             const int samples = 4;
@@ -655,7 +658,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 Vector3 point = ice.transform.TransformPoint(local * side);
                 if (point.x * point.x + point.z * point.z > fluid.beakerCollision.z * fluid.beakerCollision.z) continue;
                 float fraction = Mathf.Clamp01(.5f + (waterline - point.y) * samples / side);
-                var drag = ice.GetPointVelocity(point) * (ice.mass * 5f / (samples * samples * samples));
+                Vector3 velocity = ice.GetPointVelocity(point);
+                float dragFactor = (ice.mass * 2f + .5f * 998.2f * side * side * velocity.magnitude)
+                    / (samples * samples * samples);
+                Vector3 drag = velocity * dragFactor;
                 ice.AddForceAtPosition((Vector3.up * forcePerSample - drag) * fraction, point);
             }
         }
@@ -672,7 +678,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
             if (samplingWaterline || Time.unscaledTime < nextWaterlineSample) return;
             samplingWaterline = true;
-            nextWaterlineSample = Time.unscaledTime + .1f;
+            nextWaterlineSample = Time.unscaledTime + .05f;
             int version = waterlineVersion;
             float rim = (float)geometry.RimHeightM;
             float radius = fluid.beakerCollision.z;
@@ -694,20 +700,33 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     heights[bin]++;
                     count++;
                 }
-                waterline = iceFloor;
-                if (count == 0 || heights[0] + heights[1] + heights[2] == 0) return;
+                int bottomCount = heights[0] + heights[1] + heights[2];
+                if (count == 0 || bottomCount < Mathf.Max(2, count / 50))
+                {
+                    sampledWaterline = iceFloor;
+                    return;
+                }
                 int accumulated = 0;
                 for (int i = 0; i < heights.Length; i++)
                 {
                     accumulated += heights[i];
                     if (accumulated < count * .97f) continue;
-                    waterline = iceFloor + (rim - iceFloor) * (i + .5f) / heights.Length;
+                    sampledWaterline = iceFloor + (rim - iceFloor) * (i + .5f) / heights.Length;
                     break;
                 }
             });
         }
 
-        private float DynamicIceFraction => Mathf.Min(1, Mathf.Pow((float)geometry.innerRadiusM, 3) * 917f / (releaseVolumeMl * 1e-6f * 998.2f));
+        private float DynamicIceFraction
+        {
+            get
+            {
+                float radius = (float)geometry.innerRadiusM;
+                // Allow room below the cube for shallow-water flotation and around it for rotation.
+                float side = radius * .73f;
+                return Mathf.Min(1, side * side * side * 917f / (releaseVolumeMl * 1e-6f * 998.2f));
+            }
+        }
 
         private void SpawnWater(Vector3 centre, float volumeFraction = 1)
         {
