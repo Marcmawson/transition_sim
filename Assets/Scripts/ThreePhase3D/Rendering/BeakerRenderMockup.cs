@@ -58,6 +58,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             foreach (var candidate in setup.GetComponentsInChildren<MeshFilter>())
                 if (candidate.gameObject.name == "Glass beaker") glass = candidate;
             if (glass == null) return;
+            glass.GetComponent<MeshRenderer>().sharedMaterial.SetFloat("_StudioReflections", 1);
 
             var geometry = setup.scenario.physical.geometry;
             float rim = (float)geometry.RimHeightM;
