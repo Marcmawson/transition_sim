@@ -15,6 +15,62 @@ namespace PhysicsSim.ThreePhase3D.Verification
         {
             if (project == null) throw new ArgumentNullException(nameof(project));
             if (log == null) throw new ArgumentNullException(nameof(log));
+            var coarse = Run(8);
+            var fine = Run(16);
+            var reference = Run(32);
+            var spatialCoarse = reference;
+            var spatialFine = Run(32, 3);
+            var spatialReference = Run(32, 5);
+            double coarseWallError = Math.Abs(spatialCoarse.Wall - spatialReference.Wall);
+            double fineWallError = Math.Abs(spatialFine.Wall - spatialReference.Wall);
+            if (!(fineWallError < coarseWallError))
+                throw new InvalidOperationException("The inner glass temperature did not refine with wall spacing.");
+            log(FormattableString.Invariant(
+                $"S16 reduced beaker wall refinement (2/3/5 nodes, 32 steps): inner glass differences against finest {coarseWallError:G8}/{fineWallError:G8} K."));
+            log(FormattableString.Invariant($"S12 coupled wall melting passed: ice melted {reference.Melted:G8} kg."));
+            if (Math.Abs(fine.Wall - reference.Wall) >= Math.Abs(coarse.Wall - reference.Wall) ||
+                Math.Abs(fine.Back - reference.Back) >= Math.Abs(coarse.Back - reference.Back))
+                throw new InvalidOperationException("Finite-wall condensation did not refine with timestep.");
+            log(FormattableString.Invariant(
+                $"S12 spatial-wall condensation passed: inner glass {reference.Wall:F6} K, outer glass {reference.Back:F6} K, gas {reference.Gas:F6} K, pool boiled {reference.Boiled:G8} kg, condensate {reference.Mass:G8} kg, room heat {reference.RoomHeat:G8} J, dry air exchanged {reference.AirExchanged:G8} kg, entropy produced {reference.Entropy:G8} J/K."));
+
+            (double Wall, double Back, double Gas, double Mass, double Boiled, double RoomHeat, double AirExchanged, double Entropy, double Melted) Run(int steps, int wallNodes = 2)
+            {
+                BeakerSample last = default;
+                foreach (var sample in StepCoupledBeaker(project, log, steps, wallNodes))
+                    last = sample;
+                return (last.Wall, last.Back, last.Gas, last.Condensed, last.Boiled, last.RoomHeat,
+                    last.AirExchanged, last.Entropy, last.Melted);
+            }
+        }
+
+        public readonly struct BeakerSample
+        {
+            public readonly double Time, Wall, Back, Gas, Ice, Liquid, Vapour, Air;
+            public readonly double Condensed, Boiled, RoomHeat, AirExchanged, Entropy, Melted;
+            public readonly double WaterResidual, AirResidual, EnthalpyResidual;
+            public readonly bool Heating;
+
+            internal BeakerSample(double time, bool heating, double wall, double back, double gas,
+                InventoryState inventory, LedgerResidual residual, double condensed, double boiled,
+                double roomHeat, double airExchanged, double entropy, double melted)
+            {
+                Time = time; Heating = heating; Wall = wall; Back = back; Gas = gas;
+                Ice = inventory.iceKg; Liquid = inventory.liquidKg; Vapour = inventory.vapourKg; Air = inventory.dryAirKg;
+                Condensed = condensed; Boiled = boiled; RoomHeat = roomHeat; AirExchanged = airExchanged;
+                Entropy = entropy; Melted = melted;
+                WaterResidual = residual.waterKg; AirResidual = residual.dryAirKg; EnthalpyResidual = residual.energyJ;
+            }
+        }
+
+        public static System.Collections.Generic.IEnumerable<BeakerSample> StepCoupledBeaker(
+            Func<VariableCoefficientProjection, float[], double, double[], FlowStep> project,
+            Action<string> log, int steps = 32, int wallNodes = 2)
+        {
+            if (project == null) throw new ArgumentNullException(nameof(project));
+            if (log == null) throw new ArgumentNullException(nameof(log));
+            if (steps < 2 || steps % 2 != 0) throw new ArgumentOutOfRangeException(nameof(steps));
+            if (wallNodes < 2) throw new ArgumentOutOfRangeException(nameof(wallNodes));
             const double pressure = 101325, initialWall = 283.15, initialGas = 293.15;
             const double dryAir = 1e-5, wallCapacity = 0.02, area = 1e-4, film = 0.001;
             const double roomK = initialWall, roomConductance = 0.02;
@@ -42,179 +98,158 @@ namespace PhysicsSim.ThreePhase3D.Verification
             const double initialIceKg = 1e-6, iceContactWPerK = 0.0001;
             var fusion = new PhysicsSim.ThreePhase3D.PhaseChange.SolidLiquidInterface(pressure, 250, 290);
             double meltEntropyJkgK = fusion.IceMeltingEntropyJkgK + fusion.LatentHeatJkg / fusion.MeltingTemperatureK;
-            var coarse = Run(8);
-            var fine = Run(16);
-            var reference = Run(32);
-            var spatialCoarse = reference;
-            var spatialFine = Run(32, 3);
-            var spatialReference = Run(32, 5);
-            double coarseWallError = Math.Abs(spatialCoarse.Wall - spatialReference.Wall);
-            double fineWallError = Math.Abs(spatialFine.Wall - spatialReference.Wall);
-            if (!(fineWallError < coarseWallError))
-                throw new InvalidOperationException("The inner glass temperature did not refine with wall spacing.");
-            log(FormattableString.Invariant(
-                $"S16 reduced beaker wall refinement (2/3/5 nodes, 32 steps): inner glass differences against finest {coarseWallError:G8}/{fineWallError:G8} K."));
-            log(FormattableString.Invariant($"S12 coupled wall melting passed: ice melted {reference.Melted:G8} kg."));
-            if (Math.Abs(fine.Wall - reference.Wall) >= Math.Abs(coarse.Wall - reference.Wall) ||
-                Math.Abs(fine.Back - reference.Back) >= Math.Abs(coarse.Back - reference.Back))
-                throw new InvalidOperationException("Finite-wall condensation did not refine with timestep.");
-            log(FormattableString.Invariant(
-                $"S12 spatial-wall condensation passed: inner glass {reference.Wall:F6} K, outer glass {reference.Back:F6} K, gas {reference.Gas:F6} K, pool boiled {reference.Boiled:G8} kg, condensate {reference.Mass:G8} kg, room heat {reference.RoomHeat:G8} J, dry air exchanged {reference.AirExchanged:G8} kg, entropy produced {reference.Entropy:G8} J/K."));
-
-            (double Wall, double Back, double Gas, double Mass, double Boiled, double RoomHeat, double AirExchanged, double Entropy, double Melted) Run(int steps, int wallNodes = 2)
+            const double glassConductance = 0.04;
+            double dt = 0.2 / steps;
+            int outer = wallNodes - 1;
+            // Nodal control volumes for the same slab. The two boundary nodes
+            // have half-width cells, preserving total heat capacity and resistance.
+            double contactCapacity = wallCapacity / outer;
+            double faceConductance = glassConductance * outer;
+            var capacities = Enumerable.Repeat(2 * contactCapacity, wallNodes).ToArray();
+            capacities[0] = capacities[outer] = contactCapacity;
+            var glass = new SolidConduction(capacities, Enumerable.Repeat(initialWall, wallNodes).ToArray(),
+                Enumerable.Range(0, outer).Select(i => new SolidConduction.Face(i, i + 1, faceConductance)).ToArray());
+            var power = new double[wallNodes];
+            double peakWaterResidual = 0, peakAirResidual = 0, peakEnthalpyResidual = 0;
+            double burnerOffOuterK = initialWall;
+            var ventEnthalpyIn = new StableReduction.Accumulator();
+            var ventEnthalpyOut = new StableReduction.Accumulator();
+            var ledger = new ConservationLedger(new InventoryState
             {
-                const double glassConductance = 0.04;
-                double dt = 0.2 / steps;
-                int outer = wallNodes - 1;
-                // Nodal control volumes for the same slab. The two boundary nodes
-                // have half-width cells, preserving total heat capacity and resistance.
-                double contactCapacity = wallCapacity / outer;
-                double faceConductance = glassConductance * outer;
-                var capacities = Enumerable.Repeat(2 * contactCapacity, wallNodes).ToArray();
-                capacities[0] = capacities[outer] = contactCapacity;
-                var glass = new SolidConduction(capacities, Enumerable.Repeat(initialWall, wallNodes).ToArray(),
-                    Enumerable.Range(0, outer).Select(i => new SolidConduction.Face(i, i + 1, faceConductance)).ToArray());
-                var power = new double[wallNodes];
-                double peakWaterResidual = 0, peakAirResidual = 0, peakEnthalpyResidual = 0;
-                double burnerOffOuterK = initialWall;
-                var ventEnthalpyIn = new StableReduction.Accumulator();
-                var ventEnthalpyOut = new StableReduction.Accumulator();
-                var ledger = new ConservationLedger(new InventoryState
+                dryAirKg = dryAir, vapourKg = initialVapour, liquidKg = initialPoolKg,
+                iceKg = initialIceKg,
+                internalEnergyJ = initialEnergy + initialPoolKg * pool.EnthalpyJkg +
+                    initialIceKg * fusion.IceMeltingEnthalpyJkg
+            }, new ConservationTolerance { massKg = 1e-18, energyJ = 1e-10 });
+            double initialDomainEntropy = initialEntropy + initialPoolKg * pool.EntropyJkgK +
+                initialIceKg * fusion.IceMeltingEntropyJkgK;
+            double iceKg = initialIceKg, meltKg = 0;
+            double vapour = initialVapour, remainingPoolKg = initialPoolKg, air = dryAir, roomHeatTotal = 0;
+            double liquid = 0, gasEnergy = initialEnergy, gasK = initialGas, production = 0;
+            for (int step = 0; step < steps; step++)
+            {
+                double heatedSeconds = Math.Min(dt, Math.Max(0, burnerDuration - step * dt));
+                if (heatedSeconds > 0)
                 {
-                    dryAirKg = dryAir, vapourKg = initialVapour, liquidKg = initialPoolKg,
-                    iceKg = initialIceKg,
-                    internalEnergyJ = initialEnergy + initialPoolKg * pool.EnthalpyJkg +
-                        initialIceKg * fusion.IceMeltingEnthalpyJkg
-                }, new ConservationTolerance { massKg = 1e-18, energyJ = 1e-10 });
-                double initialDomainEntropy = initialEntropy + initialPoolKg * pool.EntropyJkgK +
-                    initialIceKg * fusion.IceMeltingEntropyJkgK;
-                double iceKg = initialIceKg, meltKg = 0;
-                double vapour = initialVapour, remainingPoolKg = initialPoolKg, air = dryAir, roomHeatTotal = 0;
-                double liquid = 0, gasEnergy = initialEnergy, gasK = initialGas, production = 0;
-                for (int step = 0; step < steps; step++)
-                {
-                    double heatedSeconds = Math.Min(dt, Math.Max(0, burnerDuration - step * dt));
-                    if (heatedSeconds > 0)
-                    {
-                        var steam = boiling.Transfer(area, heatedSeconds, remainingPoolKg, vapour);
-                        double poolHeat = area * heatedSeconds * boiling.LiquidHeatWm2;
-                        Near(Math.Abs(steam.LiquidEnthalpyJ + steam.VapourEnthalpyJ), 1e-14);
-                        remainingPoolKg -= steam.WaterKg;
-                        vapour += steam.WaterKg;
-                        gasEnergy += steam.VapourEnthalpyJ;
-                        gasK = RecoverGas(gasEnergy, vapour, air);
-                        ledger.RecordExternal(ExternalChannel.HeaterAbsorbed, FluxDirection.IntoDomain, 0, 0, poolHeat);
-                        ledger.RecordExternalEntropy(ExternalChannel.HeaterAbsorbed, poolHeat / pool.TemperatureK, 0);
-                    }
-                    double wallK = glass.TemperatureK[0];
-                    // A separate wetted patch melts ice held at its fusion temperature.
-                    double meltHeat = Math.Min(iceKg * fusion.LatentHeatJkg,
-                        dt * iceContactWPerK * Math.Max(0, wallK - fusion.MeltingTemperatureK));
-                    double melted = meltHeat / fusion.LatentHeatJkg;
-                    iceKg -= melted;
-                    meltKg += melted;
-                    double oldLiquidEnergy = liquid * water.Evaluate(wallK, pressure, WaterBranch.Liquid).EnthalpyJkg;
-                    var solved = HumidInterfaceFlux.SolveTemperature(pressure, vapour / (air + vapour),
-                        film, wallK, gasK, 1000, 25, 283.15, 298.15);
-                    var transfer = HumidInterfaceFlux.InventoryTransfer(solved, area, dt, liquid, vapour);
-                    if (!(transfer.WaterKg < 0))
-                        throw new InvalidOperationException("Finite-wall fixture stopped condensing.");
-                    vapour += transfer.WaterKg;
-                    liquid -= transfer.WaterKg;
-                    gasEnergy += transfer.GasEnthalpyJ;
-                    double contactEnergy = oldLiquidEnergy + transfer.LiquidEnthalpyJ - meltHeat;
-                    double conductionIn = dt * faceConductance * (glass.TemperatureK[1] - wallK);
+                    var steam = boiling.Transfer(area, heatedSeconds, remainingPoolKg, vapour);
+                    double poolHeat = area * heatedSeconds * boiling.LiquidHeatWm2;
+                    Near(Math.Abs(steam.LiquidEnthalpyJ + steam.VapourEnthalpyJ), 1e-14);
+                    remainingPoolKg -= steam.WaterKg;
+                    vapour += steam.WaterKg;
+                    gasEnergy += steam.VapourEnthalpyJ;
                     gasK = RecoverGas(gasEnergy, vapour, air);
-                    double mass = air + vapour;
-                    var donor = humid.ReferenceTp(gasK, pressure, vapour / mass);
-                    double freeVolume = mass / donor.DensityKgM3;
-                    var projected = project(vent, new float[vent.FaceCount], dt,
-                        new[] { (headspaceVolume - freeVolume) / dt });
-                    var exchange = HumidGasAdvection.Advance(vent, projected, new[] { freeVolume },
-                        new[] { (air, vapour, gasEnergy, default(D3)) }, reservoir,
-                        new[] { mass * donor.EntropyJkgK }, gas.DensityKgM3 * gas.EntropyJkgK);
-                    double sign = exchange.Outflow.DryAirKg < 0 ? -1 : 1;
-                    ledger.RecordExternal(ExternalChannel.OpenBoundary,
-                        sign < 0 ? FluxDirection.IntoDomain : FluxDirection.OutOfDomain,
-                        sign * exchange.Outflow.VapourKg, sign * exchange.Outflow.DryAirKg, sign * exchange.Outflow.EnthalpyJ);
-                    if (sign < 0)
-                        ventEnthalpyIn.Add(-exchange.Outflow.EnthalpyJ);
-                    else
-                        ventEnthalpyOut.Add(exchange.Outflow.EnthalpyJ);
-                    ledger.RecordExternalEntropy(ExternalChannel.OpenBoundary, 0, -exchange.EntropyOutJPerK);
-                    (air, vapour, gasEnergy, _) = exchange.Gas[0];
-                    mass = air + vapour;
-                    gasK = RecoverGas(gasEnergy, vapour, air);
-                    double contactK = Recover(contactEnergy + conductionIn, t => contactCapacity * (t - wallK) +
-                        liquid * water.Evaluate(t, pressure, WaterBranch.Liquid).EnthalpyJkg);
-                    var gasState = humid.ReferenceTp(gasK, pressure, vapour / mass);
-                    var liquidState = water.Evaluate(contactK, pressure, WaterBranch.Liquid);
-                    // Apply only the interface energy remaining after condensate storage.
-                    // SolidConduction applies the glass-to-glass exchange once.
-                    power[0] = (contactEnergy - liquid * liquidState.EnthalpyJkg) / dt;
-                    double outerK = glass.TemperatureK[outer];
-                    if (heatedSeconds == 0 && step == steps / 2)
-                        burnerOffOuterK = outerK;
-                    double roomPower = roomConductance * (outerK - roomK);
-                    double burnerHeat = burnerPower * heatedSeconds;
-                    power[outer] = burnerHeat / dt - roomPower;
-                    double roomHeat = roomPower * dt;
-                    roomHeatTotal += roomHeat;
-                    ledger.RecordExternal(ExternalChannel.HeaterAbsorbed, FluxDirection.IntoDomain, 0, 0, burnerHeat);
-                    // The prescribed burner deposits heat at the receiving glass surface.
-                    ledger.RecordExternalEntropy(ExternalChannel.HeaterAbsorbed, burnerHeat / outerK, 0);
-                    ledger.RecordExternal(ExternalChannel.OpenBoundary, FluxDirection.OutOfDomain, 0, 0, roomHeat);
-                    ledger.RecordExternalEntropy(ExternalChannel.OpenBoundary, -roomHeat / roomK, 0);
-                    glass.Step(dt, power);
-                    Near(Math.Abs(glass.TemperatureK[0] - contactK), 1e-8);
-                    double glassEnergy = 0;
-                    for (int i = 0; i < wallNodes; i++)
-                        glassEnergy += capacities[i] * (glass.TemperatureK[i] - initialWall);
-                    var current = new InventoryState
-                    {
-                        dryAirKg = air, vapourKg = vapour, liquidKg = liquid + remainingPoolKg + meltKg,
-                        iceKg = iceKg,
-                        // At prescribed pressure the fixture audits enthalpy.
-                        internalEnergyJ = mass * gasState.EnthalpyJkg + liquid * liquidState.EnthalpyJkg +
-                            remainingPoolKg * pool.EnthalpyJkg + iceKg * fusion.IceMeltingEnthalpyJkg +
-                            meltKg * fusion.LiquidMeltingEnthalpyJkg,
-                        solidInternalEnergyJ = glassEnergy
-                    };
-                    var residual = ledger.Audit(current);
-                    peakWaterResidual = Math.Max(peakWaterResidual, Math.Abs(residual.waterKg));
-                    peakAirResidual = Math.Max(peakAirResidual, Math.Abs(residual.dryAirKg));
-                    peakEnthalpyResidual = Math.Max(peakEnthalpyResidual, Math.Abs(residual.energyJ));
-                    if (!residual.passed)
-                        throw new InvalidOperationException(FormattableString.Invariant(
-                            $"Reduced beaker audit failed at step {step + 1}: water {residual.waterKg:G8} kg, air {residual.dryAirKg:G8} kg, enthalpy {residual.energyJ:G8} J."));
-                    var storage = new EntropyInventory();
-                    storage.AddMaterial(mass, gasState);
-                    storage.AddMaterial(liquid, liquidState);
-                    storage.AddMaterial(remainingPoolKg, pool);
-                    for (int i = 0; i < wallNodes; i++)
-                        storage.AddSensibleStorage(capacities[i], glass.TemperatureK[i], initialWall);
-                    double nextProduction = ledger.InferEntropyProductionJPerK(initialDomainEntropy,
-                        storage.TotalJPerK + iceKg * fusion.IceMeltingEntropyJkgK + meltKg * meltEntropyJkgK);
-                    if (!(nextProduction >= production - 1e-12))
-                        throw new InvalidOperationException("Finite-wall condensation entropy decreased.");
-                    production = nextProduction;
+                    ledger.RecordExternal(ExternalChannel.HeaterAbsorbed, FluxDirection.IntoDomain, 0, 0, poolHeat);
+                    ledger.RecordExternalEntropy(ExternalChannel.HeaterAbsorbed, poolHeat / pool.TemperatureK, 0);
                 }
-                double boiled = initialPoolKg - remainingPoolKg;
-                Near(Math.Abs(boiled - expectedBoilingHeat / boiling.Saturation.LatentEnthalpyJkg), 1e-18);
-                Near(Math.Abs(ledger.HeaterAbsorbedJ - burnerPower * burnerDuration - expectedBoilingHeat), 1e-15);
-                if (!(glass.TemperatureK[0] > glass.TemperatureK[outer] && glass.TemperatureK[outer] > initialWall &&
-                    gasK < initialGas && roomHeatTotal > 0 && production > 0 &&
-                    ledger.DryAirInKg + ledger.DryAirOutKg > 0 && meltKg > 0))
-                    throw new InvalidOperationException("Finite-wall condensation failed its thermal checks.");
-                log(FormattableString.Invariant(
-                    $"S16 reduced beaker audit ({wallNodes} wall nodes, {steps} steps): peak water {peakWaterResidual:G8} kg, dry air {peakAirResidual:G8} kg, enthalpy {peakEnthalpyResidual:G8} J."));
-                log(FormattableString.Invariant(
-                    $"Vent water in/out {ledger.WaterInKg:G8}/{ledger.WaterOutKg:G8} kg, air in/out {ledger.DryAirInKg:G8}/{ledger.DryAirOutKg:G8} kg, vent enthalpy in/out {ventEnthalpyIn.Value:G8}/{ventEnthalpyOut.Value:G8} J, heater {ledger.HeaterAbsorbedJ:G8} J, room heat {roomHeatTotal:G8} J."));
-                log(FormattableString.Invariant(
-                    $"Outer glass at burner cutoff/final {burnerOffOuterK:G8}/{glass.TemperatureK[outer]:G8} K, entropy production {production:G8} J/K."));
-                return (glass.TemperatureK[0], glass.TemperatureK[outer], gasK, liquid, boiled, roomHeatTotal,
-                    ledger.DryAirInKg + ledger.DryAirOutKg, production, meltKg);
+                double wallK = glass.TemperatureK[0];
+                // A separate wetted patch melts ice held at its fusion temperature.
+                double meltHeat = Math.Min(iceKg * fusion.LatentHeatJkg,
+                    dt * iceContactWPerK * Math.Max(0, wallK - fusion.MeltingTemperatureK));
+                double melted = meltHeat / fusion.LatentHeatJkg;
+                iceKg -= melted;
+                meltKg += melted;
+                double oldLiquidEnergy = liquid * water.Evaluate(wallK, pressure, WaterBranch.Liquid).EnthalpyJkg;
+                var solved = HumidInterfaceFlux.SolveTemperature(pressure, vapour / (air + vapour),
+                    film, wallK, gasK, 1000, 25, 283.15, 298.15);
+                var transfer = HumidInterfaceFlux.InventoryTransfer(solved, area, dt, liquid, vapour);
+                if (!(transfer.WaterKg < 0))
+                    throw new InvalidOperationException("Finite-wall fixture stopped condensing.");
+                vapour += transfer.WaterKg;
+                liquid -= transfer.WaterKg;
+                gasEnergy += transfer.GasEnthalpyJ;
+                double contactEnergy = oldLiquidEnergy + transfer.LiquidEnthalpyJ - meltHeat;
+                double conductionIn = dt * faceConductance * (glass.TemperatureK[1] - wallK);
+                gasK = RecoverGas(gasEnergy, vapour, air);
+                double mass = air + vapour;
+                var donor = humid.ReferenceTp(gasK, pressure, vapour / mass);
+                double freeVolume = mass / donor.DensityKgM3;
+                var projected = project(vent, new float[vent.FaceCount], dt,
+                    new[] { (headspaceVolume - freeVolume) / dt });
+                var exchange = HumidGasAdvection.Advance(vent, projected, new[] { freeVolume },
+                    new[] { (air, vapour, gasEnergy, default(D3)) }, reservoir,
+                    new[] { mass * donor.EntropyJkgK }, gas.DensityKgM3 * gas.EntropyJkgK);
+                double sign = exchange.Outflow.DryAirKg < 0 ? -1 : 1;
+                ledger.RecordExternal(ExternalChannel.OpenBoundary,
+                    sign < 0 ? FluxDirection.IntoDomain : FluxDirection.OutOfDomain,
+                    sign * exchange.Outflow.VapourKg, sign * exchange.Outflow.DryAirKg, sign * exchange.Outflow.EnthalpyJ);
+                if (sign < 0)
+                    ventEnthalpyIn.Add(-exchange.Outflow.EnthalpyJ);
+                else
+                    ventEnthalpyOut.Add(exchange.Outflow.EnthalpyJ);
+                ledger.RecordExternalEntropy(ExternalChannel.OpenBoundary, 0, -exchange.EntropyOutJPerK);
+                (air, vapour, gasEnergy, _) = exchange.Gas[0];
+                mass = air + vapour;
+                gasK = RecoverGas(gasEnergy, vapour, air);
+                double contactK = Recover(contactEnergy + conductionIn, t => contactCapacity * (t - wallK) +
+                    liquid * water.Evaluate(t, pressure, WaterBranch.Liquid).EnthalpyJkg);
+                var gasState = humid.ReferenceTp(gasK, pressure, vapour / mass);
+                var liquidState = water.Evaluate(contactK, pressure, WaterBranch.Liquid);
+                // Apply only the interface energy remaining after condensate storage.
+                // SolidConduction applies the glass-to-glass exchange once.
+                power[0] = (contactEnergy - liquid * liquidState.EnthalpyJkg) / dt;
+                double outerK = glass.TemperatureK[outer];
+                if (heatedSeconds == 0 && step == steps / 2)
+                    burnerOffOuterK = outerK;
+                double roomPower = roomConductance * (outerK - roomK);
+                double burnerHeat = burnerPower * heatedSeconds;
+                power[outer] = burnerHeat / dt - roomPower;
+                double roomHeat = roomPower * dt;
+                roomHeatTotal += roomHeat;
+                ledger.RecordExternal(ExternalChannel.HeaterAbsorbed, FluxDirection.IntoDomain, 0, 0, burnerHeat);
+                // The prescribed burner deposits heat at the receiving glass surface.
+                ledger.RecordExternalEntropy(ExternalChannel.HeaterAbsorbed, burnerHeat / outerK, 0);
+                ledger.RecordExternal(ExternalChannel.OpenBoundary, FluxDirection.OutOfDomain, 0, 0, roomHeat);
+                ledger.RecordExternalEntropy(ExternalChannel.OpenBoundary, -roomHeat / roomK, 0);
+                glass.Step(dt, power);
+                Near(Math.Abs(glass.TemperatureK[0] - contactK), 1e-8);
+                double glassEnergy = 0;
+                for (int i = 0; i < wallNodes; i++)
+                    glassEnergy += capacities[i] * (glass.TemperatureK[i] - initialWall);
+                var current = new InventoryState
+                {
+                    dryAirKg = air, vapourKg = vapour, liquidKg = liquid + remainingPoolKg + meltKg,
+                    iceKg = iceKg,
+                    // At prescribed pressure the fixture audits enthalpy.
+                    internalEnergyJ = mass * gasState.EnthalpyJkg + liquid * liquidState.EnthalpyJkg +
+                        remainingPoolKg * pool.EnthalpyJkg + iceKg * fusion.IceMeltingEnthalpyJkg +
+                        meltKg * fusion.LiquidMeltingEnthalpyJkg,
+                    solidInternalEnergyJ = glassEnergy
+                };
+                var residual = ledger.Audit(current);
+                peakWaterResidual = Math.Max(peakWaterResidual, Math.Abs(residual.waterKg));
+                peakAirResidual = Math.Max(peakAirResidual, Math.Abs(residual.dryAirKg));
+                peakEnthalpyResidual = Math.Max(peakEnthalpyResidual, Math.Abs(residual.energyJ));
+                if (!residual.passed)
+                    throw new InvalidOperationException(FormattableString.Invariant(
+                        $"Reduced beaker audit failed at step {step + 1}: water {residual.waterKg:G8} kg, air {residual.dryAirKg:G8} kg, enthalpy {residual.energyJ:G8} J."));
+                var storage = new EntropyInventory();
+                storage.AddMaterial(mass, gasState);
+                storage.AddMaterial(liquid, liquidState);
+                storage.AddMaterial(remainingPoolKg, pool);
+                for (int i = 0; i < wallNodes; i++)
+                    storage.AddSensibleStorage(capacities[i], glass.TemperatureK[i], initialWall);
+                double nextProduction = ledger.InferEntropyProductionJPerK(initialDomainEntropy,
+                    storage.TotalJPerK + iceKg * fusion.IceMeltingEntropyJkgK + meltKg * meltEntropyJkgK);
+                if (!(nextProduction >= production - 1e-12))
+                    throw new InvalidOperationException("Finite-wall condensation entropy decreased.");
+                production = nextProduction;
+                yield return new BeakerSample((step + 1) * dt, heatedSeconds > 0, glass.TemperatureK[0],
+                    glass.TemperatureK[outer], gasK, current, residual, liquid, initialPoolKg - remainingPoolKg,
+                    roomHeatTotal, ledger.DryAirInKg + ledger.DryAirOutKg, production, meltKg);
             }
+            double boiled = initialPoolKg - remainingPoolKg;
+            Near(Math.Abs(boiled - expectedBoilingHeat / boiling.Saturation.LatentEnthalpyJkg), 1e-18);
+            Near(Math.Abs(ledger.HeaterAbsorbedJ - burnerPower * burnerDuration - expectedBoilingHeat), 1e-15);
+            if (!(glass.TemperatureK[0] > glass.TemperatureK[outer] && glass.TemperatureK[outer] > initialWall &&
+                gasK < initialGas && roomHeatTotal > 0 && production > 0 &&
+                ledger.DryAirInKg + ledger.DryAirOutKg > 0 && meltKg > 0))
+                throw new InvalidOperationException("Finite-wall condensation failed its thermal checks.");
+            log(FormattableString.Invariant(
+                $"S16 reduced beaker audit ({wallNodes} wall nodes, {steps} steps): peak water {peakWaterResidual:G8} kg, dry air {peakAirResidual:G8} kg, enthalpy {peakEnthalpyResidual:G8} J."));
+            log(FormattableString.Invariant(
+                $"Vent water in/out {ledger.WaterInKg:G8}/{ledger.WaterOutKg:G8} kg, air in/out {ledger.DryAirInKg:G8}/{ledger.DryAirOutKg:G8} kg, vent enthalpy in/out {ventEnthalpyIn.Value:G8}/{ventEnthalpyOut.Value:G8} J, heater {ledger.HeaterAbsorbedJ:G8} J, room heat {roomHeatTotal:G8} J."));
+            log(FormattableString.Invariant(
+                $"Outer glass at burner cutoff/final {burnerOffOuterK:G8}/{glass.TemperatureK[outer]:G8} K, entropy production {production:G8} J/K."));
 
             double RecoverGas(double energy, double vapour, double air)
             {
