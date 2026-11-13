@@ -11,6 +11,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     [RequireComponent(typeof(Beaker3DSetup))]
     public sealed class ParticleBeakerDrop : MonoBehaviour
     {
+        [SerializeField] private bool showBoiling;
+        private ParticleSystem vapour;
+        private Material vapourMaterial;
+        private Vector3[] vapourSources;
+        private double nextVapourSampleS;
+        private double pendingVapourKg;
+        private const float VapourWhiteSpeedMps = .35f;
         private const float SmallVolumeMl = 9;
         private const float LargeVolumeMl = 250;
         private const float DropGapM = .01f;
@@ -207,7 +214,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (fluid == null || fluid.positionBuffer == null) return;
             if (heatMovingWater && movingHeat == null)
             {
-                try { movingHeat = new MovingBeakerHeat(fluid, geometry, releaseVolumeMl * 1e-6); }
+                try { movingHeat = new MovingBeakerHeat(fluid, geometry, releaseVolumeMl * 1e-6, showBoiling); }
                 catch (Exception exception)
                 {
                     evidence = exception.Message;
@@ -245,7 +252,73 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.thermalBuoyancy = measuring ? measuredBuoyancy : thermalBuoyancy;
             fluid.beakerFloorPressure = measuring ? measuredFloorPressure : glassFloorPressure;
             fluid.AdvanceManually((float)stepSeconds, steps);
-            movingHeat?.Advance(stepSeconds * steps, measuring ? measuredBurnerWatts : absorbedBurnerWatts);
+            double dt = stepSeconds * steps;
+            movingHeat?.Advance(dt, measuring ? measuredBurnerWatts : absorbedBurnerWatts);
+            if (showBoiling && movingHeat != null)
+            {
+                if (vapour == null) CreateVapourDisplay();
+                if (fluid.SimulatedSeconds >= nextVapourSampleS)
+                {
+                    movingHeat.CollectVapour(vapourSources, EmitVapour);
+                    nextVapourSampleS = fluid.SimulatedSeconds + .05;
+                }
+                vapour.Simulate((float)dt, false, false, false);
+            }
+        }
+
+        private void ResetHeat()
+        {
+            movingHeat?.Reset();
+            vapour?.Clear();
+            pendingVapourKg = nextVapourSampleS = 0;
+        }
+
+        private void CreateVapourDisplay()
+        {
+            var display = new GameObject("Vapour parcels");
+            display.transform.SetParent(transform, false);
+            vapour = display.AddComponent<ParticleSystem>();
+            vapour.Stop(false, ParticleSystemStopBehavior.StopEmittingAndClear);
+            var main = vapour.main;
+            main.playOnAwake = false;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            main.maxParticles = 4096;
+            main.startLifetime = 2;
+            main.startSize = .003f;
+            main.startColor = Color.white;
+            var renderer = display.GetComponent<ParticleSystemRenderer>();
+            renderer.renderMode = ParticleSystemRenderMode.Billboard;
+            var shader = Shader.Find("Particles/Standard Unlit");
+            if (shader != null)
+            {
+                vapourMaterial = new Material(shader);
+                renderer.sharedMaterial = vapourMaterial;
+            }
+            var emission = vapour.emission;
+            emission.enabled = false;
+            var lift = vapour.velocityOverLifetime;
+            lift.enabled = true;
+            lift.space = ParticleSystemSimulationSpace.World;
+            lift.y = new ParticleSystem.MinMaxCurve(1, AnimationCurve.Linear(0, 0, 1, .30f));
+            var colours = vapour.colorBySpeed;
+            colours.enabled = true;
+            colours.range = new Vector2(0, VapourWhiteSpeedMps);
+            var gradient = new Gradient();
+            gradient.SetKeys(new[] { new GradientColorKey(new Color(.55f, .8f, 1), 0),
+                new GradientColorKey(Color.white, 1) },
+                new[] { new GradientAlphaKey(.65f, 0), new GradientAlphaKey(.65f, 1) });
+            colours.color = new ParticleSystem.MinMaxGradient(gradient);
+            vapourSources = new Vector3[fluid.positionBuffer.count];
+        }
+
+        private void EmitVapour(Vector3 origin, float massKg)
+        {
+            const double displayParcelKg = 1e-8;
+            pendingVapourKg += massKg;
+            int count = (int)Math.Min(32, pendingVapourKg / displayParcelKg);
+            if (count == 0) return;
+            pendingVapourKg -= count * displayParcelKg;
+            vapour.Emit(new ParticleSystem.EmitParams { position = origin, velocity = Vector3.up * .05f }, count);
         }
 
         private void SetRunning(bool value)
@@ -258,7 +331,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void StartMeasurement(int durationMicroseconds = BenchmarkMicroseconds)
         {
             fluid.ResetParticles();
-            movingHeat?.Reset();
+            ResetHeat();
             evidence = null;
             measuredFrames = 0;
             solverSteps = 0;
@@ -340,10 +413,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (movingHeat != null)
                 {
                     double solid = movingHeat.SampledSolidJ, water = movingHeat.SampledWaterJ;
-                    GUILayout.Label($"Absorbed {movingHeat.SampledInputJ:F4} J · Retained {solid + water:F4} J");
+                    GUILayout.Label($"Absorbed {movingHeat.SampledInputJ:F4} J · Accounted {solid + water + movingHeat.VapourLatentHeatJ:F4} J");
                     GUILayout.Label($"Entropy change {movingHeat.SampledStoredEntropyJPerK:G4} J/K · Inferred production {movingHeat.SampledProducedEntropyJPerK:G4} J/K");
                     GUILayout.Label($"Solids {solid:F4} J · Water {water:F4} J");
                     GUILayout.Label(movingHeat.FlowDescription);
+                    if (showBoiling)
+                    {
+                        GUILayout.Label($"Vapour generated {movingHeat.VapourGeneratedKg * 1e6:G4} mg · Latent heat {movingHeat.VapourLatentHeatJ:G4} J");
+                        GUILayout.Label("Vapour speed · light blue 0 to white 0.35 m/s");
+                    }
                     bool selected = GUILayout.Toolbar(showTemperature ? 0 : 1, ColourViews) == 0;
                     if (selected != showTemperature)
                     {
@@ -369,7 +447,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     SetRunning(false);
                     measuring = false;
                     fluid.ResetParticles();
-                    movingHeat?.Reset();
+                    ResetHeat();
                     solverSteps = 0;
                     evidence = null;
                 }
@@ -451,6 +529,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void OnDestroy()
         {
             movingHeat?.Dispose();
+            if (vapour != null) Destroy(vapour.gameObject);
+            if (vapourMaterial != null) Destroy(vapourMaterial);
             if (temperatureLegend != null) Destroy(temperatureLegend);
             if (speedLegend != null) Destroy(speedLegend);
             if (solverObject != null) Destroy(solverObject);
