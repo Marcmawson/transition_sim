@@ -69,6 +69,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         [SerializeField, Range(0f, 1f)] private float wallBounce = .2f;
         [SerializeField] private bool glassFloorPressure = true;
 
+        [SerializeField, Range(1f, 3f), Tooltip("Set before Play. Changes the solver particle count and neighbourhood spacing.")] private float particleDensityMultiplier = 1.5f;
+        [SerializeField] private Shader surfaceShader;
+        [SerializeField] private ComputeShader surfaceArguments;
+        private float spacingScale = 1;
         private FluidSim fluid;
         private BeakerFreeLookCamera beakerCamera;
         private ParticleDisplay3D particleDisplay;
@@ -138,6 +142,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 setup.Refresh();
             }
 
+            bool meshWater = surfaceShader != null && surfaceArguments != null && !heatMovingWater;
             float floor = (float)(geometry.externalBaseHeightM + geometry.baseThicknessM);
             float rim = (float)geometry.RimHeightM;
             float side = Mathf.Pow(releaseVolumeMl * 1e-6f, 1f / 3f);
@@ -145,9 +150,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             solverObject.SetActive(false);
             solverObject.transform.position = new Vector3(0, .175f, 0);
             solverObject.transform.localScale = new Vector3(.3f, .35f, .3f);
+            if (meshWater)
+            {
+                float width = (float)geometry.OuterRadiusM * 2 + .018f;
+                float height = Mathf.Max(rim - floor, DropGapM + side) + .024f;
+                solverObject.transform.position = Vector3.up * (floor + height / 2 - .012f);
+                solverObject.transform.localScale = new Vector3(width, height, width);
+            }
             var spawner = solverObject.AddComponent<Spawner3D>();
-            spawner.particleSpawnDensity = 700000000;
-            spawner.jitterStrength = .00018f;
+            spawner.particleSpawnDensity = Mathf.RoundToInt(700000000f * (meshWater ? particleDensityMultiplier : 1));
             spawner.spawnRegions = new[]
             {
                 new Spawner3D.SpawnRegion
@@ -156,6 +167,14 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     size = side
                 }
             };
+
+            if (meshWater)
+            {
+                int baseline = spawner.spawnRegions[0].CalculateParticleCountPerAxis(700000000);
+                int actual = spawner.spawnRegions[0].CalculateParticleCountPerAxis(spawner.particleSpawnDensity);
+                spacingScale = (baseline - 1f) / (actual - 1f);
+            }
+            spawner.jitterStrength = .00018f * spacingScale;
 
             computeInstance = Instantiate(fluidCompute);
             fluid = solverObject.AddComponent<FluidSim>();
@@ -175,11 +194,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     (state.DensityKgM3 * state.CpJkgK));
             }
             // Start from the demo's liquid parameters scaled to metre-sized particles.
-            fluid.smoothingRadius = .002f;
-            fluid.targetDensity = 630e6f;
+            fluid.smoothingRadius = .002f * spacingScale;
+            fluid.targetDensity = 630e6f / (spacingScale * spacingScale * spacingScale);
             ApplySceneSettings();
             fluid.maxFoamParticleCount = 1;
-            const float particleRadiusM = .0004f;
+            float particleRadiusM = .0004f * spacingScale;
             fluid.beakerCollision = new Vector4(0, 0,
                 (float)geometry.innerRadiusM * Mathf.Cos(Mathf.PI / setup.scenario.display.cylinderSegments) - particleRadiusM,
                 floor + particleRadiusM);
@@ -203,6 +222,20 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 display.colourMap = temperatureColours;
                 display.temperatureRiseDisplayMax = hotColourC - 20f;
                 ParticleDisplay3D.TextureFromGradient(ref temperatureLegend, 64, temperatureColours);
+            }
+            if (meshWater)
+            {
+                display.enabled = false;
+                fluid.renderToTex3D = true;
+                fluid.worldSpaceSurface = true;
+                fluid.densityTextureRes = 96;
+                var surface = solverObject.AddComponent<MarchingCubesFluidRenderer>();
+                surface.sim = fluid;
+                surface.drawShader = surfaceShader;
+                surface.renderArgsCompute = Instantiate(surfaceArguments);
+                surface.worldSpaceSurface = true;
+                surface.isoLevel = fluid.targetDensity * .45f;
+                surface.col = new Color(.055f, .26f, .36f);
             }
             solverObject.SetActive(true);
             SetRunning(true);
@@ -274,6 +307,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             fluid.thermalBuoyancy = measuring ? measuredBuoyancy : thermalBuoyancy;
             fluid.beakerFloorPressure = measuring ? measuredFloorPressure : glassFloorPressure;
+            if (fluid.worldSpaceSurface && beakerCamera != null)
+            {
+                float distance = Vector3.Distance(beakerCamera.transform.position, solverObject.transform.position);
+                fluid.densityTextureRes = fluid.densityTextureRes == 96
+                    ? (distance > .65f ? 56 : 96)
+                    : (distance < .55f ? 96 : 56);
+            }
             fluid.AdvanceManually((float)stepSeconds, steps);
             double dt = stepSeconds * steps;
             movingHeat?.Advance(dt, measuring ? measuredBurnerWatts : absorbedBurnerWatts);
@@ -518,9 +558,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 playbackSpeed = Slider($"Playback speed  {playbackSpeed:P0}", playbackSpeed, .05f, 1f);
                 float gravity = Slider($"Gravity  {-fluid.gravity:F2} m/s²", -fluid.gravity, 0, 20);
                 fluid.gravity = -gravity;
-                fluid.pressureMultiplier = Slider($"Pressure  {fluid.pressureMultiplier:F2}", fluid.pressureMultiplier, 0, 6);
-                fluid.nearPressureMultiplier = Slider($"Near pressure  {fluid.nearPressureMultiplier:F4}", fluid.nearPressureMultiplier, 0, .1f);
-                fluid.viscosityStrength = Slider($"Viscosity strength  {fluid.viscosityStrength:F2}", fluid.viscosityStrength, 0, 1);
+                float pressure = fluid.pressureMultiplier / spacingScale;
+                fluid.pressureMultiplier = Slider($"Pressure  {pressure:F2}", pressure, 0, 6) * spacingScale;
+                float nearPressure = fluid.nearPressureMultiplier / spacingScale;
+                fluid.nearPressureMultiplier = Slider($"Near pressure  {nearPressure:F4}", nearPressure, 0, .1f) * spacingScale;
+                float dampingScale = spacingScale * spacingScale * spacingScale;
+                float damping = fluid.viscosityStrength / dampingScale;
+                fluid.viscosityStrength = Slider($"Viscosity strength  {damping:F2}", damping, 0, 1) * dampingScale;
                 fluid.collisionDamping = Slider($"Wall bounce  {fluid.collisionDamping:P0}", fluid.collisionDamping, 0, 1);
                 glassFloorPressure = GUILayout.Toggle(glassFloorPressure, "Glass floor pressure support");
                 if (movingHeat != null)
@@ -563,9 +607,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
             playbackSpeed = playbackPercent / 100f;
             fluid.gravity = -gravity;
-            fluid.pressureMultiplier = pressureMultiplier;
-            fluid.nearPressureMultiplier = nearPressureMultiplier;
-            fluid.viscosityStrength = viscosityStrength;
+            fluid.pressureMultiplier = pressureMultiplier * spacingScale;
+            fluid.nearPressureMultiplier = nearPressureMultiplier * spacingScale;
+            fluid.viscosityStrength = viscosityStrength * spacingScale * spacingScale * spacingScale;
             fluid.collisionDamping = wallBounce;
         }
 
