@@ -34,6 +34,21 @@ namespace PhysicsSim.ThreePhase3D.Flow
         public double InitialLiquidEnthalpyJ { get; }
         public double LiquidEnthalpyDriftJ => State.LiquidEnergyJ.Sum() - InitialLiquidEnthalpyJ - LiquidHeatJ;
         public double LiquidHeatJ { get; private set; }
+        private const double LiquidSpecificHeatJkgK = 4180;
+        public double MeanLiquidTemperatureK
+        {
+            get
+            {
+                if (glass == null) throw new InvalidOperationException("Enable floor heating to sample temperature.");
+                double mass = State.LiquidM3.Sum() * LiquidDensityKgM3;
+                return TemperatureFromEnthalpy(mass, State.LiquidEnergyJ.Sum());
+            }
+        }
+
+        private double TemperatureFromEnthalpy(double massKg, double enthalpyJ) =>
+            thermalReferenceK + (enthalpyJ / massKg - InitialLiquidEnthalpyJ / InitialLiquidMassKg) /
+                LiquidSpecificHeatJkgK;
+
         public double ThermalResidualJ { get; private set; }
         private BeakerSolidMesh thermalMesh;
         private SolidConduction glass;
@@ -151,9 +166,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
         private void ExchangeFloorHeat(CutCellInventories fields, double dt, double watts)
         {
-            const double liquidCp = 4180, liquidConductivity = .6, glassConductivity = 1.2;
+            const double liquidConductivity = .6, glassConductivity = 1.2;
             var input = GeometryInputsForPreview();
-            double referenceEnthalpy = InitialLiquidEnthalpyJ / InitialLiquidMassKg;
             for (int i = 0; i < glassPower.Length; i++) glassPower[i] = watts * thermalMesh.BurnerWeights[i];
             double heat = 0;
             // Cell-centre floor contact with a volume-fraction estimate of wet area.
@@ -162,9 +176,9 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 int group = contact.Group;
                 double volume = fields.LiquidM3[group];
                 if (volume <= 0) continue;
-                double capacity = volume * LiquidDensityKgM3 * liquidCp;
-                double liquidK = thermalReferenceK +
-                    (fields.LiquidEnergyJ[group] - volume * LiquidDensityKgM3 * referenceEnthalpy) / capacity;
+                double mass = volume * LiquidDensityKgM3;
+                double capacity = mass * LiquidSpecificHeatJkgK;
+                double liquidK = TemperatureFromEnthalpy(mass, fields.LiquidEnergyJ[group]);
                 double glassK = glass.TemperatureK[contact.Glass];
                 double rate = CoupledHeatFaces.HeatRateW(contact.Area * volume / Plan.Volumes[group],
                     glassK, liquidK, input.baseThicknessM / (2 * BeakerSolidMesh.BaseDepthCells),
