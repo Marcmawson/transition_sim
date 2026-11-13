@@ -161,23 +161,39 @@ namespace PhysicsSim.ThreePhase3D.Verification
             for (int group = 0; group < source.Length; group++)
                 source[group] = (plan.Volumes[group] - volumes[group]) / dt;
             var flow = FlowCpuReference.Project(plan, new float[plan.FaceCount], dt, 32768, null, source);
+            var humid = new HumidGas();
+            double reservoirSpecificEntropy = humid.ReferenceRhoT(temperature, reservoirDensity, ambient).EntropyJkgK;
+            var donorEntropy = gas.Select((cell, group) =>
+            {
+                double mass = cell.DryAirKg + cell.VapourKg;
+                return mass * humid.ReferenceRhoT(temperature, mass / volumes[group], cell.VapourKg / mass).EntropyJkgK;
+            }).ToArray();
             var moved = HumidGasAdvection.Advance(plan, flow, volumes, gas,
-                (reservoirDensity * (1 - ambient), reservoirDensity * ambient, 1e4, default));
-            double outwardVolume = 0;
+                (reservoirDensity * (1 - ambient), reservoirDensity * ambient, 1e4, default),
+                donorEntropy, reservoirDensity * reservoirSpecificEntropy);
+            double outwardVolume = 0, expectedEntropy = 0;
             for (int face = 0; face < plan.FaceCount; face++)
             {
                 var metric = plan.Faces[face];
                 if (metric.Active != 0 && metric.High < 0)
-                    outwardVolume += metric.Area * (double)flow.VelocityMPerS[face] * dt;
+                {
+                    double volume = metric.Area * (double)flow.VelocityMPerS[face] * dt;
+                    outwardVolume += volume;
+                    if (volume < 0)
+                        expectedEntropy += volume * reservoirDensity * reservoirSpecificEntropy;
+                    else
+                        expectedEntropy += volume * donorEntropy[metric.Low] / volumes[metric.Low];
+                }
             }
             double expected = transferredVapour * specificVapourVolume -
                 (after.FluidVolumeM3.Sum() - before.FluidVolumeM3.Sum());
             if (Math.Abs(outwardVolume - expected) > Math.Max(1e-19, Math.Abs(expected) * 1e-5) ||
                 Math.Abs(moved.Gas.Sum(cell => cell.DryAirKg) + moved.Outflow.DryAirKg - gas.Sum(cell => cell.DryAirKg)) > 1e-19 ||
                 Math.Abs(moved.Gas.Sum(cell => cell.VapourKg) + moved.Outflow.VapourKg - gas.Sum(cell => cell.VapourKg)) > 1e-19 ||
-                Math.Abs(moved.Gas.Sum(cell => cell.EnthalpyJ) + moved.Outflow.EnthalpyJ - gas.Sum(cell => cell.EnthalpyJ)) > 1e-15)
+                Math.Abs(moved.Gas.Sum(cell => cell.EnthalpyJ) + moved.Outflow.EnthalpyJ - gas.Sum(cell => cell.EnthalpyJ)) > 1e-15 ||
+                Math.Abs(moved.EntropyOutJPerK - expectedEntropy) > 1e-18)
                 throw new InvalidOperationException("V41 pressure redistribution failed its boundary balance.");
-            log(FormattableString.Invariant($"S15 V41 gas redistribution passed: outward volume {outwardVolume:G8} m3."));
+            log(FormattableString.Invariant($"S15 V41 gas redistribution passed: outward volume {outwardVolume:G8} m3, outward entropy {moved.EntropyOutJPerK:G8} J/K."));
         }
     }
 }

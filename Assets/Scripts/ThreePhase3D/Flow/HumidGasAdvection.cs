@@ -76,17 +76,24 @@ namespace PhysicsSim.ThreePhase3D.Flow
         }
 
         internal static ((double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[] Gas,
-            (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS) Outflow) Advance(
+            (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS) Outflow,
+            double EntropyOutJPerK) Advance(
             VariableCoefficientProjection plan, FlowStep flow, double[] gasVolumes,
             (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[] gas,
-            (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)? reservoirPerM3 = null)
+            (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)? reservoirPerM3 = null,
+            double[] donorEntropyJPerK = null, double? reservoirEntropyJPerM3K = null)
         {
             if (!flow.Diagnostics.Converged || flow.VelocityMPerS.Length != plan.FaceCount ||
                 gas.Length != plan.GroupCount || gasVolumes.Length != plan.GroupCount)
                 throw new ArgumentException("Gas advection requires a compatible converged projection and gas inventories.");
+            if (donorEntropyJPerK != null && donorEntropyJPerK.Length != gas.Length ||
+                reservoirEntropyJPerM3K.HasValue && (donorEntropyJPerK == null ||
+                    !SiUnits.IsFinite(reservoirEntropyJPerM3K.Value)))
+                throw new ArgumentException("Entropy inputs must match the gas donors and reservoir.");
 
             var incoming = new (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[gas.Length];
             var fractions = new double[gas.Length];
+            double entropyOut = 0;
             (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS) outlet = default;
             for (int index = 0; index < plan.FaceCount; index++)
             {
@@ -100,6 +107,12 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 {
                     if (!reservoirPerM3.HasValue)
                         throw new InvalidOperationException("Gas advection requires a prescribed reservoir for boundary inflow.");
+                    if (donorEntropyJPerK != null)
+                    {
+                        if (!reservoirEntropyJPerM3K.HasValue)
+                            throw new InvalidOperationException("Audited gas inflow requires reservoir entropy.");
+                        entropyOut -= reservoirEntropyJPerM3K.Value * Math.Abs(volume);
+                    }
                     var reservoir = reservoirPerM3.Value;
                     if (!(reservoir.DryAirKg > 0 && reservoir.VapourKg >= 0) ||
                         !SiUnits.IsFinite(reservoir.DryAirKg) || !SiUnits.IsFinite(reservoir.VapourKg) ||
@@ -114,7 +127,12 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 if (!(fractions[donor] <= 1))
                     throw new InvalidOperationException("Projected outflow exceeds the donor gas volume. Reduce the timestep.");
                 var transfer = Scale(gas[donor], fraction);
-                if (receiver < 0) outlet = Add(outlet, transfer);
+                if (receiver < 0)
+                {
+                    outlet = Add(outlet, transfer);
+                    if (donorEntropyJPerK != null)
+                        entropyOut += donorEntropyJPerK[donor] * fraction;
+                }
                 else incoming[receiver] = Add(incoming[receiver], transfer);
             }
 
@@ -123,11 +141,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 var state = gas[group];
                 if (!SiUnits.IsFinite(gasVolumes[group]) || gasVolumes[group] <= 0 ||
                     !SiUnits.IsFinite(state.DryAirKg) || state.DryAirKg <= 0 ||
-                    !SiUnits.IsFinite(state.VapourKg) || state.VapourKg < 0 || !SiUnits.IsFinite(state.EnthalpyJ))
+                    !SiUnits.IsFinite(state.VapourKg) || state.VapourKg < 0 || !SiUnits.IsFinite(state.EnthalpyJ) ||
+                    donorEntropyJPerK != null && !SiUnits.IsFinite(donorEntropyJPerK[group]))
                     throw new ArgumentException("Invalid gas donor inventory or volume.");
                 incoming[group] = Add(incoming[group], Scale(state, 1 - fractions[group]));
             }
-            return (incoming, outlet);
+            if (!SiUnits.IsFinite(entropyOut)) throw new InvalidOperationException("Nonfinite boundary entropy transport.");
+            return (incoming, outlet, entropyOut);
         }
 
         private static (double, double, double, D3) Scale((double Air, double Vapour, double Enthalpy, D3 Momentum) gas, double fraction) =>
