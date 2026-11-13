@@ -1,4 +1,5 @@
 using System;
+using PhysicsSim.ThreePhase3D.Diagnostics;
 using System.Linq;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
@@ -41,6 +42,26 @@ namespace PhysicsSim.ThreePhase3D.Verification
             double expected = initialVapour - target;
             var coarse = Advance(16);
             var fine = Advance(64);
+            // The prescribed bulk and wall temperatures imply a thermostat.
+            // Recover its heat removal from the fixed-pressure enthalpy balance.
+            var initialGas = humid.ReferenceTp(bulkK, pressure, initialFraction);
+            double finalVapour = initialVapour - fine.CondensedKg;
+            double finalMass = dryAir + finalVapour;
+            var finalGas = humid.ReferenceTp(bulkK, pressure, finalVapour / finalMass);
+            double heatToWall = (dryAir + initialVapour) * initialGas.EnthalpyJkg -
+                finalMass * finalGas.EnthalpyJkg - fine.CondensedKg * surface.Liquid.EnthalpyJkg;
+            var initialStorage = new EntropyInventory();
+            initialStorage.AddMaterial(dryAir + initialVapour, initialGas);
+            var finalStorage = new EntropyInventory();
+            finalStorage.AddMaterial(finalMass, finalGas);
+            finalStorage.AddMaterial(fine.CondensedKg, surface.Liquid);
+            var ledger = new ConservationLedger(new InventoryState(), new ConservationTolerance());
+            ledger.RecordExternalEntropy(ExternalChannel.OpenBoundary, -heatToWall / surfaceK, 0);
+            double production = ledger.InferEntropyProductionJPerK(initialStorage.TotalJPerK, finalStorage.TotalJPerK);
+            if (!(heatToWall > 0 && production > 0))
+                throw new InvalidOperationException("The thermostatted condensation entropy audit failed.");
+            log(FormattableString.Invariant(
+                $"S12 V28 condensation entropy passed: thermostat heat {heatToWall:G8} J, production {production:G8} J/K."));
             double coarseError = Math.Abs(coarse.CondensedKg / expected - 1);
             double fineError = Math.Abs(fine.CondensedKg / expected - 1);
             if (!(fineError < coarseError / 3.5 && fineError < 0.005))
