@@ -1,6 +1,7 @@
 #pragma kernel ClearContacts
 #pragma kernel FindContacts
 #pragma kernel ExchangeHeat
+#pragma kernel ExchangeHeatAndBoil BOILING
 #pragma kernel ReduceRingHeat
 #pragma kernel ConductGlass
 #pragma kernel MeasureVerticalFlow
@@ -52,8 +53,17 @@ void FindContacts(uint3 id : SV_DispatchThreadID)
     ContactRing[id.x] = ring;
 }
 
+#ifdef BOILING
+RWStructuredBuffer<float> VapourProduction;
+float SaturationRiseK, ParticleMassKg, LatentHeatJkg;
+#endif
+
 [numthreads(64,1,1)]
+#ifdef BOILING
+void ExchangeHeatAndBoil(uint3 id : SV_DispatchThreadID)
+#else
 void ExchangeHeat(uint3 id : SV_DispatchThreadID)
+#endif
 {
     if (id.x >= ParticleCount) return;
     int ring = ContactRing[id.x];
@@ -64,7 +74,15 @@ void ExchangeHeat(uint3 id : SV_DispatchThreadID)
         float wetted = min(ParticleArea, area / ContactCounts[ring]);
         uint glass = (ring + 1) * BaseDepth - 1;
         gain = Dt * ConductancePerArea * wetted * (GlassRead[glass] - TemperatureRise[id.x]);
-        TemperatureRise[id.x] += gain / ParticleCapacity;
+        float rise = TemperatureRise[id.x] + gain / ParticleCapacity;
+#ifdef BOILING
+        // Only heat above saturation supplies the latent energy of new vapour.
+        float latent = min(max(0, rise - SaturationRiseK) * ParticleCapacity,
+            ParticleMassKg * LatentHeatJkg);
+        VapourProduction[id.x] += latent / LatentHeatJkg;
+        rise -= latent / ParticleCapacity;
+#endif
+        TemperatureRise[id.x] = rise;
     }
     ParticleGain[id.x] = gain;
 }
