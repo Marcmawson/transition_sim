@@ -55,6 +55,7 @@ void FindContacts(uint3 id : SV_DispatchThreadID)
 
 #ifdef BOILING
 RWStructuredBuffer<float> VapourProduction;
+RWStructuredBuffer<float> LiquidFraction;
 float SaturationRiseK, ParticleMassKg, LatentHeatJkg;
 #endif
 
@@ -73,14 +74,27 @@ void ExchangeHeat(uint3 id : SV_DispatchThreadID)
         float area = 3.14159265 * (2 * ring + 1) * RingWidth * RingWidth;
         float wetted = min(ParticleArea, area / ContactCounts[ring]);
         uint glass = (ring + 1) * BaseDepth - 1;
-        gain = Dt * ConductancePerArea * wetted * (GlassRead[glass] - TemperatureRise[id.x]);
-        float rise = TemperatureRise[id.x] + gain / ParticleCapacity;
+        float liquidFraction = 1;
+#ifdef BOILING
+        liquidFraction = LiquidFraction[id.x];
+        if (liquidFraction <= 0) { ParticleGain[id.x] = 0; return; }
+#endif
+        float capacity = ParticleCapacity * liquidFraction;
+        gain = Dt * ConductancePerArea * wetted * liquidFraction * (GlassRead[glass] - TemperatureRise[id.x]);
+        float rise = TemperatureRise[id.x] + gain / capacity;
 #ifdef BOILING
         // Only heat above saturation supplies the latent energy of new vapour.
-        float latent = min(max(0, rise - SaturationRiseK) * ParticleCapacity,
-            ParticleMassKg * LatentHeatJkg);
-        VapourProduction[id.x] += latent / LatentHeatJkg;
-        rise -= latent / ParticleCapacity;
+        float excess = max(0, rise - SaturationRiseK) * capacity;
+        float remaining = liquidFraction - min(liquidFraction, excess / (ParticleMassKg * LatentHeatJkg));
+        float evaporatedFraction = liquidFraction - remaining;
+        LiquidFraction[id.x] = remaining;
+        VapourProduction[id.x] += evaporatedFraction * ParticleMassKg;
+        float sensibleRemainder = capacity * (rise - SaturationRiseK) -
+            evaporatedFraction * ParticleMassKg * LatentHeatJkg;
+        if (remaining > 0 && evaporatedFraction > 0)
+            rise = SaturationRiseK + sensibleRemainder / (ParticleCapacity * remaining);
+        else if (remaining <= 0)
+            rise = SaturationRiseK;
 #endif
         TemperatureRise[id.x] = rise;
     }
