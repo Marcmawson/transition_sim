@@ -92,6 +92,10 @@ namespace Seb.Fluid.Simulation
 		[HideInInspector] public float beakerGlassFloorY;
 		[NonSerialized] public float[] buoyancyDensityByDegree;
 		public ComputeBuffer TemperatureRise { get; private set; }
+		[HideInInspector] public bool trackLiquidMass;
+		public ComputeBuffer LiquidFraction { get; private set; }
+		float[] initialLiquidFraction;
+		int sortLiquidMassKernel, copyLiquidMassKernel;
 		ComputeBuffer sortedTemperature;
 		float[] initialTemperature;
 		int activeReorderKernel = reorderKernel, activeCopyBackKernel = reorderCopybackKernel;
@@ -181,6 +185,27 @@ namespace Seb.Fluid.Simulation
 					compute.SetInt("BuoyancyDensityCount", buoyancyDensityByDegree.Length);
 					compute.SetBuffer(activeExternalForcesKernel, "BuoyancyDensity", densityTable);
 					compute.SetBuffer(activeExternalForcesKernel, "TemperatureRise", TemperatureRise);
+				}
+			}
+
+			compute.SetInt("TrackLiquidMass", trackLiquidMass ? 1 : 0);
+			LiquidFraction = CreateStructuredBuffer<float>(trackLiquidMass ? numParticles : 1);
+			var sortedFraction = CreateStructuredBuffer<float>(trackLiquidMass ? numParticles : 1);
+			bufferNameLookup.Add(LiquidFraction, "LiquidFraction");
+			bufferNameLookup.Add(sortedFraction, "SortedLiquidFraction");
+			initialLiquidFraction = new float[LiquidFraction.count];
+			for (int i = 0; i < initialLiquidFraction.Length; i++) initialLiquidFraction[i] = 1;
+			foreach (int kernel in new[] { densityKernel, pressureKernel, viscosityKernel, renderKernel })
+				compute.SetBuffer(kernel, "LiquidFraction", LiquidFraction);
+			if (trackLiquidMass)
+			{
+				sortLiquidMassKernel = compute.FindKernel("SortLiquidMass");
+				copyLiquidMassKernel = compute.FindKernel("CopyLiquidMass");
+				compute.SetBuffer(sortLiquidMassKernel, "SortedIndices", spatialHash.SpatialIndices);
+				foreach (int kernel in new[] { sortLiquidMassKernel, copyLiquidMassKernel })
+				{
+					compute.SetBuffer(kernel, "LiquidFraction", LiquidFraction);
+					compute.SetBuffer(kernel, "SortedLiquidFraction", sortedFraction);
 				}
 			}
 
@@ -382,6 +407,11 @@ namespace Seb.Fluid.Simulation
 			Dispatch(compute, positionBuffer.count, kernelIndex: spatialHashKernel);
 			spatialHash.Run();
 			
+			if (trackLiquidMass)
+			{
+				Dispatch(compute, positionBuffer.count, kernelIndex: sortLiquidMassKernel);
+				Dispatch(compute, positionBuffer.count, kernelIndex: copyLiquidMassKernel);
+			}
 			Dispatch(compute, positionBuffer.count, kernelIndex: activeReorderKernel);
 			Dispatch(compute, positionBuffer.count, kernelIndex: activeCopyBackKernel);
 
@@ -456,6 +486,7 @@ namespace Seb.Fluid.Simulation
 			predictedPositionsBuffer.SetData(spawnData.points);
 			velocityBuffer.SetData(spawnData.velocities);
 			if (TemperatureRise != null) TemperatureRise.SetData(initialTemperature);
+			LiquidFraction?.SetData(initialLiquidFraction);
 
 			foamBuffer.SetData(new FoamParticle[foamBuffer.count]);
 
