@@ -209,7 +209,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
             // Start from the demo's liquid parameters scaled to metre-sized particles.
             fluid.smoothingRadius = .002f * spacingScale;
-            fluid.targetDensity = 630e6f / (spacingScale * spacingScale * spacingScale);
+            fluid.targetDensity = meshWater
+                ? InteriorSpawnDensity(fluid.smoothingRadius, cylinderRadius, cylinderHeight, spawner.particleSpawnDensity)
+                : 630e6f;
+            // Start the mesh drop with modest pressure and neighbour damping.
+            // The legacy particle scene keeps its own tuning.
+            if (meshWater)
+            {
+                pressureMultiplier = 1.2f;
+                nearPressureMultiplier = .004f;
+                viscosityStrength = .00000002f;
+            }
             ApplySceneSettings();
             fluid.maxFoamParticleCount = 1;
             float particleRadiusM = .0004f * spacingScale;
@@ -254,6 +264,25 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             solverObject.SetActive(true);
             SetRunning(!meshWater);
             if (meshWater) beakerCamera?.FrameRelease(releaseViewCentre, releaseViewHeight);
+        }
+
+        private static float InteriorSpawnDensity(float radius, float cylinderRadius, float height, int particleDensity)
+        {
+            float spacing = Mathf.Pow(1f / particleDensity, 1f / 3f);
+            float horizontal = 2 * cylinderRadius / Mathf.Max(1, Mathf.RoundToInt(2 * cylinderRadius / spacing));
+            float vertical = height / Mathf.Max(1, Mathf.RoundToInt(height / spacing));
+            float sum = 0;
+            int across = Mathf.CeilToInt(radius / horizontal);
+            int up = Mathf.CeilToInt(radius / vertical);
+            for (int x = -across; x <= across; x++)
+            for (int y = -up; y <= up; y++)
+            for (int z = -across; z <= across; z++)
+            {
+                float distance = new Vector3(x * horizontal, y * vertical, z * horizontal).magnitude;
+                float support = Mathf.Max(0, radius - distance);
+                sum += support * support;
+            }
+            return sum * 15 / (2 * Mathf.PI * Mathf.Pow(radius, 5));
         }
 
         private static float[] BuildBuoyancyDensityTable()
@@ -584,7 +613,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 fluid.nearPressureMultiplier = Slider($"Near pressure  {nearPressure:F4}", nearPressure, 0, .1f) * spacingScale;
                 float dampingScale = spacingScale * spacingScale * spacingScale;
                 float damping = fluid.viscosityStrength / dampingScale;
-                fluid.viscosityStrength = Slider($"Viscosity strength  {damping:F2}", damping, 0, 1) * dampingScale;
+                float dampingLimit = fluid.worldSpaceSurface ? .0000001f : 1f;
+                string dampingLabel = fluid.worldSpaceSurface ? $"Viscosity strength  {damping:E2}" : $"Viscosity strength  {damping:F2}";
+                fluid.viscosityStrength = Slider(dampingLabel, damping, 0, dampingLimit) * dampingScale;
                 fluid.collisionDamping = Slider($"Wall bounce  {fluid.collisionDamping:P0}", fluid.collisionDamping, 0, 1);
                 glassFloorPressure = GUILayout.Toggle(glassFloorPressure, "Glass floor pressure support");
                 if (movingHeat != null)
