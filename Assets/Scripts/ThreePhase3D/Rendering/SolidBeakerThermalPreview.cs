@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
+using PhysicsSim.ThreePhase3D.Diagnostics;
 using PhysicsSim.ThreePhase3D.Thermal;
 using UnityEngine;
 
@@ -33,7 +34,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         }
 
         private ComputeShader shader;
-        private ComputeBuffer read, write, capacity, burner, faceStart, links, exposedArea, roomEnergy;
+        private ComputeBuffer read, write, capacity, burner, faceStart, links, exposedArea, roomEnergy, burnerEntropy;
         private Texture2D map;
         private GameObject waterDisplay;
         private Mesh waterMesh;
@@ -42,7 +43,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private Color32[] waterVertexColours;
         private BeakerSolidMesh mesh;
         private float[] snapshot;
-        private float[] roomSnapshot;
+        private float[] roomSnapshot, burnerEntropySnapshot;
+        private ConservationLedger entropyLedger;
+        private double storedEntropyJPerK, producedEntropyJPerK, sampledBurnerEntropy, sampledRoomEntropy;
         private double lostJ;
         private readonly Color32[] pixels = new Color32[RadialCells * DepthCells];
         private double absorbedJ, sampledAbsorbedJ, storedJ, waterJ, waterCapacity;
@@ -87,6 +90,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             int cellCount = mesh.CapacityJPerK.Length;
             snapshot = new float[cellCount];
             roomSnapshot = new float[cellCount];
+            burnerEntropySnapshot = new float[cellCount];
             var initial = new double[cellCount];
             for (int i = 0; i < cellCount; i++) initial[i] = InitialK + (i % 7) * .5;
 
@@ -119,6 +123,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             burner = new ComputeBuffer(cellCount, sizeof(float));
             exposedArea = new ComputeBuffer(cellCount, sizeof(float));
             roomEnergy = new ComputeBuffer(cellCount, sizeof(float));
+            burnerEntropy = new ComputeBuffer(cellCount, sizeof(float));
             faceStart = new ComputeBuffer(starts.Length, sizeof(int));
             links = new ComputeBuffer(flattened.Count, sizeof(int) + sizeof(float));
             capacity.SetData(Array.ConvertAll(mesh.CapacityJPerK, value => (float)value));
@@ -131,6 +136,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             shader.SetBuffer(kernel, "BurnerPower", burner);
             exposedArea.SetData(Array.ConvertAll(mesh.ExposedAreaM2, value => (float)value));
             roomEnergy.SetData(roomSnapshot);
+            burnerEntropy.SetData(burnerEntropySnapshot);
+            shader.SetFloat("RoomTemperatureK", (float)InitialK);
+            shader.SetBuffer(kernel, "BurnerEntropyJPerK", burnerEntropy);
             shader.SetBuffer(kernel, "ExposedArea", exposedArea);
             shader.SetBuffer(kernel, "RoomEnergyJ", roomEnergy);
             shader.SetBuffer(kernel, "FaceStart", faceStart);
@@ -313,14 +321,24 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 read.GetData(snapshot);
                 roomEnergy.GetData(roomSnapshot);
-                storedJ = waterJ = lostJ = 0;
+                burnerEntropy.GetData(burnerEntropySnapshot);
+                double burnerEntropyTotal = 0;
+                storedJ = waterJ = lostJ = storedEntropyJPerK = 0;
                 for (int i = 0; i < snapshot.Length; i++)
                 {
                     double cellJ = snapshot[i] * mesh.CapacityJPerK[i];
                     storedJ += cellJ;
                     lostJ += roomSnapshot[i];
+                    burnerEntropyTotal += burnerEntropySnapshot[i];
+                    storedEntropyJPerK += mesh.CapacityJPerK[i] * Math.Log(1 + snapshot[i] / InitialK);
                     if (i >= mesh.WaterStart) waterJ += cellJ;
                 }
+                double roomEntropyTotal = -lostJ / InitialK;
+                entropyLedger.RecordExternalEntropy(ExternalChannel.HeaterAbsorbed, burnerEntropyTotal - sampledBurnerEntropy, 0);
+                entropyLedger.RecordExternalEntropy(ExternalChannel.OpenBoundary, roomEntropyTotal - sampledRoomEntropy, 0);
+                sampledBurnerEntropy = burnerEntropyTotal;
+                sampledRoomEntropy = roomEntropyTotal;
+                producedEntropyJPerK = entropyLedger.InferEntropyProductionJPerK(0, storedEntropyJPerK);
                 sampledAbsorbedJ = absorbedJ;
                 RefreshMap();
                 RefreshWaterColours();
@@ -342,6 +360,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             Array.Clear(snapshot, 0, snapshot.Length);
             absorbedJ = sampledAbsorbedJ = storedJ = waterJ = lostJ = 0;
+            entropyLedger = new ConservationLedger(new InventoryState(), new ConservationTolerance());
+            storedEntropyJPerK = producedEntropyJPerK = sampledBurnerEntropy = sampledRoomEntropy = 0;
+            Array.Clear(burnerEntropySnapshot, 0, burnerEntropySnapshot.Length);
+            burnerEntropy.SetData(burnerEntropySnapshot);
             Array.Clear(roomSnapshot, 0, roomSnapshot.Length);
             roomEnergy.SetData(roomSnapshot);
             read.SetData(snapshot);
@@ -388,6 +410,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.Label($"Lower wall {snapshot[mesh.LowerWall] + 20:F2} °C · Rim {snapshot[mesh.Rim] + 20:F2} °C");
                 GUILayout.Label($"Support ring {snapshot[mesh.Ring] + 20:F2} °C · Leg top {snapshot[mesh.LegTop] + 20:F2} °C · Foot {snapshot[mesh.Foot] + 20:F2} °C");
                 GUILayout.Label($"Absorbed {sampledAbsorbedJ:F2} J · Stored {storedJ:F2} J · To room {lostJ:F2} J");
+                GUILayout.Label($"Entropy change {storedEntropyJPerK:G4} J/K · Inferred production {producedEntropyJPerK:G4} J/K");
                 GUILayout.Label("Glass base cross-section · centre to rim · 20–45 °C");
                 Rect rect = GUILayoutUtility.GetRect(1, 70, GUILayout.ExpandWidth(true));
                 GUI.DrawTexture(rect, map, ScaleMode.StretchToFill);
@@ -410,6 +433,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             burner?.Release();
             exposedArea?.Release();
             roomEnergy?.Release();
+            burnerEntropy?.Release();
             faceStart?.Release();
             links?.Release();
             if (waterDisplay != null) Destroy(waterDisplay);

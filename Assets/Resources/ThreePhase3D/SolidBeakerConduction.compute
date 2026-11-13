@@ -5,6 +5,7 @@ StructuredBuffer<float> Capacity;
 StructuredBuffer<float> BurnerPower;
 StructuredBuffer<float> ExposedArea;
 RWStructuredBuffer<float> RoomEnergyJ;
+RWStructuredBuffer<float> BurnerEntropyJPerK;
 StructuredBuffer<int> FaceStart;
 struct FaceLink { int Other; float Conductance; };
 StructuredBuffer<FaceLink> FaceLinks;
@@ -12,6 +13,7 @@ int CellCount;
 float StepSeconds;
 float AbsorbedPowerW;
 float RoomFilmWm2K;
+float RoomTemperatureK;
 
 [numthreads(64, 1, 1)]
 void Conduct(uint3 id : SV_DispatchThreadID)
@@ -19,7 +21,9 @@ void Conduct(uint3 id : SV_DispatchThreadID)
     uint cell = id.x;
     if (cell >= (uint)CellCount) return;
     float temperature = TemperatureRead[cell];
-    float power = AbsorbedPowerW * BurnerPower[cell];
+    float burnerPower = AbsorbedPowerW * BurnerPower[cell];
+    BurnerEntropyJPerK[cell] += StepSeconds * burnerPower / (RoomTemperatureK + temperature);
+    float power = burnerPower;
     for (int i = FaceStart[cell]; i < FaceStart[cell + 1]; i++)
     {
         FaceLink link = FaceLinks[i];
