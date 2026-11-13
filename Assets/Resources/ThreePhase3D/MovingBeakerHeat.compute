@@ -14,6 +14,8 @@ StructuredBuffer<float> GlassRead;
 RWStructuredBuffer<float> GlassWrite;
 StructuredBuffer<float> GlassCapacity;
 StructuredBuffer<float> BurnerWeight;
+RWStructuredBuffer<float> BurnerEntropyJPerK;
+float InitialTemperatureK;
 StructuredBuffer<int> FaceStart;
 struct Link { int Other; float Conductance; };
 StructuredBuffer<Link> FaceLinks;
@@ -89,6 +91,7 @@ void ConductGlass(uint3 id : SV_DispatchThreadID)
     if (cell >= SolidCount) return;
     float rise = GlassRead[cell];
     float power = BurnerWatts * BurnerWeight[cell];
+    BurnerEntropyJPerK[cell] += Dt * power / (InitialTemperatureK + rise);
     for (int i = FaceStart[cell]; i < FaceStart[cell+1]; i++)
     {
         Link link = FaceLinks[i];

@@ -50,6 +50,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
         }
 
+        private const double InitialTemperatureK = 293.15;
         private const int Rings = BeakerSolidMesh.InnerRadialCells;
         private const int Depth = BeakerSolidMesh.BaseDepthCells;
         private readonly BeakerSolidMesh mesh;
@@ -63,7 +64,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         public string FlowDescription => sampledFlow.Describe();
         private readonly double maxStep, particleCapacity;
         private readonly float[] solidSnapshot, particleSnapshot;
-        private ComputeBuffer glassRead, glassWrite;
+        private ComputeBuffer glassRead, glassWrite, burnerEntropy;
+        private float[] burnerEntropySnapshot;
+        public double SampledStoredEntropyJPerK { get; private set; }
+        public double SampledProducedEntropyJPerK { get; private set; }
         private double inputJ, nextSampleTime;
         private int sampleRevision;
         private bool samplePending, sampleDirty;
@@ -115,6 +119,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 shader.SetBuffer(measureFlow, "FlowTotals", flowTotals);
                 glassRead = Allocate(solidSnapshot.Length, 4);
                 glassWrite = Allocate(solidSnapshot.Length, 4);
+                burnerEntropy = Allocate(solidSnapshot.Length, 4);
+                burnerEntropySnapshot = new float[solidSnapshot.Length];
+                shader.SetBuffer(conduct, "BurnerEntropyJPerK", burnerEntropy);
+                shader.SetFloat("InitialTemperatureK", (float)InitialTemperatureK);
                 var capacity = Allocate(solidSnapshot.Length, 4);
                 var burner = Allocate(solidSnapshot.Length, 4);
                 var counts = Allocate(Rings, 4);
@@ -174,6 +182,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             Array.Clear(solidSnapshot, 0, solidSnapshot.Length);
             glassRead.SetData(solidSnapshot);
+            Array.Clear(burnerEntropySnapshot, 0, burnerEntropySnapshot.Length);
+            burnerEntropy.SetData(burnerEntropySnapshot);
+            SampledStoredEntropyJPerK = SampledProducedEntropyJPerK = 0;
             inputJ = SampledInputJ = SampledSolidJ = SampledWaterJ = 0;
             sampleRevision++;
             samplePending = sampleDirty = false;
@@ -217,8 +228,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             samplePending = true;
             int revision = sampleRevision;
             double sampledInput = inputJ, solidJ = 0, waterJ = 0;
+            double solidEntropy = 0, waterEntropy = 0, inputEntropy = 0;
             bool failed = false;
-            int remaining = 3;
+            int remaining = 4;
             FlowSample flow = default;
             shader.Dispatch(measureFlow, particleGroups, 1, 1);
 
@@ -227,7 +239,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (--remaining != 0 || revision != sampleRevision) return;
                 samplePending = false;
                 if (failed) { sampleDirty = true; return; }
-                PublishSample(sampledInput, solidJ, waterJ);
+                PublishSample(sampledInput, solidJ, waterJ, solidEntropy + waterEntropy, inputEntropy);
                 sampledFlow = flow;
             }
 
@@ -238,7 +250,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (!result.hasError)
                 {
                     var data = result.GetData<float>();
-                    for (int i = 0; i < data.Length; i++) solidJ += data[i] * mesh.CapacityJPerK[i];
+                    for (int i = 0; i < data.Length; i++)
+                    {
+                        solidJ += data[i] * mesh.CapacityJPerK[i];
+                        solidEntropy += mesh.CapacityJPerK[i] * SpecificEntropyFactor(data[i]);
+                    }
                 }
                 Complete();
             });
@@ -249,8 +265,24 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (!result.hasError)
                 {
                     var data = result.GetData<float>();
-                    for (int i = 0; i < data.Length; i++) waterJ += data[i];
+                    for (int i = 0; i < data.Length; i++)
+                    {
+                        waterJ += data[i];
+                        waterEntropy += SpecificEntropyFactor(data[i]);
+                    }
                     waterJ *= particleCapacity;
+                    waterEntropy *= particleCapacity;
+                }
+                Complete();
+            });
+            AsyncGPUReadback.Request(burnerEntropy, result =>
+            {
+                if (revision != sampleRevision) return;
+                failed |= result.hasError;
+                if (!result.hasError)
+                {
+                    var data = result.GetData<float>();
+                    for (int i = 0; i < data.Length; i++) inputEntropy += data[i];
                 }
                 Complete();
             });
@@ -267,11 +299,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             });
         }
 
-        private void PublishSample(double absorbed, double solid, double water)
+        private static double SpecificEntropyFactor(float rise) => Math.Log(1 + rise / InitialTemperatureK);
+
+        private void PublishSample(double absorbed, double solid, double water, double storedEntropy, double inputEntropy)
         {
             SampledInputJ = absorbed;
             SampledSolidJ = solid;
             SampledWaterJ = water;
+            SampledStoredEntropyJPerK = storedEntropy;
+            SampledProducedEntropyJPerK = storedEntropy - inputEntropy;
         }
 
         public string Measure()
@@ -287,9 +323,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             double liquidJ = particleSnapshot.Sum(value => (double)value) * particleCapacity;
             sampleRevision++;
             samplePending = sampleDirty = false;
-            PublishSample(inputJ, solidJ, liquidJ);
+            burnerEntropy.GetData(burnerEntropySnapshot);
+            double storedEntropy = solidSnapshot.Select((rise, i) => mesh.CapacityJPerK[i] * SpecificEntropyFactor(rise)).Sum() +
+                particleSnapshot.Sum(SpecificEntropyFactor) * particleCapacity;
+            PublishSample(inputJ, solidJ, liquidJ, storedEntropy, burnerEntropySnapshot.Sum(value => (double)value));
             double residual = solidJ + liquidJ - inputJ;
-            return FormattableString.Invariant($"burner {inputJ:F4} J · solids {solidJ:F4} J · water {liquidJ:F4} J · residual {residual:G4} J · {FlowDescription}");
+            return FormattableString.Invariant($"burner {inputJ:F4} J · solids {solidJ:F4} J · water {liquidJ:F4} J · residual {residual:G4} J · entropy change {SampledStoredEntropyJPerK:G4} J/K · inferred production {SampledProducedEntropyJPerK:G4} J/K · {FlowDescription}");
         }
 
         private int Kernel(string name)
