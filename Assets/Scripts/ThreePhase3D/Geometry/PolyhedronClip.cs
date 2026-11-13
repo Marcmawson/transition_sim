@@ -31,6 +31,12 @@ namespace PhysicsSim.ThreePhase3D.Geometry
             Clip(faces, plane, true, out double area);
             return area;
         }
+        internal static List<D3> SectionPolygon(List<List<D3>> faces, ClipPlane plane)
+        {
+            var clipped = Clip(faces, plane, true, out double area);
+            return area > 0 ? clipped[clipped.Count - 1] : new List<D3>();
+        }
+
         private static List<List<D3>> Clip(List<List<D3>> faces,ClipPlane plane,bool measureSection,out double sectionArea)
         {
             var result=new List<List<D3>>();var cuts=new List<D3>();
