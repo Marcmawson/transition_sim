@@ -27,6 +27,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private Task<Action> solverWork;
         private int generation, workGeneration;
         private string waterStatus, volumeStatus;
+        private bool burnerOn;
+        [SerializeField, Min(0)] private float absorbedBurnerWatts = 10;
 
         private void OnEnable()
         {
@@ -134,7 +136,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 var simulation = BeakerVofTimeIntegration.CreateRelease(volume, false, 293.15, 101325, surfaceJitterM: jitter);
                 return () =>
                 {
-                    gpuSession = new BeakerVofGpuSession(simulation);
+                    simulation.EnableFloorHeating(293.15);
+                gpuSession = new BeakerVofGpuSession(simulation);
                     release = simulation;
                     waterParticles = new BeakerWaterParticles(transform, release,
                         GetComponent<Beaker3DSetup>().scenario.physical.geometry);
@@ -164,7 +167,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             try
             {
                 var timer = System.Diagnostics.Stopwatch.StartNew();
-                gpuSession.StepRelease(controls.GravityY, controls.MaximumStepS, controls.PressureIterationLimit);
+                gpuSession.StepRelease(controls.GravityY, controls.MaximumStepS, controls.PressureIterationLimit, burnerOn ? absorbedBurnerWatts : 0);
                 solverStepMs = timer.Elapsed.TotalMilliseconds;
                 ShowWaterState();
             }
@@ -212,7 +215,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(16, 16, Mathf.Min(Screen.width - 32, 370), 236), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(16, 16, Mathf.Min(Screen.width - 32, 410), 278), GUI.skin.box);
             GUILayout.Label("S07 Beaker release");
             GUILayout.BeginHorizontal();
             bool controlsEnabled = GUI.enabled;
@@ -227,6 +230,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 GUILayout.Label(waterStatus);
                 GUILayout.Label(volumeStatus);
+                if (GUILayout.Button(burnerOn ? "Burner off" : "Burner on")) burnerOn = !burnerOn;
+                GUILayout.Label($"Glass to water {release.LiquidHeatJ:G4} J · Thermal residual {release.ThermalResidualJ:E2} J");
                 if (frameMs > 0)
                     GUILayout.Label($"Game {1000f / frameMs:F1} FPS  |  Step {solverStepMs:F1} ms ({release.Pressure.Diagnostics.Iterations} it)  |  Particles {particleUpdateMs:F1} ms");
                 if (error == null)
