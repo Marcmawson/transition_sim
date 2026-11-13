@@ -10,7 +10,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
         public enum BubbleCase { Buoyancy, Evaporation, Condensation }
 
         public static void RunBubbleRise(Func<VariableCoefficientProjection, float[], double, int, double[], FlowStep> project, Action<string> log,
-            BubbleCase scenario = BubbleCase.Buoyancy)
+            BubbleCase scenario = BubbleCase.Buoyancy,
+            Action<int, Grid3D, double[], double, double> capture = null)
         {
             const double dx = 0.001, dt = 0.0004;
             double heatFluxWm2 = scenario switch
@@ -56,7 +57,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
             if (heatFluxWm2 != 0)
             {
                 var noGravity = RunWithPhaseExchange(0);
-                var withGravity = RunWithPhaseExchange(-9.81);
+                var withGravity = RunWithPhaseExchange(-9.81, capture);
                 var rise = Centre(withGravity.GasM3) - initial;
                 double control = (Centre(noGravity.GasM3) - initial).Y;
                 double gained = Sum(withGravity.GasM3) - volume;
@@ -101,13 +102,15 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 return fields;
             }
 
-            CutCellInventories RunWithPhaseExchange(double gravityY)
+            CutCellInventories RunWithPhaseExchange(double gravityY,
+                Action<int, Grid3D, double[], double, double> sample = null)
             {
                 var fields = state;
                 var velocity = new float[plan.FaceCount];
                 double water = Sum(state.LiquidM3) * rhoL + Sum(state.VapourKg);
                 double energy = Sum(state.LiquidEnergyJ) + Sum(state.GasEnergyJ);
                 double waterIn = 0, energyIn = 0, vapourProduced = 0, gasIn = 0;
+                Capture(0);
                 for (int step = 0; step < 6; step++)
                 {
                     var current = new VariableCoefficientProjection(domain, boundaries, cell =>
@@ -143,8 +146,21 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         Math.Abs(Sum(fields.LiquidM3) * rhoL + Sum(fields.VapourKg) - water - waterIn) > 1e-13 ||
                         Math.Abs(Sum(fields.LiquidEnergyJ) + Sum(fields.GasEnergyJ) - energy - energyIn) > 1e-8)
                         throw new InvalidOperationException($"The phase-changing bubble failed its phase or outlet balance at step {step + 1}.");
+                    Capture(step + 1);
                 }
                 return fields;
+
+                void Capture(int step)
+                {
+                    if (sample == null) return;
+                    var fractions = new double[grid.Cells.Count];
+                    for (int cell = 0; cell < fractions.Length; cell++)
+                    {
+                        int group = plan.GroupByCell[cell];
+                        if (group >= 0) fractions[cell] = fields.GasM3[group] / plan.Volumes[group];
+                    }
+                    sample(step, grid, fractions, Sum(fields.GasM3), Centre(fields.GasM3).Y);
+                }
             }
 
             D3 Centre(double[] volumes)
