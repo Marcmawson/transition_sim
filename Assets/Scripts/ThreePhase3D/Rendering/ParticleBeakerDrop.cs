@@ -187,7 +187,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 iceMass = volumeM3 * 998.2f;
                 iceSide = Mathf.Pow(iceMass / 917f, 1f / 3f);
                 iceFloor = floor;
-                iceSpawnY = dropBottom + iceSide * .68f;
+                iceSpawnY = dropBottom;
                 float apparatusTop = dropBottom + cylinderHeight;
                 releaseViewCentre = Vector3.up * (apparatusTop / 2f);
                 releaseViewHeight = apparatusTop;
@@ -549,7 +549,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void SpawnIce(bool fitThroughRim = false)
         {
-            activeIceFraction = fitThroughRim ? DynamicIceFraction : 1;
+            activeIceFraction = fitThroughRim ? DynamicIceFraction : IceHalfSizeVolumeFraction;
             iceMass = releaseVolumeMl * 1e-6f * 998.2f * activeIceFraction;
             iceSide = Mathf.Pow(iceMass / 917f, 1f / 3f);
             if (!previousBounceThreshold.HasValue)
@@ -579,7 +579,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
             var cube = new GameObject("Ice cube");
             SceneManager.MoveGameObjectToScene(cube, icePhysicsScene);
-            cube.transform.SetPositionAndRotation(Vector3.up * (fitThroughRim ? Mathf.Max(iceSpawnY, (float)geometry.RimHeightM + iceSide) : iceSpawnY), Quaternion.Euler(13, 19, 9));
+            cube.transform.SetPositionAndRotation(Vector3.up * (fitThroughRim ? Mathf.Max(iceSpawnY + iceSide * .68f, (float)geometry.RimHeightM + iceSide) : iceSpawnY + iceSide * .68f), Quaternion.Euler(13, 19, 9));
             var mesh = GameObject.CreatePrimitive(PrimitiveType.Cube);
             mesh.name = "Ice cube mesh";
             if (iceMesh == null) iceMesh = BuildIceMesh();
@@ -747,6 +747,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             });
         }
 
+        // Half the side length leaves one eighth of the original volume.
+        private const float IceHalfSizeVolumeFraction = .125f;
+
         private float DynamicIceFraction
         {
             get
@@ -754,7 +757,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 float radius = (float)geometry.innerRadiusM;
                 // Allow room below the cube for shallow-water flotation and around it for rotation.
                 float side = radius * .73f;
-                return Mathf.Min(1, side * side * side * 917f / (releaseVolumeMl * 1e-6f * 998.2f));
+                return IceHalfSizeVolumeFraction * Mathf.Min(1, side * side * side * 917f / (releaseVolumeMl * 1e-6f * 998.2f));
             }
         }
 
