@@ -215,7 +215,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(16, 16, Mathf.Min(Screen.width - 32, 410), 278), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(16, 16, Mathf.Min(Screen.width - 32, 410), 302), GUI.skin.box);
             GUILayout.Label("S07 Beaker release");
             GUILayout.BeginHorizontal();
             bool controlsEnabled = GUI.enabled;
@@ -230,6 +230,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 GUILayout.Label(waterStatus);
                 GUILayout.Label(volumeStatus);
+                GUILayout.Label($"Mean water temperature {release.MeanLiquidTemperatureK - 273.15:F4} °C");
                 if (GUILayout.Button(burnerOn ? "Burner off" : "Burner on")) burnerOn = !burnerOn;
                 GUILayout.Label($"Glass to water {release.LiquidHeatJ:G4} J · Thermal residual {release.ThermalResidualJ:E2} J");
                 if (frameMs > 0)
