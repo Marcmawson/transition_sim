@@ -7,6 +7,7 @@ internal static class BeakerVofMain
 {
     public static int Main(string[] args)
     {
+        if (args.Contains("--floor-heat")) return CheckFloorHeat();
         var beaker = new BeakerVofTimeIntegration();
         bool wetting = args.Contains("--wetting");
         var transport = wetting
@@ -39,6 +40,31 @@ internal static class BeakerVofMain
             Console.WriteLine(FormattableString.Invariant(
                 $"contact patches={totalPatches} accumulated absolute wall impulse={totalImpulse:E4} kg m/s"));
         return beaker.Steps == 8 && moved > 1e-9 && (!wetting || (totalPatches > 0 && totalImpulse > 0)) ? 0 : 1;
+    }
+
+    private static int CheckFloorHeat()
+    {
+        const double liquidK = 293.15;
+        double hot = Run(liquidK + 20);
+        double cold = Run(liquidK - 20);
+        double equal = Run(liquidK);
+        return hot > 1e-5 && Math.Abs(hot + cold) < 1e-9 && Math.Abs(equal) < 1e-9 ? 0 : 1;
+
+        double Run(double glassK)
+        {
+            // Seeded circulation starts with water in the first resolved cavity layer.
+            var beaker = new BeakerVofTimeIntegration();
+            beaker.EnableFloorHeating(liquidK, glassK);
+            var transport = new CutCellVofTransport(beaker.Plan);
+            beaker.Step((state, flow) => transport.AdvanceCoupled(state, flow,
+                beaker.LiquidDensityKgM3, BeakerVofTimeIntegration.GasDensity,
+                maxIterations: BeakerVofTimeIntegration.IterationLimit));
+            Console.WriteLine(FormattableString.Invariant(
+                $"Floor heat: glass {glassK:F2} K, liquid {liquidK:F2} K, heat to liquid {beaker.LiquidHeatJ:E8} J, residual {beaker.ThermalResidualJ:E8} J."));
+            if (Math.Abs(beaker.ThermalResidualJ) > 1e-9)
+                throw new InvalidOperationException("Glass and liquid heat balance did not close.");
+            return beaker.LiquidHeatJ;
+        }
     }
 
     public static int CheckGravity()
