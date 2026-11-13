@@ -1,4 +1,5 @@
 using System;
+using PhysicsSim.ThreePhase3D.Diagnostics;
 using PhysicsSim.ThreePhase3D.Materials;
 
 namespace PhysicsSim.ThreePhase3D.Verification
@@ -42,6 +43,20 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     EntropyFlow(secondFlow, secondWater, inletTemperature);
                 // Steady storage is zero. Advected entropy leaves while heat entropy enters.
                 double produced = advectedOut - heat / heaterTemperature;
+                var ledger = new ConservationLedger(new InventoryState(), new ConservationTolerance());
+                // The steady rates are integrated over a one-second audit interval.
+                ledger.RecordExternalEntropy(ExternalChannel.HeaterAbsorbed, heat / heaterTemperature, 0);
+                ledger.RecordExternalEntropy(ExternalChannel.OpenBoundary, 0,
+                    EntropyFlow(firstFlow, firstWater, inletTemperature));
+                ledger.RecordExternalEntropy(ExternalChannel.OpenBoundary, 0,
+                    EntropyFlow(secondFlow, secondWater, inletTemperature));
+                ledger.RecordExternalEntropy(ExternalChannel.OpenBoundary, 0,
+                    -EntropyFlow(totalFlow, mixedWater, outlet));
+                const double initialEntropy = 2;
+                if (Math.Abs(ledger.InferEntropyProductionJPerK(initialEntropy, initialEntropy) - produced) > 1e-12 ||
+                    Math.Abs(ledger.InferEntropyProductionJPerK(initialEntropy, initialEntropy + 0.25) -
+                        produced - 0.25) > 1e-12)
+                    throw new InvalidOperationException("Entropy ledger did not account for storage and boundary transport.");
 
                 double Mixing(double water) => water * Math.Log(water / mixedWater) +
                     (1 - water) * Math.Log((1 - water) / (1 - mixedWater));

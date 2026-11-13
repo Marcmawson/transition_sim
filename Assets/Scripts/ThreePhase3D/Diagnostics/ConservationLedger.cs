@@ -28,6 +28,7 @@ namespace PhysicsSim.ThreePhase3D.Diagnostics
     {
         readonly InventoryState initial;
         readonly Dictionary<ExternalChannel, StableReduction.Accumulator[]> channels = new Dictionary<ExternalChannel, StableReduction.Accumulator[]>();
+        readonly Dictionary<ExternalChannel, StableReduction.Accumulator> entropyIntoDomain = new Dictionary<ExternalChannel, StableReduction.Accumulator>();
         readonly ConservationTolerance tolerance;
         bool numericalCorrection;
         public ConservationLedger(InventoryState initial, ConservationTolerance tolerance)
@@ -76,6 +77,43 @@ namespace PhysicsSim.ThreePhase3D.Diagnostics
         public double EnergyInJ => Total(2);
         public double EnergyOutJ => Total(5);
         public double HeaterAbsorbedJ => channels[ExternalChannel.HeaterAbsorbed][2].Value;
+
+        // Integrate entropy at the boundary face. Use the signed inward normal
+        // for both heat and advected species entropy, including reference terms.
+        public void RecordExternalEntropy(ExternalChannel channel, double heatIntoDomainJPerK,
+            double advectedIntoDomainJPerK)
+        {
+            if (!channels.ContainsKey(channel) || channel == ExternalChannel.NumericalCorrection)
+                throw new ArgumentException("Unknown or nonphysical entropy boundary channel.", nameof(channel));
+            SiUnits.RequireFinite(heatIntoDomainJPerK, nameof(heatIntoDomainJPerK));
+            SiUnits.RequireFinite(advectedIntoDomainJPerK, nameof(advectedIntoDomainJPerK));
+            if (channel != ExternalChannel.OpenBoundary && channel != ExternalChannel.Injection &&
+                advectedIntoDomainJPerK != 0)
+                throw new ArgumentException("Advected entropy requires a mass boundary.", nameof(advectedIntoDomainJPerK));
+            if (channel == ExternalChannel.MechanicalWork && heatIntoDomainJPerK != 0)
+                throw new ArgumentException("Mechanical work carries no entropy.", nameof(heatIntoDomainJPerK));
+            entropyIntoDomain.TryGetValue(channel, out var total);
+            total.Add(heatIntoDomainJPerK);
+            total.Add(advectedIntoDomainJPerK);
+            entropyIntoDomain[channel] = total;
+        }
+
+        public double ExternalEntropyIntoDomainJPerK(ExternalChannel channel)
+        {
+            if (!channels.ContainsKey(channel))
+                throw new ArgumentException("Unknown entropy boundary channel.", nameof(channel));
+            return entropyIntoDomain.TryGetValue(channel, out var total) ? total.Value : 0;
+        }
+
+        public double InferEntropyProductionJPerK(double initialEntropyJPerK, double currentEntropyJPerK)
+        {
+            SiUnits.RequireFinite(initialEntropyJPerK, nameof(initialEntropyJPerK));
+            SiUnits.RequireFinite(currentEntropyJPerK, nameof(currentEntropyJPerK));
+            var terms = new List<double> { currentEntropyJPerK, -initialEntropyJPerK };
+            foreach (ExternalChannel channel in channels.Keys)
+                terms.Add(-ExternalEntropyIntoDomainJPerK(channel));
+            return StableReduction.Sum(terms);
+        }
 
         public ExternalTotals[] ExternalChannelTotals()
         {
