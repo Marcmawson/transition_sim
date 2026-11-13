@@ -36,16 +36,20 @@ namespace PhysicsSim.ThreePhase3D.Verification
             var boiling = new PureWaterStefanInterface(pressure, 370, 377, 100, 0);
             var pool = boiling.Saturation.Liquid;
             double expectedBoilingHeat = area * burnerDuration * boiling.LiquidHeatWm2;
+            const double initialIceKg = 1e-6, iceContactWPerK = 0.0001;
+            var fusion = new PhysicsSim.ThreePhase3D.PhaseChange.SolidLiquidInterface(pressure, 250, 290);
+            double meltEntropyJkgK = fusion.IceMeltingEntropyJkgK + fusion.LatentHeatJkg / fusion.MeltingTemperatureK;
             var coarse = Run(8);
             var fine = Run(16);
             var reference = Run(32);
+            log(FormattableString.Invariant($"S12 coupled wall melting passed: ice melted {reference.Melted:G8} kg."));
             if (Math.Abs(fine.Wall - reference.Wall) >= Math.Abs(coarse.Wall - reference.Wall) ||
                 Math.Abs(fine.Back - reference.Back) >= Math.Abs(coarse.Back - reference.Back))
                 throw new InvalidOperationException("Finite-wall condensation did not refine with timestep.");
             log(FormattableString.Invariant(
                 $"S12 spatial-wall condensation passed: inner glass {reference.Wall:F6} K, outer glass {reference.Back:F6} K, gas {reference.Gas:F6} K, pool boiled {reference.Boiled:G8} kg, condensate {reference.Mass:G8} kg, room heat {reference.RoomHeat:G8} J, dry air exchanged {reference.AirExchanged:G8} kg, entropy produced {reference.Entropy:G8} J/K."));
 
-            (double Wall, double Back, double Gas, double Mass, double Boiled, double RoomHeat, double AirExchanged, double Entropy) Run(int steps)
+            (double Wall, double Back, double Gas, double Mass, double Boiled, double RoomHeat, double AirExchanged, double Entropy, double Melted) Run(int steps)
             {
                 const double glassConductance = 0.04;
                 double dt = 0.2 / steps;
@@ -55,9 +59,13 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 var ledger = new ConservationLedger(new InventoryState
                 {
                     dryAirKg = dryAir, vapourKg = initialVapour, liquidKg = initialPoolKg,
-                    internalEnergyJ = initialEnergy + initialPoolKg * pool.EnthalpyJkg
+                    iceKg = initialIceKg,
+                    internalEnergyJ = initialEnergy + initialPoolKg * pool.EnthalpyJkg +
+                        initialIceKg * fusion.IceMeltingEnthalpyJkg
                 }, new ConservationTolerance { massKg = 1e-18, energyJ = 1e-10 });
-                double initialDomainEntropy = initialEntropy + initialPoolKg * pool.EntropyJkgK;
+                double initialDomainEntropy = initialEntropy + initialPoolKg * pool.EntropyJkgK +
+                    initialIceKg * fusion.IceMeltingEntropyJkgK;
+                double iceKg = initialIceKg, meltKg = 0;
                 double vapour = initialVapour, remainingPoolKg = initialPoolKg, air = dryAir, roomHeatTotal = 0;
                 double liquid = 0, gasEnergy = initialEnergy, gasK = initialGas, production = 0;
                 for (int step = 0; step < steps; step++)
@@ -76,6 +84,12 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         ledger.RecordExternalEntropy(ExternalChannel.HeaterAbsorbed, poolHeat / pool.TemperatureK, 0);
                     }
                     double wallK = glass.TemperatureK[0];
+                    // A separate wetted patch melts ice held at its fusion temperature.
+                    double meltHeat = Math.Min(iceKg * fusion.LatentHeatJkg,
+                        dt * iceContactWPerK * Math.Max(0, wallK - fusion.MeltingTemperatureK));
+                    double melted = meltHeat / fusion.LatentHeatJkg;
+                    iceKg -= melted;
+                    meltKg += melted;
                     double oldLiquidEnergy = liquid * water.Evaluate(wallK, pressure, WaterBranch.Liquid).EnthalpyJkg;
                     var solved = HumidInterfaceFlux.SolveTemperature(pressure, vapour / (air + vapour),
                         film, wallK, gasK, 1000, 25, 283.15, 298.15);
@@ -85,7 +99,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     vapour += transfer.WaterKg;
                     liquid -= transfer.WaterKg;
                     gasEnergy += transfer.GasEnthalpyJ;
-                    double contactEnergy = oldLiquidEnergy + transfer.LiquidEnthalpyJ;
+                    double contactEnergy = oldLiquidEnergy + transfer.LiquidEnthalpyJ - meltHeat;
                     double conductionIn = dt * glassConductance * (glass.TemperatureK[1] - wallK);
                     gasK = RecoverGas(gasEnergy, vapour, air);
                     double mass = air + vapour;
@@ -127,10 +141,12 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     double backK = glass.TemperatureK[1];
                     var current = new InventoryState
                     {
-                        dryAirKg = air, vapourKg = vapour, liquidKg = liquid + remainingPoolKg,
+                        dryAirKg = air, vapourKg = vapour, liquidKg = liquid + remainingPoolKg + meltKg,
+                        iceKg = iceKg,
                         // At prescribed pressure the fixture audits enthalpy.
                         internalEnergyJ = mass * gasState.EnthalpyJkg + liquid * liquidState.EnthalpyJkg +
-                            remainingPoolKg * pool.EnthalpyJkg,
+                            remainingPoolKg * pool.EnthalpyJkg + iceKg * fusion.IceMeltingEnthalpyJkg +
+                            meltKg * fusion.LiquidMeltingEnthalpyJkg,
                         solidInternalEnergyJ = wallCapacity * (glass.TemperatureK[0] + backK - 2 * initialWall)
                     };
                     if (!ledger.Audit(current).passed)
@@ -141,7 +157,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     storage.AddMaterial(remainingPoolKg, pool);
                     storage.AddSensibleStorage(wallCapacity, glass.TemperatureK[0], initialWall);
                     storage.AddSensibleStorage(wallCapacity, backK, initialWall);
-                    double nextProduction = ledger.InferEntropyProductionJPerK(initialDomainEntropy, storage.TotalJPerK);
+                    double nextProduction = ledger.InferEntropyProductionJPerK(initialDomainEntropy,
+                        storage.TotalJPerK + iceKg * fusion.IceMeltingEntropyJkgK + meltKg * meltEntropyJkgK);
                     if (!(nextProduction >= production - 1e-12))
                         throw new InvalidOperationException("Finite-wall condensation entropy decreased.");
                     production = nextProduction;
@@ -151,10 +168,10 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 Near(Math.Abs(ledger.HeaterAbsorbedJ - burnerPower * burnerDuration - expectedBoilingHeat), 1e-15);
                 if (!(glass.TemperatureK[0] > glass.TemperatureK[1] && glass.TemperatureK[1] > initialWall &&
                     gasK < initialGas && roomHeatTotal > 0 && production > 0 &&
-                    ledger.DryAirInKg + ledger.DryAirOutKg > 0))
+                    ledger.DryAirInKg + ledger.DryAirOutKg > 0 && meltKg > 0))
                     throw new InvalidOperationException("Finite-wall condensation failed its thermal checks.");
                 return (glass.TemperatureK[0], glass.TemperatureK[1], gasK, liquid, boiled, roomHeatTotal,
-                    ledger.DryAirInKg + ledger.DryAirOutKg, production);
+                    ledger.DryAirInKg + ledger.DryAirOutKg, production, meltKg);
             }
 
             double RecoverGas(double energy, double vapour, double air)
