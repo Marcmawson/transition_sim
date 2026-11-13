@@ -5,6 +5,7 @@ StructuredBuffer<float> Capacity;
 StructuredBuffer<float> BurnerPower;
 StructuredBuffer<float> ExposedArea;
 RWStructuredBuffer<float> RoomEnergyJ;
+RWStructuredBuffer<float> BurnerEnergyJ;
 RWStructuredBuffer<float> BurnerEntropyJPerK;
 StructuredBuffer<int> FaceStart;
 struct FaceLink { int Other; float Conductance; };
@@ -22,7 +23,9 @@ void Conduct(uint3 id : SV_DispatchThreadID)
     if (cell >= (uint)CellCount) return;
     float temperature = TemperatureRead[cell];
     float burnerPower = AbsorbedPowerW * BurnerPower[cell];
-    BurnerEntropyJPerK[cell] += StepSeconds * burnerPower / (RoomTemperatureK + temperature);
+    float burnerHeat = StepSeconds * burnerPower;
+    BurnerEnergyJ[cell] += burnerHeat;
+    BurnerEntropyJPerK[cell] += burnerHeat / (RoomTemperatureK + temperature);
     float power = burnerPower;
     for (int i = FaceStart[cell]; i < FaceStart[cell + 1]; i++)
     {
