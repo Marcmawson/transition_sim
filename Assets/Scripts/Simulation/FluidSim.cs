@@ -117,7 +117,9 @@ namespace Seb.Fluid.Simulation
 
 		public void ResetParticles()
 		{
-			if (positionBuffer != null) SetInitialBufferData(spawnData);
+			if (positionBuffer == null) return;
+			SetInitialBufferData(spawnData);
+			if (worldSpaceSurface && renderToTex3D) RunSimulationFrame(0, 1);
 		}
 
 		void Start()
