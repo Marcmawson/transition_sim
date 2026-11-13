@@ -607,10 +607,24 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 playbackSpeed = Slider($"Playback speed  {playbackSpeed:P0}", playbackSpeed, .05f, 1f);
                 float gravity = Slider($"Gravity  {-fluid.gravity:F2} m/s²", -fluid.gravity, 0, 20);
                 fluid.gravity = -gravity;
-                float pressure = fluid.pressureMultiplier / spacingScale;
-                fluid.pressureMultiplier = Slider($"Pressure  {pressure:F2}", pressure, 0, 6) * spacingScale;
-                float nearPressure = fluid.nearPressureMultiplier / spacingScale;
-                fluid.nearPressureMultiplier = Slider($"Near pressure  {nearPressure:F4}", nearPressure, 0, .1f) * spacingScale;
+                // The shader uses number density and pressure per particle mass.
+                // Convert to Pa using the reference mass represented by one particle.
+                const float referenceWaterDensityKgM3 = 998.2f;
+                float particleMassKg = referenceWaterDensityKgM3 * releaseVolumeMl * 1e-6f /
+                    fluid.positionBuffer.count;
+                float referencePressure = particleMassKg * fluid.targetDensity;
+                float pascalsPerMultiplier = referencePressure * spacingScale;
+
+                float bulkPressurePa = fluid.pressureMultiplier * referencePressure;
+                bulkPressurePa = Slider($"Bulk pressure at 2× target density  {bulkPressurePa:F2} Pa",
+                    bulkPressurePa, 0, 6 * pascalsPerMultiplier);
+                fluid.pressureMultiplier = bulkPressurePa / referencePressure;
+
+                float nearPressurePa = fluid.nearPressureMultiplier * referencePressure;
+                nearPressurePa = Slider($"Near pressure at reference density  {nearPressurePa:F2} Pa",
+                    nearPressurePa, 0, .1f * pascalsPerMultiplier);
+                fluid.nearPressureMultiplier = nearPressurePa / referencePressure;
+                GUILayout.Label("Near-pressure reference uses the bulk target density as its input.");
                 float dampingScale = spacingScale * spacingScale * spacingScale;
                 float damping = fluid.viscosityStrength / dampingScale;
                 float dampingLimit = fluid.worldSpaceSurface ? .0000001f : 1f;
