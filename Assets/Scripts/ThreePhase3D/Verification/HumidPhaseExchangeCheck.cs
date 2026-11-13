@@ -15,6 +15,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
             const double pressure = 101325, initialWall = 283.15, initialGas = 293.15;
             const double dryAir = 1e-5, wallCapacity = 0.02, area = 1e-4, film = 0.001;
             const double roomK = initialWall, roomConductance = 0.02;
+            const double burnerPower = 0.01, burnerDuration = 0.1;
             var humid = new HumidGas();
             var water = new Water95();
             double fraction = 0.85 * humid.EquilibriumWithLiquid(initialGas, pressure).WaterMassFraction;
@@ -29,7 +30,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 Math.Abs(fine.Back - reference.Back) >= Math.Abs(coarse.Back - reference.Back))
                 throw new InvalidOperationException("Finite-wall condensation did not refine with timestep.");
             log(FormattableString.Invariant(
-                $"S12 spatial-wall condensation passed: inner glass {reference.Wall:F6} K, outer glass {reference.Back:F6} K, gas {reference.Gas:F6} K, condensate {reference.Mass:G8} kg, room heat {reference.RoomHeat:G8} J, entropy produced {reference.Entropy:G8} J/K."));
+                $"S12 spatial-wall condensation passed: inner glass {reference.Wall:F6} K, outer glass {reference.Back:F6} K, gas {reference.Gas:F6} K, condensate {reference.Mass:G8} kg, burner heat {burnerPower * burnerDuration:G8} J, room heat {reference.RoomHeat:G8} J, entropy produced {reference.Entropy:G8} J/K."));
 
             (double Wall, double Back, double Gas, double Mass, double RoomHeat, double Entropy) Run(int steps)
             {
@@ -68,8 +69,14 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     // Apply only the interface energy remaining after condensate storage.
                     // SolidConduction applies the glass-to-glass exchange once.
                     power[0] = (contactEnergy - liquid * liquidState.EnthalpyJkg) / dt;
-                    power[1] = roomConductance * (roomK - glass.TemperatureK[1]);
-                    double roomHeat = -power[1] * dt;
+                    double outerK = glass.TemperatureK[1];
+                    double roomPower = roomConductance * (outerK - roomK);
+                    double burnerHeat = burnerPower * Math.Min(dt, Math.Max(0, burnerDuration - step * dt));
+                    power[1] = burnerHeat / dt - roomPower;
+                    double roomHeat = roomPower * dt;
+                    ledger.RecordExternal(ExternalChannel.HeaterAbsorbed, FluxDirection.IntoDomain, 0, 0, burnerHeat);
+                    // The prescribed burner deposits heat at the receiving glass surface.
+                    ledger.RecordExternalEntropy(ExternalChannel.HeaterAbsorbed, burnerHeat / outerK, 0);
                     ledger.RecordExternal(ExternalChannel.OpenBoundary, FluxDirection.OutOfDomain, 0, 0, roomHeat);
                     ledger.RecordExternalEntropy(ExternalChannel.OpenBoundary, -roomHeat / roomK, 0);
                     glass.Step(dt, power);
@@ -94,6 +101,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         throw new InvalidOperationException("Finite-wall condensation entropy decreased.");
                     production = nextProduction;
                 }
+                Near(Math.Abs(ledger.HeaterAbsorbedJ - burnerPower * burnerDuration), 1e-15);
                 if (!(glass.TemperatureK[0] > glass.TemperatureK[1] && glass.TemperatureK[1] > initialWall &&
                     gasK < initialGas && ledger.EnergyOutJ > 0 && production > 0))
                     throw new InvalidOperationException("Finite-wall condensation failed its thermal checks.");
