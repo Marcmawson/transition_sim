@@ -1,5 +1,6 @@
 using System;
 using PhysicsSim.ThreePhase3D.Flow;
+using PhysicsSim.ThreePhase3D.Rendering;
 using PhysicsSim.ThreePhase3D.Verification;
 using UnityEditor;
 using UnityEngine;
@@ -41,11 +42,38 @@ namespace PhysicsSim.ThreePhase3D.Editor
         private HumidPhaseExchangeCheck.BeakerSample sample;
         private string status;
         private bool running;
+        private Beaker3DSetup apparatus;
 
         [MenuItem("Physics Sim/Three Phase 3D/Open S16 beaker diagnostics")]
         private static void Open() => GetWindow<CoupledBeakerWindow>("S16 Beaker");
 
-        private void OnDisable() => Stop();
+        private void OnEnable() => SceneView.duringSceneGui += DrawApparatusReadings;
+
+        private void OnDisable()
+        {
+            SceneView.duringSceneGui -= DrawApparatusReadings;
+            Stop();
+            SceneView.RepaintAll();
+        }
+
+        private void DrawApparatusReadings(SceneView view)
+        {
+            if (!EditorApplication.isPlaying || apparatus == null || sample.Time <= 0) return;
+            var geometry = apparatus.scenario?.physical?.geometry;
+            if (geometry == null) return;
+            float floor = (float)(geometry.externalBaseHeightM + geometry.baseThicknessM);
+            float height = (float)geometry.cavityHeightM;
+            float radius = (float)geometry.innerRadiusM;
+            var origin = apparatus.transform;
+            Label(0, floor + height, $"Reduced benchmark · {sample.Time:F4} s");
+            Label(0, floor + height * .66f, $"Headspace {sample.Gas:F3} K\nVapour {sample.Vapour:G5} kg · Dry air {sample.Air:G5} kg");
+            Label(0, floor + height * .28f, $"Liquid {sample.Liquid:G5} kg · Ice {sample.Ice:G5} kg");
+            Label(radius, floor + height * .1f, $"Inner glass {sample.Wall:F3} K");
+            Label(radius, (float)geometry.externalBaseHeightM, $"Outer glass {sample.Back:F3} K · {(sample.Heating ? "Heating" : "Burner off")}");
+
+            void Label(float x, float y, string text) =>
+                Handles.Label(origin.TransformPoint(new Vector3(x, y, 0)), text, EditorStyles.whiteLabel);
+        }
 
         private void Stop()
         {
@@ -59,6 +87,8 @@ namespace PhysicsSim.ThreePhase3D.Editor
             if (!EditorApplication.isPlaying)
             {
                 if (run != null) Stop();
+                apparatus = null;
+                sample = default;
                 return;
             }
             if (running && !EditorApplication.isPaused) Advance();
@@ -86,6 +116,7 @@ namespace PhysicsSim.ThreePhase3D.Editor
                 Debug.LogException(error);
             }
             Repaint();
+            SceneView.RepaintAll();
         }
 
         private void OnGUI()
@@ -97,10 +128,15 @@ namespace PhysicsSim.ThreePhase3D.Editor
                 return;
             }
 
+            EditorGUI.BeginChangeCheck();
+            apparatus = (Beaker3DSetup)EditorGUILayout.ObjectField("Scene beaker", apparatus, typeof(Beaker3DSetup), true);
+            if (EditorGUI.EndChangeCheck()) SceneView.RepaintAll();
+
             if (GUILayout.Button("Start or reset benchmark"))
             {
                 Stop();
                 sample = default;
+                SceneView.RepaintAll();
                 var shader = Resources.Load<ComputeShader>("ThreePhase3D/SinglePhaseFlow");
                 if (!SystemInfo.supportsComputeShaders || shader == null)
                     status = "GPU pressure solver unavailable";
