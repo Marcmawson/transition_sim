@@ -235,6 +235,7 @@ GameObject:
   - component: {fileID: 2001}
   - component: {fileID: 2002}
   - component: {fileID: 2003}
+  - component: {fileID: 2004}
   m_Layer: 0
   m_Name: Three Phase 3D Apparatus
   m_TagString: Untagged
@@ -275,6 +276,24 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 7ae40a91e8994b47907af6b790c91fe2, type: 3}
   m_Name:
   m_EditorClassIdentifier:
+--- !u!114 &2004
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2000}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f9f9f43282824be0bcc9e1a90a772dfa, type: 3}
+  m_Name:
+  m_EditorClassIdentifier:
+  fluidCompute: {fileID: 7200000, guid: 9443696acfd0ebe4fb503b56d952256c, type: 3}
+  particleShader: {fileID: 4800000, guid: 13de1318fe7184e48bdf807b928b641b, type: 3}
+  largerBeaker: 0
+  heatMovingWater: 0
+  absorbedBurnerWatts: 100
+  showBoiling: 0
 --- !u!1 &3000
 GameObject:
   m_ObjectHideFlags: 0
