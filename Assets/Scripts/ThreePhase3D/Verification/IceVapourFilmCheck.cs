@@ -1,5 +1,8 @@
 using System;
+using System.Linq;
+using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
+using PhysicsSim.ThreePhase3D.Geometry;
 using PhysicsSim.ThreePhase3D.Materials;
 
 namespace PhysicsSim.ThreePhase3D.Verification
@@ -29,6 +32,19 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     if (Math.Sign(result.PhaseFrontShiftM) != Math.Sign(ratio - 1) ||
                         Math.Abs(finalThickness * area * surface.Ice.DensityKgM3 + result.VapourKg - ice) > 1e-18)
                         throw new InvalidOperationException("V41 planar front did not match the ice mass balance.");
+                    var grid = new Grid3D(4, 4, 4, new D3(0.005, 0.005, 0.005));
+                    var lower = new D3(0.005, 0.005, 0.005);
+                    CutCellGeometry BuildSlab(double thickness) => CutCellGeometry.Build(grid, iceSurface:
+                        SurfacePrimitives.Box(lower, new D3(0.015, lower.Y + thickness, 0.015)));
+                    var before = BuildSlab(initialThickness);
+                    var after = BuildSlab(finalThickness);
+                    double expectedIceChange = -result.VapourKg / surface.Ice.DensityKgM3;
+                    double iceChange = after.IceVolumeM3.Sum() - before.IceVolumeM3.Sum();
+                    double fluidChange = after.FluidVolumeM3.Sum() - before.FluidVolumeM3.Sum();
+                    double volumeTolerance = Math.Max(1e-20, 1e-5 * Math.Abs(expectedIceChange));
+                    if (Math.Abs(iceChange - expectedIceChange) > volumeTolerance ||
+                        Math.Abs(fluidChange + expectedIceChange) > volumeTolerance)
+                        throw new InvalidOperationException("V41 rebuilt geometry did not close the ice and gas volumes.");
                     // Integrate the constant-flux species ODE across the film and
                     // compare the recovered ambient composition to its boundary value.
                     double recovered = 1 - (1 - saturated) *
