@@ -1,5 +1,6 @@
 using System;
 using PhysicsSim.ThreePhase3D.Core;
+using PhysicsSim.ThreePhase3D.Diagnostics;
 using PhysicsSim.ThreePhase3D.Flow;
 using PhysicsSim.ThreePhase3D.Geometry;
 using PhysicsSim.ThreePhase3D.PhaseChange;
@@ -49,6 +50,8 @@ namespace PhysicsSim.ThreePhase3D.Verification
             double initialWater = Sum(fields.LiquidM3) * rho + body.MassKg;
             double initialGas = Sum(fields.GasM3) * gasDensity;
             double initialHeat = Sum(fields.LiquidEnergyJ) + body.MassKg * equilibrium.IceMeltingEnthalpyJkg;
+            double initialEntropy = initialWater * warm.EntropyJkgK +
+                body.MassKg * (equilibrium.IceMeltingEntropyJkgK - warm.EntropyJkgK);
             double totalHeat = 0;
             for (int step = 0; step < steps; step++)
             {
@@ -90,6 +93,17 @@ namespace PhysicsSim.ThreePhase3D.Verification
             }
             if ((body.Frame.Origin - initial.Frame.Origin).Length <= 1e-8)
                 throw new InvalidOperationException("The melting body did not move.");
+            var finalEntropy = new StableReduction.Accumulator();
+            finalEntropy.Add(body.MassKg * equilibrium.IceMeltingEntropyJkgK);
+            for (int group = 0; group < fields.LiquidM3.Length; group++)
+            {
+                double mass = fields.LiquidM3[group] * rho;
+                if (mass > 0)
+                    finalEntropy.Add(equilibrium.Recover(mass, fields.LiquidEnergyJ[group]).EntropyJPerK);
+            }
+            // In this closed thermal fixture only the ice and liquid exchange heat.
+            if (!(finalEntropy.Value > initialEntropy))
+                throw new InvalidOperationException("Moving melt did not produce positive water entropy.");
             if (transient)
             {
                 double expected = 2 * conductivity * 10 * dimensions.X * dimensions.Z *

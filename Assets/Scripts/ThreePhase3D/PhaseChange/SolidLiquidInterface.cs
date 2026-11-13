@@ -17,6 +17,7 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
 
         public double MeltingTemperatureK { get; }
         public double IceMeltingEnthalpyJkg => meltingIce.EnthalpyJkg;
+        public double IceMeltingEntropyJkgK => meltingIce.EntropyJkgK;
         public double LiquidMeltingEnthalpyJkg => meltingLiquid.EnthalpyJkg;
         public double LatentHeatJkg => LiquidMeltingEnthalpyJkg - IceMeltingEnthalpyJkg;
         public double LiquidMeltingDensityKgM3 => meltingLiquid.DensityKgM3;
@@ -60,18 +61,21 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
             if (h < IceMeltingEnthalpyJkg)
             {
                 var solid = Invert(h, minimumK, MeltingTemperatureK, t => ice.Evaluate(t, pressurePa));
-                return new State(solid.TemperatureK, massKg, 0, massKg / solid.DensityKgM3, 0);
+                return new State(solid.TemperatureK, massKg, 0, massKg / solid.DensityKgM3, 0,
+                    massKg * solid.EntropyJkgK);
             }
             if (h > LiquidMeltingEnthalpyJkg)
             {
                 var liquid = Invert(h, MeltingTemperatureK, maximumK, LiquidAt);
-                return new State(liquid.TemperatureK, 0, massKg, 0, massKg / liquid.DensityKgM3);
+                return new State(liquid.TemperatureK, 0, massKg, 0, massKg / liquid.DensityKgM3,
+                    massKg * liquid.EntropyJkgK);
             }
 
             double liquidMass = massKg * ((h - IceMeltingEnthalpyJkg) / LatentHeatJkg);
             double iceMass = massKg - liquidMass;
             return new State(MeltingTemperatureK, iceMass, liquidMass,
-                iceMass / meltingIce.DensityKgM3, liquidMass / meltingLiquid.DensityKgM3);
+                iceMass / meltingIce.DensityKgM3, liquidMass / meltingLiquid.DensityKgM3,
+                iceMass * meltingIce.EntropyJkgK + liquidMass * meltingLiquid.EntropyJkgK);
         }
 
         private ThermodynamicState LiquidAt(double temperatureK)
@@ -114,15 +118,17 @@ namespace PhysicsSim.ThreePhase3D.PhaseChange
         public readonly struct State
         {
             public readonly double TemperatureK, IceMassKg, LiquidMassKg, IceVolumeM3, LiquidVolumeM3;
+            public readonly double EntropyJPerK;
 
             internal State(double temperatureK, double iceMassKg, double liquidMassKg,
-                double iceVolumeM3, double liquidVolumeM3)
+                double iceVolumeM3, double liquidVolumeM3, double entropyJPerK)
             {
                 TemperatureK = temperatureK;
                 IceMassKg = iceMassKg;
                 LiquidMassKg = liquidMassKg;
                 IceVolumeM3 = iceVolumeM3;
                 LiquidVolumeM3 = liquidVolumeM3;
+                EntropyJPerK = entropyJPerK;
             }
         }
     }
