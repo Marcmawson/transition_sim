@@ -28,7 +28,8 @@ float RingWidth, ContactRadius, ContactFloor, ContactDepth;
 float ParticleArea, ParticleCapacity, ConductancePerArea, Dt, BurnerWatts;
 groupshared float partial[64];
 groupshared float4 partialFlow[64];
-groupshared float3 partialCounts[64];
+groupshared float4 partialCounts[64];
+groupshared float partialFloorContacts[64];
 
 [numthreads(64,1,1)]
 void ClearContacts(uint3 id : SV_DispatchThreadID)
@@ -106,7 +107,8 @@ void ConductGlass(uint3 id : SV_DispatchThreadID)
 void MeasureVerticalFlow(uint3 group : SV_GroupID, uint lane : SV_GroupIndex, uint3 id : SV_DispatchThreadID)
 {
     float4 flow = 0;
-    float3 counts = 0;
+    float4 counts = 0;
+    float floorContacts = 0;
     if (id.x < ParticleCount)
     {
         float3 p = Positions[id.x];
@@ -116,6 +118,8 @@ void MeasureVerticalFlow(uint3 group : SV_GroupID, uint lane : SV_GroupIndex, ui
             dot(p.xz, p.xz) <= ContactRadius * ContactRadius + 1e-8 &&
             !isnan(speedY) && !isinf(speedY) && !isnan(rise) && !isinf(rise))
         {
+            counts.w = max(0, rise);
+            floorContacts = p.y <= ContactFloor + ContactDepth ? 1 : 0;
             if (rise >= 1)
             {
                 float height = max(0, p.y - ContactFloor);
@@ -128,19 +132,23 @@ void MeasureVerticalFlow(uint3 group : SV_GroupID, uint lane : SV_GroupIndex, ui
 
     partialFlow[lane] = flow;
     partialCounts[lane] = counts;
+    partialFloorContacts[lane] = floorContacts;
     GroupMemoryBarrierWithGroupSync();
     for (uint stride = 32; stride > 0; stride >>= 1)
     {
         if (lane < stride)
         {
             partialFlow[lane] += partialFlow[lane + stride];
-            partialCounts[lane] += partialCounts[lane + stride];
+            partialFloorContacts[lane] += partialFloorContacts[lane + stride];
+            partialCounts[lane].xyz += partialCounts[lane + stride].xyz;
+            partialCounts[lane].w = max(partialCounts[lane].w, partialCounts[lane + stride].w);
         }
         GroupMemoryBarrierWithGroupSync();
     }
     if (lane == 0)
     {
-        FlowTotals[2 * group.x] = partialFlow[0];
-        FlowTotals[2 * group.x + 1] = float4(partialCounts[0], 0);
+        FlowTotals[3 * group.x] = partialFlow[0];
+        FlowTotals[3 * group.x + 1] = partialCounts[0];
+        FlowTotals[3 * group.x + 2] = float4(partialFloorContacts[0], 0, 0, 0);
     }
 }
