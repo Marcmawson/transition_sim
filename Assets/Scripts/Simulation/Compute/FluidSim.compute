@@ -472,7 +472,7 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
 
             // Update pressure force
             pressureForce += weight * dirToNeighbour * DensityDerivative(dstToNeighbour, smoothingRadius) * sharedPressure / densityNeighbour;
-            pressureForce += dirToNeighbour * NearDensityDerivative(dstToNeighbour, smoothingRadius) * sharedNearPressure / nearDensityNeighbour;
+            pressureForce += weight * dirToNeighbour * NearDensityDerivative(dstToNeighbour, smoothingRadius) * sharedNearPressure / nearDensityNeighbour;
             if (floorSupport && SupportsFloorMirror(neighbourPos))
                 pressureForce += weight * FloorPressureForce(pos, neighbourPos,
                     float2(densityNeighbour, nearDensityNeighbour), pressure, nearPressure);
