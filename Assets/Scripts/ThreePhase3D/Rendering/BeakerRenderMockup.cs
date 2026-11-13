@@ -13,6 +13,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void Start()
         {
             var setup = GetComponent<Beaker3DSetup>();
+            var vessel = setup.scenario.physical.geometry;
+            vessel.innerRadiusM = .032;
+            vessel.wallThicknessM = .0025;
+            vessel.baseThicknessM = .005;
+            vessel.cavityHeightM = .09;
+            vessel.tripodRingRadiusM = .028;
+            vessel.tripodTubeRadiusM = .003;
             setup.scenario.display.showSetupReport = false;
             setup.scenario.display.cylinderSegments = 96;
             setup.Refresh();
@@ -64,43 +71,79 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             float rim = (float)geometry.RimHeightM;
             float outer = (float)geometry.OuterRadiusM;
             float floor = (float)(geometry.externalBaseHeightM + geometry.baseThicknessM);
-            float lipRadius = (outer - (float)geometry.innerRadiusM) * .65f;
-            float lipCentre = outer - lipRadius * .75f;
-            detailedGlass = Instantiate(glass.sharedMesh);
-            var vertices = new List<Vector3>(detailedGlass.vertices);
-            var triangles = new List<int>(detailedGlass.triangles);
-
-            float Spout(float angle) => .012f * Mathf.Pow(Mathf.Max(0, Mathf.Cos(angle + 2.35f)), 48);
-            for (int i = 0; i < vertices.Count; i++)
+            // Revolve the entire glass cross-section from the underside to the
+            // inside floor. The rolled lip is part of this same surface.
+            float bottom = (float)geometry.externalBaseHeightM;
+            float inner = (float)geometry.innerRadiusM;
+            var profile = new List<Vector2>
             {
-                var p = vertices[i];
-                var radial = new Vector2(p.x, p.z);
-                if (radial.sqrMagnitude < .00001f) continue;
-                float blend = Mathf.SmoothStep(0, 1, Mathf.InverseLerp(rim - .026f, rim, p.y));
-                float extension = Spout(Mathf.Atan2(p.z, p.x)) * blend;
-                radial += radial.normalized * extension;
-                vertices[i] = new Vector3(radial.x, p.y - extension * .18f, radial.y);
+                new Vector2(0, bottom),
+                new Vector2(outer - .004f, bottom),
+                new Vector2(outer - .0017f, bottom + .0006f),
+                new Vector2(outer - .0005f, bottom + .0018f),
+                new Vector2(outer, bottom + .004f),
+                new Vector2(outer + .001f, floor + .02f),
+                new Vector2(outer + .002f, rim - .012f)
+            };
+            float lipCentre = (outer + inner) * .5f + .002f;
+            float lipRadius = (outer - inner) * .5f + .00055f;
+            for (int step = 0; step <= 12; step++)
+            {
+                float angle = Mathf.PI * step / 12;
+                profile.Add(new Vector2(lipCentre + lipRadius * Mathf.Cos(angle),
+                    rim - .0018f + lipRadius * Mathf.Sin(angle)));
             }
-
-            const int segments = 96, sides = 12;
-            int first = vertices.Count;
-            for (int segment = 0; segment < segments; segment++)
+            profile.AddRange(new[]
             {
-                float angle = 2 * Mathf.PI * segment / segments;
-                float extension = Spout(angle);
-                for (int side = 0; side < sides; side++)
+                new Vector2(inner + .002f, rim - .012f),
+                new Vector2(inner + .001f, floor + .02f),
+                new Vector2(inner, floor + .004f),
+                new Vector2(inner - .0007f, floor + .0018f),
+                new Vector2(inner - .002f, floor + .0005f),
+                new Vector2(inner - .004f, floor),
+                new Vector2(0, floor)
+            });
+
+            const int segments = 144;
+            var vertices = new List<Vector3>();
+            var triangles = new List<int>();
+            var rings = new int[profile.Count];
+            for (int row = 0; row < profile.Count; row++)
+            {
+                var point = profile[row];
+                rings[row] = vertices.Count;
+                if (point.x == 0)
                 {
-                    float section = 2 * Mathf.PI * side / sides;
-                    float radius = lipCentre + extension + lipRadius * Mathf.Cos(section);
-                    vertices.Add(new Vector3(radius * Mathf.Cos(angle),
-                        rim - extension * .18f + lipRadius * Mathf.Sin(section), radius * Mathf.Sin(angle)));
-                    int a = first + segment * sides + side;
-                    int b = first + ((segment + 1) % segments) * sides + side;
-                    int d = first + segment * sides + (side + 1) % sides;
-                    int e = first + ((segment + 1) % segments) * sides + (side + 1) % sides;
-                    triangles.AddRange(new[] { a, d, b, b, d, e });
+                    vertices.Add(new Vector3(0, point.y, 0));
+                    continue;
+                }
+
+                float blend = Mathf.SmoothStep(0, 1, Mathf.InverseLerp(rim - .024f, rim - .002f, point.y));
+                for (int segment = 0; segment < segments; segment++)
+                {
+                    float angle = 2 * Mathf.PI * segment / segments;
+                    float spout = .012f * blend * Mathf.Pow(Mathf.Max(0, Mathf.Cos(angle + 2.35f)), 28);
+                    float radius = point.x + spout;
+                    vertices.Add(new Vector3(radius * Mathf.Cos(angle), point.y - spout * .14f,
+                        radius * Mathf.Sin(angle)));
                 }
             }
+
+            for (int row = 0; row < profile.Count - 1; row++)
+            for (int segment = 0; segment < segments; segment++)
+            {
+                int next = (segment + 1) % segments;
+                bool lowerPole = profile[row].x == 0;
+                bool upperPole = profile[row + 1].x == 0;
+                int a = rings[row] + (lowerPole ? 0 : segment);
+                int b = rings[row] + (lowerPole ? 0 : next);
+                int d = rings[row + 1] + (upperPole ? 0 : segment);
+                int e = rings[row + 1] + (upperPole ? 0 : next);
+                if (!upperPole) triangles.AddRange(new[] { a, d, e });
+                if (!lowerPole) triangles.AddRange(new[] { a, e, b });
+            }
+
+            detailedGlass = new Mesh { name = "Moulded Griffin beaker glass" };
             detailedGlass.SetVertices(vertices);
             detailedGlass.SetTriangles(triangles, 0);
             detailedGlass.RecalculateNormals();
@@ -114,18 +157,18 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 bool major = millilitres % 50 == 0;
                 Mark(major ? "--- " + millilitres : "-", y);
             }
-            Mark("mL", floor + .026f);
+            Mark("mL", floor + .082f);
 
             void Mark(string value, float y)
             {
                 var mark = new GameObject("Graduation " + value).AddComponent<TextMesh>();
                 mark.transform.SetParent(stage.transform, false);
                 var outward = new Vector3(Mathf.Cos(labelAngle), 0, Mathf.Sin(labelAngle));
-                mark.transform.localPosition = outward * (outer + .0005f) + Vector3.up * y;
+                mark.transform.localPosition = outward * (outer + .0026f) + Vector3.up * y;
                 mark.transform.localRotation = Quaternion.LookRotation(-outward, Vector3.up);
                 mark.text = value;
                 mark.fontSize = 64;
-                mark.characterSize = .00065f;
+                mark.characterSize = .00085f;
                 mark.anchor = TextAnchor.MiddleCenter;
                 mark.color = new Color(.94f, .96f, .97f, .85f);
             }
