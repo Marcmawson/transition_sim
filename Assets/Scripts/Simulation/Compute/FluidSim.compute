@@ -15,6 +15,9 @@
 #pragma kernel CopyLiquidMass
 #pragma kernel ReorderWithHeat THERMAL_PARTICLES
 #pragma kernel ReorderCopyBackWithHeat THERMAL_PARTICLES
+#pragma kernel SumThermalNeighbours
+#pragma kernel DiffuseLiquidHeat
+#pragma kernel CommitLiquidHeat
 
 // Includes
 #include "./FluidMaths3D.hlsl"
@@ -281,6 +284,60 @@ void ReorderCopyBack(uint3 id : SV_DispatchThreadID) { CopyReorderedData(id); }
 void ReorderWithHeat(uint3 id : SV_DispatchThreadID) { ReorderData(id); }
 [numthreads(ThreadGroupSize, 1, 1)]
 void ReorderCopyBackWithHeat(uint3 id : SV_DispatchThreadID) { CopyReorderedData(id); }
+
+RWStructuredBuffer<float> ThermalNeighbourWeight;
+float LiquidThermalDiffusivity;
+
+float ThermalExchange(uint index, bool diffuse)
+{
+    float3 position = PredictedPositions[index];
+    int3 origin = GetCell3D(position, smoothingRadius);
+    float total = 0;
+    float rate = min(0.5, 6 * LiquidThermalDiffusivity * deltaTime / (smoothingRadius * smoothingRadius));
+    for (int offset = 0; offset < 27; offset++)
+    {
+        int3 cell = origin + offsets3D[offset];
+        uint key = KeyFromHash(HashCell3D(cell), numParticles);
+        for (uint neighbour = SpatialOffsets[key]; neighbour < numParticles && SpatialKeys[neighbour] == key; neighbour++)
+        {
+            if (neighbour == index) continue;
+            float3 other = PredictedPositions[neighbour];
+            // Reject hash collisions so a pair is counted once in each direction.
+            if (any(GetCell3D(other, smoothingRadius) != cell)) continue;
+            float weight = LiquidWeight(neighbour) * max(0, 1 - distance(position, other) / smoothingRadius);
+            if (diffuse)
+            {
+                // Symmetric denominator and mass-weighted flux give equal and
+                // opposite energy updates while bounding each temperature step.
+                float normalizer = max(1, max(ThermalNeighbourWeight[index], ThermalNeighbourWeight[neighbour]));
+                total += weight * (TemperatureRise[neighbour] - TemperatureRise[index]) / normalizer;
+            }
+            else total += weight;
+        }
+    }
+    return diffuse ? rate * total : total;
+}
+
+[numthreads(ThreadGroupSize, 1, 1)]
+void SumThermalNeighbours(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x < numParticles)
+        ThermalNeighbourWeight[id.x] = LiquidWeight(id.x) > 0 ? ThermalExchange(id.x, false) : 0;
+}
+
+[numthreads(ThreadGroupSize, 1, 1)]
+void DiffuseLiquidHeat(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x < numParticles)
+        SortedTemperatureRise[id.x] = TemperatureRise[id.x] +
+            (LiquidWeight(id.x) > 0 ? ThermalExchange(id.x, true) : 0);
+}
+
+[numthreads(ThreadGroupSize, 1, 1)]
+void CommitLiquidHeat(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x < numParticles) TemperatureRise[id.x] = SortedTemperatureRise[id.x];
+}
 
 bool SupportsFloorMirror(float3 p)
 {
