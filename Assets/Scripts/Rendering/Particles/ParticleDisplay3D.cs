@@ -72,6 +72,11 @@ namespace Seb.Fluid.Rendering
 
 
 					mat.SetBuffer("Positions", sim.positionBuffer);
+						if (mode == DisplayMode.Billboard)
+						{
+							mat.SetInt("TrackLiquidMass", sim.trackLiquidMass ? 1 : 0);
+							mat.SetBuffer("LiquidFraction", sim.LiquidFraction);
+						}
 					mat.SetBuffer("Velocities", sim.velocityBuffer);
 					mat.SetBuffer("DebugBuffer", sim.debugBuffer);
 					if (mode == DisplayMode.Billboard && sim.TemperatureRise != null)
