@@ -22,9 +22,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private struct FlowSample
         {
-            public double WarmCount, WarmHeight, WarmSpeed, CoolCount, CoolSpeed, LiftedCount, LiftedSpeed;
+            public double WarmCount, WarmHeight, WarmSpeed, CoolCount, CoolSpeed, LiftedCount, LiftedSpeed, PeakRiseK, FloorContacts;
 
-            public void Add(Vector4 totals, Vector4 counts)
+            public void Add(Vector4 totals, Vector4 counts, float floorContacts)
             {
                 WarmCount += totals.x;
                 WarmHeight += totals.y;
@@ -33,6 +33,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 CoolCount += counts.x;
                 LiftedCount += counts.y;
                 LiftedSpeed += counts.z;
+                FloorContacts += floorContacts;
+                PeakRiseK = Math.Max(PeakRiseK, counts.w);
             }
 
             public string Describe()
@@ -46,7 +48,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 string lifted = LiftedCount > 0
                     ? FormattableString.Invariant($"warm above 0.5 mm {LiftedCount:F0} · vertical {1000 * LiftedSpeed / LiftedCount:+0.000;-0.000;0.000} mm/s")
                     : "warm above 0.5 mm: 0";
-                return warm + " · " + cool + " · " + lifted;
+                return FormattableString.Invariant($"Peak water rise {PeakRiseK:F4} K · Floor contacts {FloorContacts:F0}") + " · " + warm + " · " + cool + " · " + lifted;
             }
         }
 
@@ -83,7 +85,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             mesh = new BeakerSolidMesh(geometry);
             int count = fluid.positionBuffer.count;
             particleGroups = (count + 63) / 64;
-            flowSnapshot = new Vector4[2 * particleGroups];
+            flowSnapshot = new Vector4[3 * particleGroups];
             solidGroups = (mesh.CapacityJPerK.Length + 63) / 64;
             solidSnapshot = new float[mesh.CapacityJPerK.Length];
             particleSnapshot = new float[count];
@@ -293,7 +295,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (!result.hasError)
                 {
                     var data = result.GetData<Vector4>();
-                    for (int i = 0; i < data.Length; i += 2) flow.Add(data[i], data[i + 1]);
+                    for (int i = 0; i < data.Length; i += 3) flow.Add(data[i], data[i + 1], data[i + 2].x);
                 }
                 Complete();
             });
@@ -315,8 +317,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             shader.Dispatch(measureFlow, particleGroups, 1, 1);
             flowTotals.GetData(flowSnapshot);
             sampledFlow = default;
-            for (int i = 0; i < flowSnapshot.Length; i += 2)
-                sampledFlow.Add(flowSnapshot[i], flowSnapshot[i + 1]);
+            for (int i = 0; i < flowSnapshot.Length; i += 3)
+                sampledFlow.Add(flowSnapshot[i], flowSnapshot[i + 1], flowSnapshot[i + 2].x);
             glassRead.GetData(solidSnapshot);
             fluid.TemperatureRise.GetData(particleSnapshot);
             double solidJ = solidSnapshot.Select((value, i) => value * mesh.CapacityJPerK[i]).Sum();
