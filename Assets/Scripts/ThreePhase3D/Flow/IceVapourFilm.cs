@@ -7,6 +7,22 @@ namespace PhysicsSim.ThreePhase3D.Flow
     // Isothermal planar stagnant gas film. Positive water transfer is sublimation.
     internal static class IceVapourFilm
     {
+        internal static (double IceKg, double IceEnthalpyJ, double VapourKg, double GasEnthalpyJ, double HeatIntoIceJ)
+            AdvanceLumped(GasIceEquilibrium surface, double ambientFraction, double diffusivity, double thickness,
+                double area, double dt, double iceKg, double vapourKg, double vapourEnthalpyJkg,
+                double gasTemperatureK, double conductanceWm2K)
+        {
+            if (!Positive(gasTemperatureK) || !Positive(conductanceWm2K))
+                throw new ArgumentException("Ice thermal coupling requires positive gas temperature and conductance.");
+            var exchange = Exchange(surface, ambientFraction, diffusivity, thickness, area, dt, iceKg, vapourKg,
+                vapourEnthalpyJkg);
+            double remaining = iceKg - exchange.VapourKg;
+            if (!(remaining > 0)) throw new InvalidOperationException("The lumped ice step requires remaining ice.");
+            double heat = conductanceWm2K * area * dt * (gasTemperatureK - surface.TemperatureK);
+            double enthalpy = iceKg * surface.Ice.EnthalpyJkg + heat - exchange.GasEnthalpyJ;
+            return (remaining, enthalpy, exchange.VapourKg, exchange.GasEnthalpyJ, heat);
+        }
+
         internal static (double VapourKg, double IceEnthalpyJ, double GasEnthalpyJ, double SurfaceHeatJ) Exchange(
             GasIceEquilibrium surface, double ambientFraction, double diffusivity, double thickness,
             double area, double dt, double iceKg, double vapourKg, double vapourEnthalpyJkg)
