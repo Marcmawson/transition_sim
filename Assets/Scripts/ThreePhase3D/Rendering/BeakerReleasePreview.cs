@@ -188,7 +188,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 nextParticleRefresh = now + controls.ParticleRefreshSeconds;
             }
             waterStatus = $"{release.InitialLiquidVolumeM3 * 1e6:G4} mL water · GPU  |  {release.TimeS:F3} s  |  Step {release.Steps}  |  Δt {release.Pressure.Diagnostics.Dt * 1000:F3} ms";
-            volumeStatus = $"Liquid volume drift {release.LiquidDriftM3:E2} m³";
+            volumeStatus = $"Liquid volume drift {release.LiquidDriftM3:E2} m³ · enthalpy drift {release.LiquidEnthalpyDriftJ:E2} J";
         }
 
         private GameObject CreateBlock(string label, Material material)
