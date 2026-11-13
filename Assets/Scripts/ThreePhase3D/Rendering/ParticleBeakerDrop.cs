@@ -11,6 +11,7 @@ using UnityEngine.Rendering;
 namespace PhysicsSim.ThreePhase3D.Rendering
 {
     [RequireComponent(typeof(Beaker3DSetup))]
+    [DefaultExecutionOrder(10)]
     public sealed class ParticleBeakerDrop : MonoBehaviour
     {
         [SerializeField] private bool showBoiling;
@@ -125,12 +126,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             var setup = GetComponent<Beaker3DSetup>();
             geometry = setup.scenario.physical.geometry;
             releaseVolumeMl = largerBeaker ? LargeVolumeMl : SmallVolumeMl;
-            geometry.innerRadiusM = largerBeaker ? .06 : .033;
-            geometry.cavityHeightM = largerBeaker ? .16 : .06;
-            geometry.tripodRingRadiusM = geometry.OuterRadiusM * .75;
-            setup.scenario.display.glassOpacity = .28f;
-            setup.scenario.display.showSetupReport = false;
-            setup.Refresh();
+            // The render mock-up sets up the shared vessel before this component starts.
+            // Refreshing it here would replace its glass and tripod meshes.
+            if (!TryGetComponent<BeakerRenderMockup>(out var mockup) || !mockup.isActiveAndEnabled)
+            {
+                geometry.innerRadiusM = largerBeaker ? .06 : .033;
+                geometry.cavityHeightM = largerBeaker ? .16 : .06;
+                geometry.tripodRingRadiusM = geometry.OuterRadiusM * .75;
+                setup.scenario.display.glassOpacity = .28f;
+                setup.scenario.display.showSetupReport = false;
+                setup.Refresh();
+            }
 
             float floor = (float)(geometry.externalBaseHeightM + geometry.baseThicknessM);
             float rim = (float)geometry.RimHeightM;
