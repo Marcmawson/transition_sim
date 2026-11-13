@@ -15,6 +15,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly List<Texture2D> metalNormals = new List<Texture2D>();
         private Transform flameCore, flameSheath;
         private Light burnerGlow;
+        private float previousShadowDistance;
+        private int previousShadowCascades;
+        private float previousCascadeSplit;
+        private bool outdoorShadowSettingsApplied;
         private readonly List<Mesh> burnerMeshes = new List<Mesh>();
         private Mesh oakBoard;
 
@@ -271,8 +275,21 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             sun.type = LightType.Directional;
             sun.color = new Color(1, .95f, .85f);
             sun.intensity = 1.25f;
-            sun.shadows = LightShadows.Hard;
+            sun.shadows = LightShadows.Soft;
             sun.shadowStrength = .9f;
+            sun.shadowCustomResolution = 4096;
+            sun.shadowBias = .03f;
+            sun.shadowNormalBias = .12f;
+            sun.shadowNearPlane = .05f;
+
+            // Spend the shadow-map resolution on the bench and nearby paving.
+            previousShadowDistance = QualitySettings.shadowDistance;
+            previousShadowCascades = QualitySettings.shadowCascades;
+            previousCascadeSplit = QualitySettings.shadowCascade2Split;
+            outdoorShadowSettingsApplied = true;
+            QualitySettings.shadowDistance = 5f;
+            QualitySettings.shadowCascades = 2;
+            QualitySettings.shadowCascade2Split = .24f;
 
             var skyShader = Shader.Find("Skybox/Procedural");
             if (skyShader != null)
@@ -478,6 +495,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnDestroy()
         {
+            if (outdoorShadowSettingsApplied)
+            {
+                QualitySettings.shadowDistance = previousShadowDistance;
+                QualitySettings.shadowCascades = previousShadowCascades;
+                QualitySettings.shadowCascade2Split = previousCascadeSplit;
+            }
             if (stage != null) Destroy(stage);
             if (detailedGlass != null) Destroy(detailedGlass);
             if (cylinder != null) Destroy(cylinder);
