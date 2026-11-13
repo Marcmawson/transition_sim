@@ -677,6 +677,9 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 correction[f] = geometric - alpha * width;
             }
 
+            if (increments != null)
+                LimitPhaseExchangeOutflow(state, increments, swept, correction, outgoing, displacementBefore);
+
             var work = new CutCellScalarWork(plan, fields, swept, correction, outgoing, reservoir, displacementBefore);
             var output = apply == null ? ApplyReference(work) : apply(work);
             var next = output.Fields;
@@ -716,6 +719,53 @@ namespace PhysicsSim.ThreePhase3D.Flow
             Validate(next, displacementAfter);
             return new CutCellTransportResult(plan, new CutCellInventories(next), output.Liquid, output.Gas,
                 output.Boundary, reservoir, roundoff, output.LimitedM3, pressureCorrection);
+        }
+
+        // Both backends must reserve phase-change withdrawals before limiting
+        // geometric advection. The upwind contribution is already committed.
+        private void LimitPhaseExchangeOutflow(CutCellInventories state, CutCellInventories increments,
+            double[] swept, double[] correction, double[] outgoing, double[] displacement)
+        {
+            var liquidDemand = new double[plan.GroupCount];
+            var gasDemand = new double[plan.GroupCount];
+            for (int f = 0; f < swept.Length; f++)
+            {
+                if (swept[f] == 0) continue;
+                int donor = swept[f] > 0 ? plan.Faces[f].Low : plan.Faces[f].High;
+                if (donor < 0) continue;
+                liquidDemand[donor] += Math.Max(0, correction[f]);
+                gasDemand[donor] += Math.Max(0, -correction[f]);
+            }
+
+            for (int c = 0; c < plan.GroupCount; c++)
+            {
+                double volume = plan.Volumes[c] - (displacement?[c] ?? 0);
+                double retained = volume > 0 ? 1 - outgoing[c] / volume : 1;
+                double liquidSource = increments.LiquidM3[c];
+                double liquidEnergy = state.LiquidEnergyJ[c];
+                if (liquidEnergy > 0 && increments.LiquidEnergyJ[c] < 0)
+                    liquidSource = Math.Min(liquidSource,
+                        state.LiquidM3[c] * (increments.LiquidEnergyJ[c] / liquidEnergy));
+                liquidDemand[c] = ScaleDemand(liquidDemand[c], state.LiquidM3[c] * retained, liquidSource);
+                gasDemand[c] = ScaleDemand(gasDemand[c], state.GasM3[c] * retained, increments.GasM3[c]);
+            }
+
+            for (int f = 0; f < swept.Length; f++)
+            {
+                if (swept[f] == 0) continue;
+                int donor = swept[f] > 0 ? plan.Faces[f].Low : plan.Faces[f].High;
+                if (donor >= 0) correction[f] *= correction[f] >= 0 ? liquidDemand[donor] : gasDemand[donor];
+            }
+
+            double ScaleDemand(double demand, double available, double source)
+            {
+                if (source >= 0) return 1;
+                double budget = available + source;
+                if (budget < 0)
+                    throw new InvalidOperationException("Phase exchange and upwind transport exceed the donor inventory. Reduce the timestep.");
+                // Keep some donor phase to carry its remaining scalar inventory.
+                return demand > 0 ? Math.Min(1, .99 * budget / demand) : 1;
+            }
         }
 
         private static CutCellScalarOutput ApplyReference(CutCellScalarWork work)
