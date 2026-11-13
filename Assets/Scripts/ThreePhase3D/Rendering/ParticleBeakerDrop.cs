@@ -23,6 +23,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private double vapourStepSeconds;
         private double pendingVapourKg;
         private const float VapourWhiteSpeedMps = .35f;
+        private double initialLiquidDensity;
         private const float SmallVolumeMl = 9;
         private const float LargeVolumeMl = 250;
         private const float DropGapM = .01f;
@@ -156,6 +157,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.spawner = spawner;
             fluid.manualControl = true;
             fluid.transportTemperature = heatMovingWater;
+            fluid.trackLiquidMass = showBoiling && heatMovingWater;
+            if (fluid.trackLiquidMass)
+                initialLiquidDensity = new Water95().Evaluate(293.15, 101325, WaterBranch.Liquid).DensityKgM3;
             if (heatMovingWater) fluid.buoyancyDensityByDegree = BuildBuoyancyDensityTable();
             // Start from the demo's liquid parameters scaled to metre-sized particles.
             fluid.smoothingRadius = .002f;
@@ -436,12 +440,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (movingHeat != null)
                 {
                     double solid = movingHeat.SampledSolidJ, water = movingHeat.SampledWaterJ;
-                    GUILayout.Label($"Absorbed {movingHeat.SampledInputJ:F4} J · Accounted {solid + water + movingHeat.VapourLatentHeatJ:F4} J");
+                    GUILayout.Label($"Absorbed {movingHeat.SampledInputJ:F4} J · Accounted {solid + water + movingHeat.VapourLatentHeatJ + movingHeat.VapourSensibleHeatJ:F4} J");
                     GUILayout.Label($"Entropy change {movingHeat.SampledStoredEntropyJPerK:G4} J/K · Inferred production {movingHeat.SampledProducedEntropyJPerK:G4} J/K");
                     GUILayout.Label($"Solids {solid:F4} J · Water {water:F4} J");
                     GUILayout.Label(movingHeat.FlowDescription);
                     if (showBoiling)
                     {
+                        GUILayout.Label($"Liquid remaining {movingHeat.SampledLiquidMassKg / initialLiquidDensity * 1e6:F4} mL (reference density)");
                         GUILayout.Label($"Vapour generated {movingHeat.VapourGeneratedKg * 1e6:G4} mg · Latent heat {movingHeat.VapourLatentHeatJ:G4} J");
                         GUILayout.Label("Vapour speed · light blue 0 to white 0.35 m/s");
                     }
