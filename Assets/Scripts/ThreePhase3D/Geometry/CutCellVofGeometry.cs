@@ -112,19 +112,22 @@ namespace PhysicsSim.ThreePhase3D.Geometry
         internal double LiquidGasInterfaceArea(int cell, ClipPlane plane)
         {
             Bounds(cell, out D3 lo, out D3 hi);
-            double area = PolyhedronClip.SectionArea(Box(lo, hi), plane);
+            var section = PolyhedronClip.SectionPolygon(Box(lo, hi), plane);
+            double area = PolyhedronClip.Area(section);
             if (area == 0 || solids[cell] == null) return area;
-            var bounds = PolyhedronClip.Bounds(lo, hi);
+
+            // Clip the shared planar section rather than independently cutting
+            // closed tetrahedra. Coplanar faces can otherwise cancel unevenly.
             double blocked = 0;
             foreach (var tetra in solids[cell])
             {
-                var faces = tetra.Faces;
-                foreach (var bound in bounds)
+                var polygon = section;
+                foreach (var bound in tetra.Planes)
                 {
-                    faces = PolyhedronClip.Clip(faces, bound);
-                    if (faces.Count == 0) break;
+                    polygon = PolyhedronClip.Polygon(polygon, bound);
+                    if (polygon.Count < 3) break;
                 }
-                if (faces.Count > 0) blocked += tetra.Sign * PolyhedronClip.SectionArea(faces, plane);
+                blocked += tetra.Sign * PolyhedronClip.Area(polygon);
             }
             double open = area - blocked;
             double tolerance = 1e-10 * (grid.FaceArea(0) + grid.FaceArea(1) + grid.FaceArea(2));
