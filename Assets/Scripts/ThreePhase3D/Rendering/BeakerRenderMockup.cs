@@ -22,9 +22,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             DetailBeaker(setup);
             var brass = CreateMaterial(new Color(.48f, .29f, .11f), .8f, .68f);
             var steel = CreateMaterial(new Color(.18f, .2f, .22f), .7f, .72f);
-            var rubber = CreateMaterial(new Color(.035f, .04f, .045f), 0, .27f);
+            var rubber = CreateMaterial(new Color(.014f, .017f, .022f), 0, .19f);
             Part("Graphite tabletop", PrimitiveType.Cube, new Vector3(0, -.015f, 0),
-                new Vector3(4, .03f, 4), rubber);
+                new Vector3(100, .03f, 100), rubber);
             Part("Burner base", PrimitiveType.Cylinder, new Vector3(0, .007f, 0),
                 new Vector3(.052f, .007f, .052f), rubber);
             Part("Burner barrel", PrimitiveType.Cylinder, new Vector3(0, .042f, 0),
@@ -112,9 +112,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 float y = floor + millilitres * 1e-6f / (Mathf.PI * Mathf.Pow((float)geometry.innerRadiusM, 2));
                 bool major = millilitres % 50 == 0;
-                Mark(major ? "----  " + millilitres : "--", y);
+                Mark(major ? "--- " + millilitres : "-", y);
             }
-            Mark("mL", floor + .029f);
+            Mark("mL", floor + .026f);
 
             void Mark(string value, float y)
             {
@@ -125,7 +125,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 mark.transform.localRotation = Quaternion.LookRotation(-outward, Vector3.up);
                 mark.text = value;
                 mark.fontSize = 64;
-                mark.characterSize = .0055f;
+                mark.characterSize = .00065f;
                 mark.anchor = TextAnchor.MiddleCenter;
                 mark.color = new Color(.94f, .96f, .97f, .85f);
             }
