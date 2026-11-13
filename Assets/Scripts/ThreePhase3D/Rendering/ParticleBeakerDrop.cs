@@ -103,6 +103,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private double StepSeconds => StepMicroseconds / 1_000_000.0;
         [SerializeField, Range(1f, BeakerRenderMockup.MaxMarkedVolumeMl), Tooltip("Cylindrical release volume in mL. Set before pressing Play.")]
         private float meshReleaseVolumeMl = 9f;
+        [SerializeField, Range(.6f, 1.2f), Tooltip("Settled fill calibration for the mesh drop. Lower values reduce particle packing density and raise the waterline.")]
+        private float meshPackingDensityScale = .825f;
         [SerializeField, Range(0f, 150f), Tooltip("Height in millimetres from the inside floor of the beaker to the bottom of the water cylinder. Set before Play.")]
         private float spawnHeightAboveBottomMm = 100f;
         private float releaseVolumeMl;
@@ -216,7 +218,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             // Start from the demo's liquid parameters scaled to metre-sized particles.
             fluid.smoothingRadius = .002f * spacingScale;
             fluid.targetDensity = meshWater
-                ? InteriorSpawnDensity(fluid.smoothingRadius, cylinderRadius, cylinderHeight, spawner.particleSpawnDensity)
+                ? InteriorSpawnDensity(fluid.smoothingRadius, cylinderRadius, cylinderHeight, spawner.particleSpawnDensity) * meshPackingDensityScale
                 : 630e6f;
             // Start the mesh drop with modest pressure and neighbour damping.
             // The legacy particle scene keeps its own tuning.
