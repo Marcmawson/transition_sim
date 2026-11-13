@@ -71,6 +71,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         public double SampledStoredEntropyJPerK { get; private set; }
         public double SampledProducedEntropyJPerK { get; private set; }
         private double inputJ, nextSampleTime;
+        private ComputeBuffer roomHeat;
+        private readonly float[] roomHeatSnapshot;
+        public double SampledRoomHeatJ { get; private set; }
         private int sampleRevision;
         private bool samplePending, sampleDirty;
         public double SampledLiquidMassKg { get; private set; }
@@ -94,6 +97,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             solidGroups = (mesh.CapacityJPerK.Length + 63) / 64;
             solidSnapshot = new float[mesh.CapacityJPerK.Length];
             particleSnapshot = new float[count];
+            roomHeatSnapshot = new float[solidSnapshot.Length];
             double particleVolume = volumeM3 / count;
             double spacing = Math.Pow(particleVolume, 1.0 / 3);
             var water = new Water95();
@@ -109,6 +113,21 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             for (int i = 0; i < Rings; i++)
                 maxStep = Math.Min(maxStep, .5 * mesh.CapacityJPerK[(i + 1) * Depth - 1] /
                     (perArea * Math.PI * (2 * i + 1) * width * width));
+
+            // Fixed ambient film at the same reference temperature as the initial glass.
+            // Exclude the interior floor and wall from the external room boundary.
+            const double roomFilm = 8;
+            var area = (double[])mesh.ExposedAreaM2.Clone();
+            for (int ring = 0; ring < Rings; ring++)
+                area[(ring + 1) * Depth - 1] = 0;
+            int wallRows = (mesh.Ring - mesh.LowerWall) / BeakerSolidMesh.WallRadialCells;
+            double insideWallArea = 2 * Math.PI * geometry.innerRadiusM * geometry.cavityHeightM / wallRows;
+            for (int cell = mesh.LowerWall; cell < mesh.Ring; cell += BeakerSolidMesh.WallRadialCells)
+                area[cell] = Math.Max(0, area[cell] - insideWallArea);
+            var roomConductance = Array.ConvertAll(area, value => (float)(roomFilm * value));
+            for (int cell = 0; cell < roomConductance.Length; cell++)
+                if (roomConductance[cell] > 0)
+                    maxStep = Math.Min(maxStep, .5 * mesh.CapacityJPerK[cell] / roomConductance[cell]);
 
             shader = UnityEngine.Object.Instantiate(asset);
             try
@@ -135,6 +154,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 shader.SetBuffer(measureFlow, "FlowTotals", flowTotals);
                 glassRead = Allocate(solidSnapshot.Length, 4);
                 glassWrite = Allocate(solidSnapshot.Length, 4);
+                roomHeat = Allocate(solidSnapshot.Length, 4);
+                var roomFilmBuffer = Allocate(solidSnapshot.Length, 4);
+                roomFilmBuffer.SetData(roomConductance);
+                shader.SetBuffer(conduct, "RoomConductance", roomFilmBuffer);
+                shader.SetBuffer(conduct, "RoomHeatJ", roomHeat);
                 burnerEntropy = Allocate(solidSnapshot.Length, 4);
                 burnerEntropySnapshot = new float[solidSnapshot.Length];
                 shader.SetBuffer(conduct, "BurnerEntropyJPerK", burnerEntropy);
@@ -220,6 +244,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             samplePending = sampleDirty = false;
             sampledFlow = default;
             VapourGeneratedKg = 0;
+            SampledRoomHeatJ = 0;
+            Array.Clear(roomHeatSnapshot, 0, roomHeatSnapshot.Length);
+            roomHeat.SetData(roomHeatSnapshot);
             SampledLiquidMassKg = particleSnapshot.Length * initialParticleMassKg;
             if (vapourProduction != null)
             {
@@ -292,7 +319,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             bool trackMass = fluid.trackLiquidMass;
             float[] temperatures = trackMass ? new float[particleSnapshot.Length] : null;
             float[] weights = trackMass ? new float[particleSnapshot.Length] : null;
-            int remaining = trackMass ? 5 : 4;
+            int remaining = trackMass ? 6 : 5;
+            double sampledRoomHeat = 0;
             FlowSample flow = default;
             shader.Dispatch(measureFlow, particleGroups, 1, 1);
 
@@ -311,9 +339,21 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     }
                 }
                 PublishSample(sampledInput, solidJ, waterJ, solidEntropy + waterEntropy, inputEntropy);
+                SampledRoomHeatJ = sampledRoomHeat;
                 sampledFlow = flow;
             }
 
+            AsyncGPUReadback.Request(roomHeat, result =>
+            {
+                if (revision != sampleRevision) return;
+                failed |= result.hasError;
+                if (!result.hasError)
+                {
+                    var data = result.GetData<float>();
+                    for (int i = 0; i < data.Length; i++) sampledRoomHeat += data[i];
+                }
+                Complete();
+            });
             AsyncGPUReadback.Request(glassRead, result =>
             {
                 if (revision != sampleRevision) return;
@@ -416,8 +456,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             double storedEntropy = solidSnapshot.Select((rise, i) => mesh.CapacityJPerK[i] * SpecificEntropyFactor(rise)).Sum() +
                 particleSnapshot.Select((rise, i) => SpecificEntropyFactor(rise) * (weights?[i] ?? 1)).Sum() * particleCapacity;
             PublishSample(inputJ, solidJ, liquidJ, storedEntropy, burnerEntropySnapshot.Sum(value => (double)value));
-            double residual = solidJ + liquidJ + VapourLatentHeatJ + VapourSensibleHeatJ - inputJ;
-            return FormattableString.Invariant($"burner {inputJ:F4} J · solids {solidJ:F4} J · water {liquidJ:F4} J · residual {residual:G4} J · entropy change {SampledStoredEntropyJPerK:G4} J/K · inferred production {SampledProducedEntropyJPerK:G4} J/K · {FlowDescription}");
+            roomHeat.GetData(roomHeatSnapshot);
+            SampledRoomHeatJ = roomHeatSnapshot.Sum(value => (double)value);
+            double residual = solidJ + liquidJ + VapourLatentHeatJ + VapourSensibleHeatJ + SampledRoomHeatJ - inputJ;
+            return FormattableString.Invariant($"burner {inputJ:F4} J · solids {solidJ:F4} J · water {liquidJ:F4} J · room heat {SampledRoomHeatJ:G4} J · residual {residual:G4} J · entropy change {SampledStoredEntropyJPerK:G4} J/K · inferred production {SampledProducedEntropyJPerK:G4} J/K · {FlowDescription}");
         }
 
         private int Kernel(string name)
