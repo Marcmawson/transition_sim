@@ -21,19 +21,16 @@ namespace Seb.Fluid.Rendering
         Material drawMat;
         Bounds bounds = new Bounds(Vector3.zero, Vector3.one * 1000);
 
-        void Start()
-        {
-            marchingCubes = new MarchingCubes();
-        }
-
         void LateUpdate()
         {
-            if (sim.DensityMap != null)
-            {
-                RenderFluid(sim.DensityMap);
-            }
-        }
+            // The ice-only launch can enable this renderer after Start has been scheduled.
+            if (sim == null || drawShader == null || renderArgsCompute == null) return;
+            var densityTexture = sim.DensityMap;
+            if (densityTexture == null || !densityTexture.IsCreated()) return;
 
+            if (marchingCubes == null) marchingCubes = new MarchingCubes();
+            RenderFluid(densityTexture);
+        }
 
         void RenderFluid(RenderTexture densityTexture)
         {
