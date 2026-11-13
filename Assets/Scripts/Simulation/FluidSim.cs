@@ -111,11 +111,11 @@ namespace Seb.Fluid.Simulation
 		[HideInInspector] public float beakerRimY;
 		public float SimulatedSeconds => (float)simTimer;
 
-		public void AdvanceManually(float stepSeconds, int steps)
+		public void AdvanceManually(float stepSeconds, int steps, bool updateSurface = true)
 		{
 			if (!manualControl || positionBuffer == null || stepSeconds <= 0 || steps <= 0)
 				throw new InvalidOperationException("A ready manual simulation and positive timestep are required.");
-			RunSimulationFrame(stepSeconds * steps, steps);
+			RunSimulationFrame(stepSeconds * steps, steps, updateSurface);
 		}
 
 		public void ResetParticles()
@@ -430,7 +430,7 @@ namespace Seb.Fluid.Simulation
 
 		void RunSimulationFrame(float frameDeltaTime) => RunSimulationFrame(frameDeltaTime, iterationsPerFrame);
 
-		void RunSimulationFrame(float frameDeltaTime, int steps)
+		void RunSimulationFrame(float frameDeltaTime, int steps, bool updateSurface = true)
 		{
 			float subStepDeltaTime = frameDeltaTime / steps;
 			UpdateSettings(subStepDeltaTime, frameDeltaTime);
@@ -450,7 +450,7 @@ namespace Seb.Fluid.Simulation
 			}
 
 			// 3D density map
-			if (renderToTex3D)
+			if (renderToTex3D && updateSurface)
 			{
 				UpdateDensityMap();
 			}
