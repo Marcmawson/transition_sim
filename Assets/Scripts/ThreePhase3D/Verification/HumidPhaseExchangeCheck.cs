@@ -23,10 +23,13 @@ namespace PhysicsSim.ThreePhase3D.Verification
             var gas = humid.ReferenceTp(initialGas, pressure, fraction);
             double initialEnergy = (dryAir + initialVapour) * gas.EnthalpyJkg;
             double initialEntropy = (dryAir + initialVapour) * gas.EntropyJkgK;
-            // A separate saturated pool supplies the incoming steam pulse.
+            // The saturated pool and headspace share the audited domain.
+            const double initialPoolKg = 1e-5;
             var boiling = new PureWaterStefanInterface(pressure, 370, 377, 100, 0);
-            var steam = boiling.Transfer(area, 0.1, 1e-5, 0);
-            double steamEntropy = steam.WaterKg * boiling.Saturation.Vapour.EntropyJkgK;
+            var steam = boiling.Transfer(area, 0.1, initialPoolKg, 0);
+            var pool = boiling.Saturation.Liquid;
+            double boilingHeat = steam.WaterKg * boiling.Saturation.LatentEnthalpyJkg;
+            double remainingPoolKg = initialPoolKg - steam.WaterKg;
             Near(Math.Abs(steam.LiquidEnthalpyJ + steam.VapourEnthalpyJ), 1e-14);
             var coarse = Run(8);
             var fine = Run(16);
@@ -35,7 +38,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 Math.Abs(fine.Back - reference.Back) >= Math.Abs(coarse.Back - reference.Back))
                 throw new InvalidOperationException("Finite-wall condensation did not refine with timestep.");
             log(FormattableString.Invariant(
-                $"S12 spatial-wall condensation passed: inner glass {reference.Wall:F6} K, outer glass {reference.Back:F6} K, gas {reference.Gas:F6} K, steam in {steam.WaterKg:G8} kg, condensate {reference.Mass:G8} kg, burner heat {burnerPower * burnerDuration:G8} J, room heat {reference.RoomHeat:G8} J, entropy produced {reference.Entropy:G8} J/K."));
+                $"S12 spatial-wall condensation passed: inner glass {reference.Wall:F6} K, outer glass {reference.Back:F6} K, gas {reference.Gas:F6} K, pool boiled {steam.WaterKg:G8} kg, condensate {reference.Mass:G8} kg, pool heat {boilingHeat:G8} J, glass heat {burnerPower * burnerDuration:G8} J, room heat {reference.RoomHeat:G8} J, entropy produced {reference.Entropy:G8} J/K."));
 
             (double Wall, double Back, double Gas, double Mass, double RoomHeat, double Entropy) Run(int steps)
             {
@@ -46,17 +49,18 @@ namespace PhysicsSim.ThreePhase3D.Verification
                 var power = new double[2];
                 var ledger = new ConservationLedger(new InventoryState
                 {
-                    dryAirKg = dryAir, vapourKg = initialVapour, internalEnergyJ = initialEnergy
+                    dryAirKg = dryAir, vapourKg = initialVapour, liquidKg = initialPoolKg,
+                    internalEnergyJ = initialEnergy + initialPoolKg * pool.EnthalpyJkg
                 }, new ConservationTolerance { massKg = 1e-18, energyJ = 1e-10 });
-                ledger.RecordExternal(ExternalChannel.Injection, FluxDirection.IntoDomain,
-                    steam.WaterKg, 0, steam.VapourEnthalpyJ);
-                ledger.RecordExternalEntropy(ExternalChannel.Injection, 0, steamEntropy);
+                ledger.RecordExternal(ExternalChannel.HeaterAbsorbed, FluxDirection.IntoDomain, 0, 0, boilingHeat);
+                ledger.RecordExternalEntropy(ExternalChannel.HeaterAbsorbed, boilingHeat / pool.TemperatureK, 0);
+                double initialDomainEntropy = initialEntropy + initialPoolKg * pool.EntropyJkgK;
                 double vapour = initialVapour + steam.WaterKg;
                 double liquid = 0, gasEnergy = initialEnergy + steam.VapourEnthalpyJ;
                 double gasK = RecoverGas(gasEnergy, vapour);
                 var mixed = humid.ReferenceTp(gasK, pressure, vapour / (dryAir + vapour));
-                double production = ledger.InferEntropyProductionJPerK(initialEntropy,
-                    (dryAir + vapour) * mixed.EntropyJkgK);
+                double production = ledger.InferEntropyProductionJPerK(initialDomainEntropy,
+                    (dryAir + vapour) * mixed.EntropyJkgK + remainingPoolKg * pool.EntropyJkgK);
                 if (!(production > 0))
                     throw new InvalidOperationException("Steam mixing did not produce positive entropy.");
                 for (int step = 0; step < steps; step++)
@@ -98,9 +102,10 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     double backK = glass.TemperatureK[1];
                     var current = new InventoryState
                     {
-                        dryAirKg = dryAir, vapourKg = vapour, liquidKg = liquid,
+                        dryAirKg = dryAir, vapourKg = vapour, liquidKg = liquid + remainingPoolKg,
                         // At prescribed pressure the fixture audits enthalpy.
-                        internalEnergyJ = mass * gasState.EnthalpyJkg + liquid * liquidState.EnthalpyJkg,
+                        internalEnergyJ = mass * gasState.EnthalpyJkg + liquid * liquidState.EnthalpyJkg +
+                            remainingPoolKg * pool.EnthalpyJkg,
                         solidInternalEnergyJ = wallCapacity * (glass.TemperatureK[0] + backK - 2 * initialWall)
                     };
                     if (!ledger.Audit(current).passed)
@@ -108,14 +113,15 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     var storage = new EntropyInventory();
                     storage.AddMaterial(mass, gasState);
                     storage.AddMaterial(liquid, liquidState);
+                    storage.AddMaterial(remainingPoolKg, pool);
                     storage.AddSensibleStorage(wallCapacity, glass.TemperatureK[0], initialWall);
                     storage.AddSensibleStorage(wallCapacity, backK, initialWall);
-                    double nextProduction = ledger.InferEntropyProductionJPerK(initialEntropy, storage.TotalJPerK);
+                    double nextProduction = ledger.InferEntropyProductionJPerK(initialDomainEntropy, storage.TotalJPerK);
                     if (!(nextProduction >= production - 1e-12))
                         throw new InvalidOperationException("Finite-wall condensation entropy decreased.");
                     production = nextProduction;
                 }
-                Near(Math.Abs(ledger.HeaterAbsorbedJ - burnerPower * burnerDuration), 1e-15);
+                Near(Math.Abs(ledger.HeaterAbsorbedJ - burnerPower * burnerDuration - boilingHeat), 1e-15);
                 if (!(glass.TemperatureK[0] > glass.TemperatureK[1] && glass.TemperatureK[1] > initialWall &&
                     gasK < initialGas && ledger.EnergyOutJ > 0 && production > 0))
                     throw new InvalidOperationException("Finite-wall condensation failed its thermal checks.");
