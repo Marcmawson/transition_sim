@@ -119,6 +119,24 @@ float Remap01(float val, float minVal, float maxVal)
     return saturate((val - minVal) / (maxVal - minVal));
 }
 
+float iceHalfExtent;
+float4x4 iceWorldToLocal, iceLocalToWorld;
+float3 iceVelocity, iceAngularVelocity, iceMassCentre;
+
+void ResolveIce(inout float3 position, inout float3 velocity)
+{
+    if (iceHalfExtent <= 0) return;
+    float3 local = mul(iceWorldToLocal, float4(position, 1)).xyz;
+    float3 distance = iceHalfExtent - abs(local);
+    if (min(distance.x, min(distance.y, distance.z)) <= 0) return;
+    float3 axis = distance.x <= min(distance.y, distance.z) ? float3(1,0,0)
+        : distance.y <= distance.z ? float3(0,1,0) : float3(0,0,1);
+    float3 normal = mul((float3x3)iceLocalToWorld, axis * (dot(axis, local) < 0 ? -1 : 1));
+    position += normal * (dot(distance, axis) + .00005);
+    float3 surfaceVelocity = iceVelocity + cross(iceAngularVelocity, position - iceMassCentre);
+    velocity -= normal * min(0, dot(velocity - surfaceVelocity, normal));
+}
+
 void ResolveCollisions(inout float3 pos, inout float3 vel, float collisionDamping)
 {
     // Transform position/velocity to the local space of the bounding box
@@ -695,6 +713,7 @@ void UpdatePositions(uint3 id : SV_DispatchThreadID)
     float3 previous = Positions[id.x];
     float3 pos = previous + vel * deltaTime;
 
+    ResolveIce(pos, vel);
     ResolveBeaker(previous, pos, vel);
     ResolveCollisions(pos, vel, collisionDamping);
 
