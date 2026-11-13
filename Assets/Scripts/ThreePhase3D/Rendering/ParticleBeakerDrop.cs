@@ -103,6 +103,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         [SerializeField, Range(1f, 50f), Tooltip("Cylindrical release volume in mL. Set before pressing Play.")]
         private float meshReleaseVolumeMl = 9f;
         private float releaseVolumeMl;
+        private Vector3 releaseViewCentre;
+        private float releaseViewHeight;
 
         private void OnEnable()
         {
@@ -154,6 +156,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 Mathf.Pow(volumeM3 / (2 * Mathf.PI), 1f / 3f));
             float cylinderHeight = volumeM3 / (Mathf.PI * cylinderRadius * cylinderRadius);
             float dropBottom = meshWater ? rim + DropGapM : floor + DropGapM;
+            if (meshWater)
+            {
+                float apparatusTop = dropBottom + cylinderHeight;
+                releaseViewCentre = Vector3.up * (apparatusTop / 2f);
+                releaseViewHeight = apparatusTop;
+            }
             solverObject = new GameObject("GPU liquid particles");
             solverObject.SetActive(false);
             solverObject.transform.position = new Vector3(0, .175f, 0);
@@ -244,7 +252,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 surface.col = new Color(.055f, .26f, .36f);
             }
             solverObject.SetActive(true);
-            SetRunning(true);
+            SetRunning(!meshWater);
+            if (meshWater) beakerCamera?.FrameRelease(releaseViewCentre, releaseViewHeight);
         }
 
         private static float[] BuildBuoyancyDensityTable()
@@ -535,6 +544,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 {
                     SetRunning(false);
                     measuring = false;
+                    if (fluid.worldSpaceSurface)
+                    {
+                        fluid.densityTextureRes = 96;
+                        beakerCamera?.FrameRelease(releaseViewCentre, releaseViewHeight);
+                    }
                     fluid.ResetParticles();
                     ResetHeat();
                     solverSteps = 0;
