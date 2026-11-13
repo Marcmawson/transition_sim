@@ -23,7 +23,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
             return (remaining, enthalpy, exchange.VapourKg, exchange.GasEnthalpyJ, heat);
         }
 
-        internal static (double VapourKg, double IceEnthalpyJ, double GasEnthalpyJ, double SurfaceHeatJ) Exchange(
+        internal static (double VapourKg, double IceEnthalpyJ, double GasEnthalpyJ, double SurfaceHeatJ,
+            double PhaseFrontShiftM) Exchange(
             GasIceEquilibrium surface, double ambientFraction, double diffusivity, double thickness,
             double area, double dt, double iceKg, double vapourKg, double vapourEnthalpyJkg)
         {
@@ -42,7 +43,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
 
             // The prescribed-temperature surface receives heat from a reservoir.
             // SurfaceHeatJ is positive when that reservoir supplies heat.
-            return (mass, -mass * iceH, mass * vapourEnthalpyJkg, mass * (vapourEnthalpyJkg - iceH));
+            return (mass, -mass * iceH, mass * vapourEnthalpyJkg, mass * (vapourEnthalpyJkg - iceH),
+                -mass / (surface.Ice.DensityKgM3 * area));
         }
 
         private static bool Positive(double value) => SiUnits.IsFinite(value) && value > 0;

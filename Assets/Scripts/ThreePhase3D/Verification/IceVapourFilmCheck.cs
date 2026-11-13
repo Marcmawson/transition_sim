@@ -24,6 +24,11 @@ namespace PhysicsSim.ThreePhase3D.Verification
                     double vapour = dryAir * ambient / (1 - ambient);
                     var result = IceVapourFilm.Exchange(surface, ambient, diffusivity, film, area, dt, ice, vapour, vapourH);
                     double flux = result.VapourKg / (area * dt);
+                    double initialThickness = ice / (surface.Ice.DensityKgM3 * area);
+                    double finalThickness = initialThickness + result.PhaseFrontShiftM;
+                    if (Math.Sign(result.PhaseFrontShiftM) != Math.Sign(ratio - 1) ||
+                        Math.Abs(finalThickness * area * surface.Ice.DensityKgM3 + result.VapourKg - ice) > 1e-18)
+                        throw new InvalidOperationException("V41 planar front did not match the ice mass balance.");
                     // Integrate the constant-flux species ODE across the film and
                     // compare the recovered ambient composition to its boundary value.
                     double recovered = 1 - (1 - saturated) *
@@ -38,7 +43,7 @@ namespace PhysicsSim.ThreePhase3D.Verification
                         Math.Abs(result.IceEnthalpyJ + result.GasEnthalpyJ - result.SurfaceHeatJ) > 1e-15)
                         throw new InvalidOperationException("V41 surface heat ledger failed.");
                     log(FormattableString.Invariant(
-                        $"S15 V41 ice-vapour film passed: {temperature:F2} K, Y/Yice {ratio:F1}, flux {flux:G8} kg/m2/s, surface heat {result.SurfaceHeatJ:G8} J."));
+                        $"S15 V41 ice-vapour film passed: {temperature:F2} K, Y/Yice {ratio:F1}, flux {flux:G8} kg/m2/s, surface heat {result.SurfaceHeatJ:G8} J, front shift {result.PhaseFrontShiftM:G8} m."));
                 }
             }
             const double initialK = 263.15, initialIce = 1e-7, dryAirKg = 1e-5;
