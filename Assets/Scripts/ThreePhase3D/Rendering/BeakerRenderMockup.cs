@@ -9,6 +9,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly List<Material> materials = new List<Material>();
         private GameObject stage;
         private Mesh detailedGlass;
+        private Mesh backdrop;
 
         private void Start()
         {
@@ -24,14 +25,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             setup.scenario.display.cylinderSegments = 96;
             setup.Refresh();
 
-            stage = new GameObject("Studio tabletop and burner");
+            stage = new GameObject("Daylight stage");
             stage.transform.SetParent(transform, false);
             DetailBeaker(setup);
             var brass = CreateMaterial(new Color(.48f, .29f, .11f), .8f, .68f);
             var steel = CreateMaterial(new Color(.18f, .2f, .22f), .7f, .72f);
             var rubber = CreateMaterial(new Color(.014f, .017f, .022f), 0, .19f);
-            Part("Graphite tabletop", PrimitiveType.Cube, new Vector3(0, -.015f, 0),
-                new Vector3(100, .03f, 100), rubber);
+            BuildDaylightStage();
             Part("Burner base", PrimitiveType.Cylinder, new Vector3(0, .007f, 0),
                 new Vector3(.052f, .007f, .052f), rubber);
             Part("Burner barrel", PrimitiveType.Cylinder, new Vector3(0, .042f, 0),
@@ -57,6 +57,53 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             glow.color = new Color(.2f, .48f, 1);
             glow.range = .12f;
             glow.intensity = .75f;
+        }
+
+        private void BuildDaylightStage()
+        {
+            var surface = CreateMaterial(new Color(.35f, .41f, .39f), 0, .2f);
+            // The worktop bends into the rear wall, so the camera sees a
+            // continuous surface through the glass and around the tripod.
+            const int segments = 24;
+            const float radius = .36f;
+            var profile = new List<Vector2> { new Vector2(-4, 0), new Vector2(.55f, 0) };
+            for (int row = 1; row <= segments; row++)
+            {
+                float angle = .5f * Mathf.PI * row / segments;
+                profile.Add(new Vector2(.55f + radius * Mathf.Sin(angle), radius * (1 - Mathf.Cos(angle))));
+            }
+            profile.Add(new Vector2(.55f + radius, 3));
+
+            var vertices = new List<Vector3>();
+            var triangles = new List<int>();
+            for (int row = 0; row < profile.Count; row++)
+            {
+                Vector2 point = profile[row];
+                vertices.Add(new Vector3(-4, point.y, point.x));
+                vertices.Add(new Vector3(4, point.y, point.x));
+                if (row == 0) continue;
+                int a = 2 * (row - 1);
+                triangles.AddRange(new[] { a, a + 2, a + 1, a + 1, a + 2, a + 3 });
+            }
+
+            backdrop = new Mesh { name = "Curved worktop and backdrop" };
+            backdrop.SetVertices(vertices);
+            backdrop.SetTriangles(triangles, 0);
+            backdrop.RecalculateNormals();
+            backdrop.RecalculateBounds();
+            var sweep = new GameObject("Sage backdrop");
+            sweep.transform.SetParent(stage.transform, false);
+            sweep.AddComponent<MeshFilter>().sharedMesh = backdrop;
+            sweep.AddComponent<MeshRenderer>().sharedMaterial = surface;
+
+            var sun = new GameObject("Window sunlight").AddComponent<Light>();
+            sun.transform.SetParent(stage.transform, false);
+            sun.transform.localRotation = Quaternion.LookRotation(new Vector3(.65f, -.55f, .75f));
+            sun.type = LightType.Directional;
+            sun.color = new Color(1, .92f, .79f);
+            sun.intensity = 1.15f;
+            sun.shadows = LightShadows.Soft;
+            sun.shadowStrength = .75f;
         }
 
         private void DetailBeaker(Beaker3DSetup setup)
@@ -198,6 +245,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             if (stage != null) Destroy(stage);
             if (detailedGlass != null) Destroy(detailedGlass);
+            if (backdrop != null) Destroy(backdrop);
             foreach (var material in materials) Destroy(material);
         }
     }
