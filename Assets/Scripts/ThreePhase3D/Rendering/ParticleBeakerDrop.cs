@@ -19,6 +19,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly ParticleSystem.Particle[] vapourMarkers = new ParticleSystem.Particle[4096];
         private Material vapourMaterial;
         private Vector3[] vapourSources;
+        private const double VapourStepS = .05;
         private double vapourStepSeconds;
         private double pendingVapourKg;
         private const float VapourWhiteSpeedMps = .35f;
@@ -262,11 +263,22 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 if (vapour == null) CreateVapourDisplay();
                 vapourStepSeconds += dt;
-                if (vapourStepSeconds >= .05)
+                while (vapourStepSeconds >= VapourStepS)
                 {
+                    vapourStepSeconds -= VapourStepS;
                     movingHeat.CollectVapour(vapourSources, EmitVapour);
-                    if (movingHeat.VapourGeneratedKg > 0) plume.Step(vapourStepSeconds);
-                    vapourStepSeconds = 0;
+                    try
+                    {
+                        if (movingHeat.VapourGeneratedKg > 0) plume.Step(VapourStepS);
+                    }
+                    catch (FlowConvergenceException error)
+                    {
+                        running = false;
+                        measuring = false;
+                        evidence = "Vapour pressure solve paused: " + error.Message;
+                        Debug.LogException(error, this);
+                        break;
+                    }
                 }
                 int count = vapour.GetParticles(vapourMarkers);
                 for (int i = 0; i < count; i++)
@@ -599,25 +611,49 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 double fraction = .5 * (Fraction(low) + Fraction(high));
                 predicted[index] += (float)(seconds * 9.81 * .378 * fraction);
             }
-            flow = FlowGpuSolver.Project(plan, shader, predicted, seconds, 4096);
+            FlowStep projected;
+            try
+            {
+                projected = FlowGpuSolver.Project(plan, shader, predicted, seconds, 4096);
+            }
+            catch (FlowConvergenceException) when (seconds > .0125)
+            {
+                // Commit both half-steps together, or restore the prior plume state.
+                var previousGas = gas;
+                var previousFlow = flow;
+                try
+                {
+                    Step(seconds / 2);
+                    Step(seconds / 2);
+                }
+                catch
+                {
+                    gas = previousGas;
+                    flow = previousFlow;
+                    throw;
+                }
+                return;
+            }
+            var trialGas = ((double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[])gas.Clone();
             for (int k = 0; k < grid.Cells.Z; k++)
             for (int j = 0; j < grid.Cells.Y; j++)
             for (int i = 0; i < grid.Cells.X; i++)
             {
                 int group = plan.PressureGroup(i, j, k);
-                Vector3 velocity = CellVelocity(i, j, k);
-                gas[group].MomentumKgMPerS = new D3(velocity.x, velocity.y, velocity.z) *
+                Vector3 velocity = CellVelocity(projected, i, j, k);
+                trialGas[group].MomentumKgMPerS = new D3(velocity.x, velocity.y, velocity.z) *
                     (gas[group].DryAirKg + gas[group].VapourKg);
             }
-            gas = HumidGasAdvection.Advance(plan, flow, plan.Volumes, gas,
+            gas = HumidGasAdvection.Advance(plan, projected, plan.Volumes, trialGas,
                 (AirDensity, 0, 0, default(D3))).Gas;
+            flow = projected;
         }
 
         private double Fraction(int group) => gas[group].VapourKg /
             (gas[group].DryAirKg + gas[group].VapourKg);
 
         internal Vector3 VelocityAt(Vector3 point) => flow != null && TryCell(point, out int i, out int j, out int k)
-            ? CellVelocity(i, j, k) : Vector3.zero;
+            ? CellVelocity(flow, i, j, k) : Vector3.zero;
 
         private bool TryCell(Vector3 point, out int i, out int j, out int k)
         {
@@ -627,7 +663,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             return grid.Cells.Interior(i, j, k);
         }
 
-        private Vector3 CellVelocity(int i, int j, int k)
+        private Vector3 CellVelocity(FlowStep flow, int i, int j, int k)
         {
             var u = flow.VelocityMPerS;
             return .5f * new Vector3(
