@@ -2,6 +2,7 @@ Shader "PhysicsSim/BeakerRefraction"
 {
     Properties
     {
+        _StudioReflections ("Studio reflections", Float) = 0
         _NormalReflectance ("Normal-incidence reflectance", Range(0,1)) = 0.03658
         _RefractiveIndex ("Refractive index", Float) = 1.473
         _AbsorptionPerM ("RGB absorption per metre", Vector) = (0,0,0,0)
@@ -22,6 +23,7 @@ Shader "PhysicsSim/BeakerRefraction"
         float4 _WaterCylinder;
         float _WaterTopY;
         half _NormalReflectance;
+        float _StudioReflections;
 
         struct Input
         {
@@ -43,6 +45,19 @@ Shader "PhysicsSim/BeakerRefraction"
             return max(0, min(side, cap));
         }
 
+        // Evaluate the reflected ray against finite rectangular studio emitters.
+        float Softbox(float3 ray, float3 centre, float2 halfSize)
+        {
+            centre = normalize(centre);
+            float3 right = normalize(cross(float3(0, 1, 0), centre));
+            float3 up = cross(centre, right);
+            float depth = dot(ray, centre);
+            if (depth <= 0) return 0;
+            float2 projected = abs(float2(dot(ray, right), dot(ray, up)) / depth);
+            float2 fade = 1 - smoothstep(halfSize * .85, halfSize * 1.08, projected);
+            return fade.x * fade.y;
+        }
+
         void surf(Input input, inout SurfaceOutputStandardSpecular output)
         {
             float3 incident = normalize(input.worldPos - _WorldSpaceCameraPos);
@@ -61,6 +76,17 @@ Shader "PhysicsSim/BeakerRefraction"
             if (_WaterCylinder.w > 0)
                 transmission = exp(-_AbsorptionPerM.rgb * WaterPathM(input.worldPos, transmitted));
             output.Emission = tex2D(_BeakerOpticalBackground, uv).rgb * (1 - fresnel) * transmission;
+            if (_StudioReflections > 0)
+            {
+                float3 reflected = reflect(incident, normal);
+                float3 studio = float3(3.8, 3.3, 2.65) *
+                    Softbox(reflected, float3(-.65, .35, -.75), float2(.15, .65));
+                studio += float3(1.2, 1.65, 2.3) *
+                    Softbox(reflected, float3(.8, .2, .25), float2(.095, .55));
+                studio += float3(1.9, 1.8, 1.65) *
+                    Softbox(reflected, float3(.15, 1, -.22), float2(.48, .23));
+                output.Emission += studio * fresnel * _StudioReflections;
+            }
             output.Alpha = 1;
         }
         ENDCG
