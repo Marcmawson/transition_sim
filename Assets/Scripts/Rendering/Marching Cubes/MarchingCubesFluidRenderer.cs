@@ -7,6 +7,7 @@ namespace Seb.Fluid.Rendering
     public class MarchingCubesFluidRenderer : MonoBehaviour
     {
         public float isoLevel;
+        public bool worldSpaceSurface;
         public Color col;
 
         [Header("References")]
@@ -43,6 +44,7 @@ namespace Seb.Fluid.Rendering
             // Each triangle contains 3 vertices: assign these all to the vertex buffer on the draw material
             drawMat.SetBuffer("VertexBuffer", triangleBuffer);
             drawMat.SetColor("col", col);
+            drawMat.SetVector("_SurfaceCentre", worldSpaceSurface ? sim.transform.position : Vector3.zero);
             
             // Create render arguments. This stores 5 values:
             // (triangle index count, instance count, sub-mesh index, base vertex index, byte offset)
@@ -69,7 +71,9 @@ namespace Seb.Fluid.Rendering
         void Release()
         {
             ComputeHelper.Release(renderArgs);
-            marchingCubes.Release();
+            marchingCubes?.Release();
+            if (drawMat != null) Destroy(drawMat);
+            if (worldSpaceSurface && renderArgsCompute != null) Destroy(renderArgsCompute);
         }
 
     }
