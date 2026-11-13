@@ -136,7 +136,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 var simulation = BeakerVofTimeIntegration.CreateRelease(volume, false, 293.15, 101325, surfaceJitterM: jitter);
                 return () =>
                 {
-                    simulation.EnableFloorHeating(293.15);
+                    simulation.EnableFloorHeating(293.15, roomFilmWm2K: 8);
                 gpuSession = new BeakerVofGpuSession(simulation);
                     release = simulation;
                     waterParticles = new BeakerWaterParticles(transform, release,
@@ -215,7 +215,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(16, 16, Mathf.Min(Screen.width - 32, 410), 302), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(16, 16, Mathf.Min(Screen.width - 32, 410), 324), GUI.skin.box);
             GUILayout.Label("S07 Beaker release");
             GUILayout.BeginHorizontal();
             bool controlsEnabled = GUI.enabled;
@@ -232,6 +232,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.Label(volumeStatus);
                 GUILayout.Label($"Mean water temperature {release.MeanLiquidTemperatureK - 273.15:F4} °C");
                 if (GUILayout.Button(burnerOn ? "Burner off" : "Burner on")) burnerOn = !burnerOn;
+                GUILayout.Label($"Net heat to room {release.RoomHeatJ:G4} J");
                 GUILayout.Label($"Glass to water {release.LiquidHeatJ:G4} J · Thermal residual {release.ThermalResidualJ:E2} J");
                 if (frameMs > 0)
                     GUILayout.Label($"Game {1000f / frameMs:F1} FPS  |  Step {solverStepMs:F1} ms ({release.Pressure.Diagnostics.Iterations} it)  |  Particles {particleUpdateMs:F1} ms");
