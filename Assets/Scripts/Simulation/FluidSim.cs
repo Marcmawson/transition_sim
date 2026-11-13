@@ -187,7 +187,7 @@ namespace Seb.Fluid.Simulation
 					densityTable.SetData(buoyancyDensityByDegree);
 					compute.SetInt("BuoyancyDensityCount", buoyancyDensityByDegree.Length);
 					compute.SetBuffer(activePressureKernel, "BuoyancyDensity", densityTable);
-					compute.SetBuffer(activePressureKernel, "TemperatureRise", TemperatureRise);
+					compute.SetBuffer(activePressureKernel, "PressureTemperatureRise", TemperatureRise);
 				}
 			}
 
