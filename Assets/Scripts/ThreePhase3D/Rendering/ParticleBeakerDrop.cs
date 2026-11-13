@@ -284,10 +284,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             main.simulationSpace = ParticleSystemSimulationSpace.World;
             main.maxParticles = 4096;
             main.startLifetime = 2;
-            main.startSize = .003f;
+            main.startSize = .0005f;
             main.startColor = Color.white;
             var renderer = display.GetComponent<ParticleSystemRenderer>();
             renderer.renderMode = ParticleSystemRenderMode.Billboard;
+            renderer.minParticleSize = 0;
             var shader = Shader.Find("Particles/Standard Unlit");
             if (shader != null)
             {
