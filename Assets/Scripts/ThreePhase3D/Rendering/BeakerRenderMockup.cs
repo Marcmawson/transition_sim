@@ -16,6 +16,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private Transform flameCore, flameSheath;
         private Light burnerGlow;
         private readonly List<Mesh> burnerMeshes = new List<Mesh>();
+        private Mesh oakBoard;
 
         private void Start()
         {
@@ -242,10 +243,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             const float groundY = -.84f;
             var benchSize = new Vector3(1.28f, .055f, .66f);
             var benchCentre = new Vector3(0, -benchSize.y * .5f, 0);
-            var timber = CreateMaterial(new Color(.47f, .29f, .15f), 0, .28f);
+            var timber = CreateMaterial(new Color(.47f, .32f, .19f), 0, .23f,
+                Resources.Load<Shader>("ThreePhase3D/WornOak"));
             var frame = CreateMaterial(new Color(.11f, .13f, .12f), .65f, .35f);
             var paving = CreateMaterial(new Color(.56f, .55f, .51f), 0, .18f);
-            Box("Timber bench top", benchCentre, benchSize, timber);
+            BuildOakTop(benchSize, timber);
             for (int x = -1; x <= 1; x += 2)
             for (int z = -1; z <= 1; z += 2)
                 Box("Bench leg", new Vector3(x * .55f, (groundY - benchSize.y) * .5f, z * .26f),
@@ -284,6 +286,58 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     camera.gameObject.AddComponent<Skybox>().material = sky;
                 }
                 RenderSettings.sun = sun;
+            }
+        }
+
+        private void BuildOakTop(Vector3 size, Material oak)
+        {
+            const int boards = 5;
+            const float gap = .0025f;
+            float pitch = size.z / boards;
+            float width = pitch - gap;
+            float depth = size.y;
+            const float bevel = .003f;
+            var corners = new[]
+            {
+                new Vector2(-1, -1), new Vector2(-1, 1),
+                new Vector2(1, 1), new Vector2(1, -1)
+            };
+            var vertices = new Vector3[16];
+            var indices = new List<int> { 0, 2, 1, 0, 3, 2, 12, 13, 14, 12, 14, 15 };
+            for (int ring = 0; ring < 4; ring++)
+            {
+                float y = ring == 0 ? -depth : ring == 1 ? -depth + bevel : ring == 2 ? -bevel : 0;
+                float inset = ring == 0 || ring == 3 ? bevel : 0;
+                for (int corner = 0; corner < 4; corner++)
+                {
+                    Vector2 sign = corners[corner];
+                    int i = ring * 4 + corner;
+                    vertices[i] = new Vector3(sign.x * (size.x * .5f - inset), y,
+                        sign.y * (width * .5f - inset));
+                    if (ring == 0) continue;
+                    int next = ring * 4 + (corner + 1) % 4;
+                    indices.AddRange(new[] { i - 4, next - 4, next, i - 4, next, i });
+                }
+            }
+            // Split faces so the board stays flat across its width and the bevel catches the light.
+            var flatVertices = new Vector3[indices.Count];
+            for (int i = 0; i < indices.Count; i++)
+                flatVertices[i] = vertices[indices[i]];
+            oakBoard = new Mesh { name = "Bevelled oak plank", vertices = flatVertices };
+            for (int i = 0; i < indices.Count; i++) indices[i] = i;
+            oakBoard.SetTriangles(indices, 0);
+            oakBoard.RecalculateNormals();
+            oakBoard.RecalculateBounds();
+
+            if (oak.shader.name == "PhysicsSim/WornOak")
+                oak.SetMatrix("_StageWorldToLocal", stage.transform.worldToLocalMatrix);
+            for (int i = 0; i < boards; i++)
+            {
+                var plank = new GameObject("Weathered oak board " + (i + 1));
+                plank.transform.SetParent(stage.transform, false);
+                plank.transform.localPosition = new Vector3(0, 0, (i - (boards - 1) * .5f) * pitch);
+                plank.AddComponent<MeshFilter>().sharedMesh = oakBoard;
+                plank.AddComponent<MeshRenderer>().sharedMaterial = oak;
             }
         }
 
@@ -427,6 +481,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (stage != null) Destroy(stage);
             if (detailedGlass != null) Destroy(detailedGlass);
             if (cylinder != null) Destroy(cylinder);
+            if (oakBoard != null) Destroy(oakBoard);
             foreach (var mesh in flameMeshes) Destroy(mesh);
             foreach (var mesh in burnerMeshes) Destroy(mesh);
             foreach (var texture in metalNormals) Destroy(texture);
