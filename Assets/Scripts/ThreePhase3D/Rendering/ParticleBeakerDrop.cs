@@ -98,6 +98,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private int timestepIndex;
         private int benchmarkSteps;
         private Vector2 panelScroll;
+        private MarchingCubesFluidRenderer waterSurface;
+        private float waterTint;
 
         private int StepMicroseconds => (int)Timesteps[timestepIndex];
         private double StepSeconds => StepMicroseconds / 1_000_000.0;
@@ -267,7 +269,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 surface.renderArgsCompute = Instantiate(surfaceArguments);
                 surface.worldSpaceSurface = true;
                 surface.isoLevel = fluid.targetDensity * .45f;
-                surface.col = new Color(.055f, .26f, .36f);
+                waterSurface = surface;
+                waterSurface.col = new Color(1f, 1f, 1f, waterTint);
             }
             solverObject.SetActive(true);
             SetRunning(!meshWater);
@@ -591,11 +594,19 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                         particleDisplay.colourMap = selected ? temperatureColours : speedColours;
                     }
                 }
-                GUILayout.Label(showTemperature
-                    ? $"Water temperature · blue 20.0 °C to red {hotColourC:F1} °C"
-                    : $"Water speed · blue 0 to white {particleDisplay.velocityDisplayMax:F2} m/s");
-                Rect legend = GUILayoutUtility.GetRect(1, 12, GUILayout.ExpandWidth(true));
-                GUI.DrawTexture(legend, showTemperature ? temperatureLegend : speedLegend, ScaleMode.StretchToFill);
+                if (waterSurface != null)
+                {
+                    waterTint = Slider($"Water tint  {waterTint:P0} (Clear to Dark blue)", waterTint, 0f, 1f);
+                    waterSurface.col = new Color(1f, 1f, 1f, waterTint);
+                }
+                else
+                {
+                    GUILayout.Label(showTemperature
+                        ? $"Water temperature · blue 20.0 °C to red {hotColourC:F1} °C"
+                        : $"Water speed · blue 0 to white {particleDisplay.velocityDisplayMax:F2} m/s");
+                    Rect legend = GUILayoutUtility.GetRect(1, 12, GUILayout.ExpandWidth(true));
+                    GUI.DrawTexture(legend, showTemperature ? temperatureLegend : speedLegend, ScaleMode.StretchToFill);
+                }
                 GUI.enabled = !readbackPending && !finishOnNextFrame;
                 GUILayout.BeginHorizontal();
                 if (GUILayout.Button(running ? "Pause" : "Run"))

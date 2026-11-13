@@ -292,7 +292,7 @@ MonoBehaviour:
   particleShader: {fileID: 4800000, guid: 13de1318fe7184e48bdf807b928b641b, type: 3}
   largerBeaker: 0
   particleDensityMultiplier: 1.5
-  surfaceShader: {fileID: 4800000, guid: 0fc503476e1b8824ba22cc107d7b1731, type: 3}
+  surfaceShader: {fileID: 4800000, guid: 7e91d02de256491986dbc6cd241213cb, type: 3}
   surfaceArguments: {fileID: 7200000, guid: 4cfa81b3afd387a48959c41b5ef371b0, type: 3}
   heatMovingWater: 0
   absorbedBurnerWatts: 100
