@@ -122,6 +122,18 @@ namespace Seb.Fluid.Simulation
 			if (worldSpaceSurface && renderToTex3D) RunSimulationFrame(0, 1);
 		}
 
+		public void ReleaseMeltwater(Vector3 centre)
+		{
+			ResetParticles();
+			var points = new Vector3[spawnData.points.Length];
+			Vector3 offset = centre - spawner.spawnRegions[0].centre;
+			for (int i = 0; i < points.Length; i++)
+				points[i] = spawnData.points[i] + offset;
+			positionBuffer.SetData(points);
+			predictedPositionsBuffer.SetData(points);
+			if (worldSpaceSurface && renderToTex3D) RunSimulationFrame(0, 1);
+		}
+
 		void Start()
 		{
 			Debug.Log("Controls: Space = Play/Pause, Q = SlowMode, R = Reset");
