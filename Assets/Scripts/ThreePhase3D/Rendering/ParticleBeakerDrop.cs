@@ -485,9 +485,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             timing += $" · floor pressure {(measuredFloorPressure ? "on" : "off")}";
             if (movingHeat != null) timing += $" · {measuredBurnerWatts:F0} W · buoyancy {(measuredBuoyancy ? "on" : "off")} · " + movingHeat.Measure();
             evidence = timing;
+            MeasureContainedWater(timing);
+        }
+
+        private void MeasureContainedWater(string timing)
+        {
             if (!SystemInfo.supportsAsyncGPUReadback)
             {
-                Debug.Log(timing, this);
+                evidence = timing + " · GPU position readback unavailable";
+                Debug.Log(evidence, this);
                 return;
             }
             readbackPending = true;
@@ -504,7 +510,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     Debug.LogWarning(evidence, this);
                     return;
                 }
-                int nonfinite = 0, outsideBelowRim = 0;
+                int nonfinite = 0, outsideBelowRim = 0, inside = 0;
                 float lowY = float.PositiveInfinity, radialExtent = 0;
                 var positions = result.GetData<Vector3>();
                 foreach (var p in positions)
@@ -519,9 +525,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     radialExtent = Mathf.Max(radialExtent, radial);
                     if (p.y < rim && (p.y < floor - .00001f || radial > radius + .00001f))
                         outsideBelowRim++;
+                    else if (p.y < rim)
+                        inside++;
                 }
+                float containedMl = releaseVolumeMl * inside / positions.Length;
                 evidence = FormattableString.Invariant(
-                    $"{timing} · {positions.Length} particles · {nonfinite} nonfinite · {outsideBelowRim} outside below rim · lowest Y {lowY * 1000:F2} mm · radial extent {radialExtent * 1000:F2} mm");
+                    $"{timing} · {containedMl:F1} mL represented by {inside} particles inside the beaker · {positions.Length} particles · {nonfinite} nonfinite · {outsideBelowRim} outside below rim · lowest Y {lowY * 1000:F2} mm · radial extent {radialExtent * 1000:F2} mm");
                 Debug.Log(evidence, this);
             });
         }
@@ -590,6 +599,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 }
                 if (GUILayout.Button("Measure drop + slosh")) StartMeasurement();
                 GUILayout.EndHorizontal();
+                if (fluid.worldSpaceSurface)
+                {
+                    GUI.enabled = !running && !readbackPending && !finishOnNextFrame;
+                    if (GUILayout.Button("Measure contained water"))
+                        MeasureContainedWater(FormattableString.Invariant($"Nominal release {releaseVolumeMl:F1} mL"));
+                    GUI.enabled = !readbackPending && !finishOnNextFrame;
+                }
                 if (movingHeat != null && GUILayout.Button("Measure circulation · 30 simulated s"))
                     StartMeasurement(CirculationMicroseconds);
 
