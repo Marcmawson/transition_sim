@@ -552,6 +552,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void OnDestroy()
         {
             movingHeat?.Dispose();
+            plume?.Dispose();
             if (vapour != null) Destroy(vapour.gameObject);
             if (vapourMaterial != null) Destroy(vapourMaterial);
             if (temperatureLegend != null) Destroy(temperatureLegend);
@@ -561,12 +562,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         }
     }
     // Boussinesq air plume above the rim. Vapour markers follow the projected air.
-    internal sealed class VapourPlume
+    internal sealed class VapourPlume : IDisposable
     {
         private const double AirDensity = 1.2;
         private readonly Grid3D grid;
         private readonly VariableCoefficientProjection plan;
-        private readonly ComputeShader shader;
+        private readonly FlowGpuSolver pressureSolver;
         private (double DryAirKg, double VapourKg, double EnthalpyJ, D3 MomentumKgMPerS)[] gas;
         private FlowStep flow;
 
@@ -579,9 +580,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             sides[3] = new FlowBoundary(FlowBoundaryKind.OpenPressure);
             plan = new VariableCoefficientProjection(CutCellGeometry.Build(grid),
                 new BoundaryConditions3D(sides), _ => AirDensity, _ => 0);
-            shader = Resources.Load<ComputeShader>("ThreePhase3D/SinglePhaseFlow");
+            var shader = Resources.Load<ComputeShader>("ThreePhase3D/SinglePhaseFlow");
             if (shader == null) throw new InvalidOperationException("Vapour pressure shader unavailable.");
             Reset();
+            pressureSolver = new FlowGpuSolver(plan, null, shader);
         }
 
         internal void Reset()
@@ -614,7 +616,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             FlowStep projected;
             try
             {
-                projected = FlowGpuSolver.Project(plan, shader, predicted, seconds, 4096);
+                projected = pressureSolver.Project(predicted, seconds, 4096,
+                    initialPressure: flow?.GroupPressurePa);
             }
             catch (FlowConvergenceException) when (seconds > .0125)
             {
@@ -648,6 +651,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 (AirDensity, 0, 0, default(D3))).Gas;
             flow = projected;
         }
+
+        public void Dispose() => pressureSolver.Dispose();
 
         private double Fraction(int group) => gas[group].VapourKg /
             (gas[group].DryAirKg + gas[group].VapourKg);
