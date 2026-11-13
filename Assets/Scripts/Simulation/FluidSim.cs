@@ -125,8 +125,8 @@ namespace Seb.Fluid.Simulation
 		public void ReleaseMeltwater(Vector3 centre)
 		{
 			ResetParticles();
-			var points = new Vector3[spawnData.points.Length];
-			Vector3 offset = centre - spawner.spawnRegions[0].centre;
+			var points = new float3[spawnData.points.Length];
+			float3 offset = (float3)(centre - spawner.spawnRegions[0].centre);
 			for (int i = 0; i < points.Length; i++)
 				points[i] = spawnData.points[i] + offset;
 			positionBuffer.SetData(points);
