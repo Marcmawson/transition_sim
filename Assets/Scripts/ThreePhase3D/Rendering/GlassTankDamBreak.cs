@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using PhysicsSim.ThreePhase3D.Flow;
 using Seb.Fluid.Rendering;
 using Seb.Fluid.Simulation;
 using UnityEngine;
@@ -192,7 +193,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(16, 16, 340, 255), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(16, 16, 390, 285), GUI.skin.box);
             GUILayout.Label($"Glass Tank Dam Break · {VolumeLitres:F0} L");
             if (fluid == null)
             {
@@ -225,8 +226,37 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.Label(!SystemInfo.supportsAsyncGPUReadback ? "Volume readback unavailable" :
                     retained < 0 ? "Retained volume pending" : $"Retained volume · {retained:F2} L");
                 GUILayout.Label($"CPU submission per step · {submitMs:F3} ms");
+                if (GUILayout.Button("Compare CPU pressure projections")) ComparePressureProjections();
             }
             GUILayout.EndArea();
+        }
+
+        private void ComparePressureProjections()
+        {
+            const double spacing = .05;
+            const int width = 24, height = 10, depth = 8;
+            var heights = new int[width * depth];
+            int wetColumns = Mathf.RoundToInt(ColumnSize.x / (float)spacing);
+            for (int z = 0; z < depth; z++)
+            for (int x = 0; x < wetColumns; x++) heights[x + width * z] = 6;
+
+            var uniform = new TallCellPressureReference(width, height, depth, spacing, heights, false, SampleVelocity);
+            var adaptive = new TallCellPressureReference(width, height, depth, spacing, heights, true, SampleVelocity);
+            var baseline = uniform.Project();
+            var reduced = adaptive.Project();
+            double difference = 0;
+            for (int i = 0; i < baseline.Velocity.Length; i++)
+            {
+                double error = baseline.Velocity[i] - reduced.Velocity[i];
+                difference += error * error;
+            }
+            Debug.Log($"Tank CPU pressure reference · {VolumeLitres:F0} L · uniform {uniform.PressureSamples} samples, " +
+                $"residual {baseline.RelativeResidual:E2} in {baseline.Iterations} iterations · adaptive " +
+                $"{adaptive.PressureSamples} samples, residual {reduced.RelativeResidual:E2} in {reduced.Iterations} iterations · " +
+                $"face velocity RMS difference {System.Math.Sqrt(difference / baseline.Velocity.Length):E2} m/s", this);
+
+            double SampleVelocity(int axis, double x, double y, double z) =>
+                axis == 1 ? -9.81 * StepSeconds : .025 * System.Math.Sin(9 * x + 4 * y + 7 * z + axis);
         }
 
         private void OnDestroy()
