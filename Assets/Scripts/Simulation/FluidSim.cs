@@ -24,6 +24,7 @@ namespace Seb.Fluid.Simulation
 		public float nearPressureMultiplier = 2.15f;
 		public float viscosityStrength = 0;
 		public bool approachOnlyDamping;
+		public float particleContactDistance, particleDampingDistance;
 		[Range(0, 1)] public float collisionDamping = 0.95f;
 
 		[Header("Foam Settings")] public bool foamActive;
@@ -540,7 +541,7 @@ namespace Seb.Fluid.Simulation
 
 			Dispatch(compute, positionBuffer.count, kernelIndex: densityKernel);
 			Dispatch(compute, positionBuffer.count, kernelIndex: activePressureKernel);
-			if (viscosityStrength != 0)
+			if (viscosityStrength != 0 || approachOnlyDamping)
 			{
 				Dispatch(compute, positionBuffer.count, kernelIndex: viscosityKernel);
 				if (approachOnlyDamping)
@@ -602,6 +603,8 @@ namespace Seb.Fluid.Simulation
 			compute.SetFloat("nearPressureMultiplier", nearPressureMultiplier);
 			compute.SetFloat("viscosityStrength", viscosityStrength);
 			compute.SetBool("approachOnlyDamping", approachOnlyDamping);
+			compute.SetFloat("particleContactDistance", particleContactDistance);
+			compute.SetFloat("particleDampingDistance", Mathf.Min(particleDampingDistance, smoothingRadius));
 			compute.SetVector("boundsSize", simBoundsSize);
 			compute.SetVector("centre", simBoundsCentre);
 

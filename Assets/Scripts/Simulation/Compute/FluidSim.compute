@@ -64,6 +64,7 @@ const float pressureMultiplier;
 const float nearPressureMultiplier;
 const float viscosityStrength;
 bool approachOnlyDamping;
+float particleContactDistance, particleDampingDistance;
 const float edgeForce;
 const float edgeForceDst;
 const float3 boundsSize;
@@ -709,6 +710,7 @@ void CalculateViscosity(uint3 id : SV_DispatchThreadID)
     float sqrRadius = smoothingRadius * smoothingRadius;
 
     float3 viscosityForce = 0;
+    float3 contactCorrection = 0;
     float3 velocity = Velocities[id.x];
 
     // Neighbour search
@@ -745,17 +747,32 @@ void CalculateViscosity(uint3 id : SV_DispatchThreadID)
             float dst = sqrt(sqrDstToNeighbour);
             float3 neighbourVelocity = Velocities[neighbourIndex];
             float3 relative = neighbourVelocity - velocity;
+            float weight = LiquidWeight(neighbourIndex);
             if (approachOnlyDamping)
             {
-                if (dst <= 1e-8) continue;
+                if (dst <= 1e-8 || dst >= particleDampingDistance) continue;
                 float3 axis = offsetToNeighbour / dst;
-                relative = min(0.0, dot(relative, axis)) * axis;
+                float closingSpeed = max(0.0, -dot(relative, axis));
+                if (dst <= particleContactDistance)
+                {
+                    // Equal particles share the impulse that cancels inward normal motion.
+                    contactCorrection -= .5 * weight * closingSpeed * axis;
+                }
+                else
+                {
+                    float taper = 1 - saturate((dst - particleContactDistance) /
+                        (particleDampingDistance - particleContactDistance));
+                    float rate = SmoothingKernelPoly6(0, smoothingRadius) * viscosityStrength;
+                    float impulse = min(.5, rate * deltaTime * taper) * closingSpeed;
+                    contactCorrection -= weight * impulse * axis;
+                }
+                continue;
             }
-            viscosityForce += LiquidWeight(neighbourIndex) * relative * SmoothingKernelPoly6(dst, smoothingRadius);
+            viscosityForce += weight * relative * SmoothingKernelPoly6(dst, smoothingRadius);
         }
     }
     float3 damped = velocity + viscosityForce * viscosityStrength * deltaTime;
-    if (approachOnlyDamping) SortTarget_Velocities[id.x] = damped;
+    if (approachOnlyDamping) SortTarget_Velocities[id.x] = velocity + contactCorrection;
     else Velocities[id.x] = damped;
 }
 

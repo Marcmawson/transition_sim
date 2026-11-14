@@ -69,6 +69,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         [SerializeField, Range(0f, 6f)] private float pressureMultiplier = 2.88f;
         [SerializeField, Range(0f, .1f)] private float nearPressureMultiplier = .0216f;
         [SerializeField, Range(0f, 1f)] private float viscosityStrength;
+        private float contactRadii = 1f, dampingRadii = 3f;
+        private float particleRadiusM;
         [SerializeField, Range(0f, 1f)] private float wallBounce = .2f;
         [SerializeField] private bool glassFloorPressure = true;
 
@@ -269,7 +271,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
             ApplySceneSettings();
             fluid.maxFoamParticleCount = 1;
-            float particleRadiusM = .0004f * spacingScale;
+            particleRadiusM = .0004f * spacingScale;
+            fluid.particleContactDistance = contactRadii * particleRadiusM;
+            fluid.particleDampingDistance = dampingRadii * particleRadiusM;
             fluid.beakerCollision = new Vector4(0, 0,
                 (float)geometry.innerRadiusM * Mathf.Cos(Mathf.PI / setup.scenario.display.cylinderSegments) - particleRadiusM,
                 floor + particleRadiusM);
@@ -1246,7 +1250,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.Label("Near-pressure reference uses the bulk target density as its input.");
                 float dampingScale = spacingScale * spacingScale * spacingScale;
                 if (waterSurface != null)
+                {
                     fluid.approachOnlyDamping = GUILayout.Toggle(fluid.approachOnlyDamping, "Approach-only damping");
+                    contactRadii = Slider($"Contact distance {contactRadii:F2} radii", contactRadii, .25f, 4f);
+                    dampingRadii = Slider($"Damping distance {dampingRadii:F2} radii",
+                        Mathf.Max(dampingRadii, contactRadii + .25f), contactRadii + .25f,
+                        fluid.smoothingRadius / particleRadiusM);
+                    fluid.particleContactDistance = contactRadii * particleRadiusM;
+                    fluid.particleDampingDistance = dampingRadii * particleRadiusM;
+                }
                 float damping = fluid.viscosityStrength / dampingScale;
                 float dampingLimit = fluid.worldSpaceSurface ? .0000001f : 1f;
                 string dampingLabel = fluid.worldSpaceSurface ? $"Viscosity strength  {damping:E2}" : $"Viscosity strength  {damping:F2}";
