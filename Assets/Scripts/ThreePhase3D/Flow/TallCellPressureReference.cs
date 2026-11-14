@@ -12,6 +12,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             public int[] Nodes;
             public double[] Gradient;
             public double Velocity;
+            public int Low, High, Axis;
         }
 
         private readonly int width, height, depth;
@@ -120,6 +121,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
             AddCell(b, inverseDistance);
             var face = new Face
             {
+                Low = a, High = b, Axis = axis,
                 Nodes = new int[weights.Count],
                 Gradient = new double[weights.Count],
                 Velocity = velocity(axis, x * spacing, y * spacing, z * spacing)
@@ -200,6 +202,34 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 Scatter(face, velocity[i], residual);
             }
             return (velocity, norm > 0 ? Math.Sqrt(Dot(residual, residual)) / norm : 0, iteration);
+        }
+
+        // Average the projected face-velocity change onto the adjacent liquid cells.
+        public double[] CellVelocityCorrections(double[] projected)
+        {
+            if (projected == null || projected.Length != faces.Count)
+                throw new ArgumentException("Expected one velocity for each pressure face.", nameof(projected));
+            var change = new double[wet.Length * 3];
+            var count = new int[change.Length];
+            for (int i = 0; i < faces.Count; i++)
+            {
+                Face face = faces[i];
+                double correction = projected[i] - face.Velocity;
+                Accumulate(face.Low);
+                Accumulate(face.High);
+
+                void Accumulate(int cell)
+                {
+                    if (!wet[cell]) return;
+                    int slot = 3 * cell + face.Axis;
+                    change[slot] += correction;
+                    count[slot]++;
+                }
+            }
+
+            for (int i = 0; i < change.Length; i++)
+                if (count[i] > 0) change[i] /= count[i];
+            return change;
         }
 
         private static double Gradient(Face face, double[] values)

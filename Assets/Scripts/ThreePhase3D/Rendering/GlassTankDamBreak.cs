@@ -25,6 +25,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private ComputeShader solverCompute;
         private bool doubleVolume = true;
         private bool fine, running, sampling;
+        private bool adaptivePressure;
+        private float nextProjection;
+        private int pressureSamples;
+        private const float ProjectionInterval = .02f;
         private float pendingSeconds, nextSample, arrival = -1, retained = -1, submitMs;
         private int generation;
 
@@ -86,6 +90,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             running = sampling = false;
             pendingSeconds = nextSample = submitMs = 0;
             arrival = retained = -1;
+            nextProjection = ProjectionInterval;
+            pressureSamples = 0;
             if (solverObject != null)
             {
                 solverObject.SetActive(false);
@@ -158,8 +164,78 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.AdvanceManually(StepSeconds, steps);
             submitMs = (float)((Time.realtimeSinceStartupAsDouble - start) * 1000 / steps);
             pendingSeconds -= steps * StepSeconds;
+            if (adaptivePressure && fluid.SimulatedSeconds >= nextProjection)
+            {
+                ApplyAdaptivePressure();
+                nextProjection = fluid.SimulatedSeconds + ProjectionInterval;
+            }
             if (!sampling && SystemInfo.supportsAsyncGPUReadback && fluid.SimulatedSeconds >= nextSample)
                 SampleWater();
+        }
+
+        private void ApplyAdaptivePressure()
+        {
+            const int width = 24, height = 10, depth = 8;
+            const float cell = .05f;
+            var points = new Vector3[fluid.positionBuffer.count];
+            var velocities = new Vector3[points.Length];
+            fluid.positionBuffer.GetData(points);
+            fluid.velocityBuffer.GetData(velocities);
+            var cells = new int[points.Length];
+            var counts = new int[width * height * depth];
+            var sums = new Vector3[counts.Length];
+            for (int i = 0; i < points.Length; i++)
+            {
+                Vector3 pos = points[i];
+                int x = Mathf.Clamp(Mathf.FloorToInt((pos.x + TankSize.x * .5f) / cell), 0, width - 1);
+                int y = Mathf.Clamp(Mathf.FloorToInt(pos.y / cell), 0, height - 1);
+                int z = Mathf.Clamp(Mathf.FloorToInt((pos.z + TankSize.z * .5f) / cell), 0, depth - 1);
+                int index = x + width * (y + height * z);
+                cells[i] = index;
+                counts[index]++;
+                sums[index] += velocities[i];
+            }
+
+            var heights = new int[width * depth];
+            int minimum = Mathf.Max(2, Mathf.RoundToInt(points.Length * .00025f));
+            for (int z = 0; z < depth; z++)
+            for (int x = 0; x < width; x++)
+            {
+                int y = 0;
+                while (y < height - 1 && counts[x + width * (y + height * z)] >= minimum) y++;
+                heights[x + width * z] = y;
+            }
+
+            var solver = new TallCellPressureReference(width, height, depth, cell, heights, true, FaceVelocity);
+            pressureSamples = solver.PressureSamples;
+            if (pressureSamples == 0) return;
+            var result = solver.Project();
+            if (result.RelativeResidual > 1e-6) return;
+            double[] correction = solver.CellVelocityCorrections(result.Velocity);
+            for (int i = 0; i < velocities.Length; i++)
+            {
+                int offset = cells[i] * 3;
+                velocities[i] += new Vector3((float)correction[offset], (float)correction[offset + 1],
+                    (float)correction[offset + 2]);
+            }
+            fluid.velocityBuffer.SetData(velocities);
+
+            double FaceVelocity(int axis, double px, double py, double pz)
+            {
+                int x = (int)System.Math.Round(px / cell - (axis == 0 ? 0 : .5));
+                int y = (int)System.Math.Round(py / cell - (axis == 1 ? 0 : .5));
+                int z = (int)System.Math.Round(pz / cell - (axis == 2 ? 0 : .5));
+                int upper = x + width * (y + height * z);
+                int lower = upper - (axis == 0 ? 1 : axis == 1 ? width : width * height);
+                int column = x + width * z;
+                bool lowWet = axis == 0 ? y < heights[column - 1] :
+                    axis == 1 ? y - 1 < heights[column] : y < heights[column - width];
+                bool highWet = y < heights[column];
+                float value = 0;
+                if (lowWet) value += sums[lower][axis] / counts[lower];
+                if (highWet) value += sums[upper][axis] / counts[upper];
+                return lowWet && highWet ? .5 * value : value;
+            }
         }
 
         private void SampleWater()
@@ -193,7 +269,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(16, 16, 390, 285), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(16, 16, 390, 330), GUI.skin.box);
             GUILayout.Label($"Glass Tank Dam Break · {VolumeLitres:F0} L");
             if (fluid == null)
             {
@@ -211,6 +287,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 }
                 GUI.enabled = previousEnabled && ready && !sampling;
                 if (GUILayout.Button("Reset column")) PrepareColumn();
+                adaptivePressure = GUILayout.Toggle(adaptivePressure, "Adaptive pressure (experimental CPU/GPU)");
                 bool selectedDouble = GUILayout.Toggle(doubleVolume, "Double water volume (48 L)");
                 int fineCount = selectedDouble ? 162000 : 81000;
                 bool selectedFine = GUILayout.Toggle(fine, $"Fine resolution ({fineCount:N0} particles)");
@@ -226,6 +303,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.Label(!SystemInfo.supportsAsyncGPUReadback ? "Volume readback unavailable" :
                     retained < 0 ? "Retained volume pending" : $"Retained volume · {retained:F2} L");
                 GUILayout.Label($"CPU submission per step · {submitMs:F3} ms");
+                if (adaptivePressure) GUILayout.Label($"Live adaptive pressure samples · {pressureSamples:N0}");
                 if (GUILayout.Button("Compare CPU pressure projections")) ComparePressureProjections();
             }
             GUILayout.EndArea();
