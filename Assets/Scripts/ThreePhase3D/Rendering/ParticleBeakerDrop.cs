@@ -112,6 +112,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             public Rigidbody Body;
             public float SubmergedFraction;
             public bool HasContactMeltwater;
+            public Vector3? PendingFloorContact;
             public Transform Visual;
             public BoxCollider Collider;
             public float Side, Mass, Heat, YieldFraction, ReleasedFraction, ReleaseElapsed;
@@ -732,6 +733,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             const int samples = 4;
             Vector3 size = cube.Collider.size;
             float side = Mathf.Max(size.x, Mathf.Max(size.y, size.z));
+            Vector3 up = Quaternion.Inverse(ice.rotation) * Vector3.up;
+            float verticalCellSpan = (Mathf.Abs(up.x) * size.x + Mathf.Abs(up.y) * size.y +
+                Mathf.Abs(up.z) * size.z) / samples;
+            if (cube.Collider.bounds.min.y >= waterline) return;
             float volumePerSample = size.x * size.y * size.z / (samples * samples * samples);
             float forcePerSample = 998.2f * volumePerSample * Mathf.Abs(fluid.gravity);
             for (int x = 0; x < samples; x++)
@@ -741,11 +746,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 var local = new Vector3(x + .5f, y + .5f, z + .5f) / samples - Vector3.one * .5f;
                 Vector3 point = ice.transform.TransformPoint(cube.Collider.center + Vector3.Scale(local, size));
                 if (point.x * point.x + point.z * point.z > fluid.beakerCollision.z * fluid.beakerCollision.z) continue;
-                float fraction = Mathf.Clamp01(.5f + (waterline - point.y) * samples / side);
+                float fraction = Mathf.Clamp01(.5f + (waterline - point.y) / verticalCellSpan);
                 cube.SubmergedFraction += fraction / (samples * samples * samples);
                 if (fraction <= 0) continue;
                 Vector3 velocity = ice.GetPointVelocity(point);
-                float dragFactor = (ice.mass * 2f + .5f * 998.2f * side * side * velocity.magnitude)
+                float dragFactor = (ice.mass * 4f + .5f * 998.2f * side * side * velocity.magnitude)
                     / (samples * samples * samples);
                 Vector3 drag = velocity * dragFactor;
                 ice.AddForceAtPosition((Vector3.up * forcePerSample - drag) * fraction, point);
@@ -871,6 +876,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             float ambient = 8f * area * (20 - temperature);
             cube.Heat += (ambient + burner) * seconds;
             float melted = Mathf.Clamp01((cube.Heat - warmup) / latent);
+            if (onFloor && melted > cube.ReleasedFraction)
+                cube.PendingFloorContact = IceFloorContact(iceCollider);
             float remaining = 1 - melted;
             if (remaining > 0)
             {
@@ -914,10 +921,14 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
             var region = fluid.spawner.spawnRegions[0];
             float fraction = cube.YieldFraction * increment;
-            if (!TryReleaseContactPuddle(iceCollider, fraction))
-                ReleaseAirborneMeltwater(ice, iceCollider, fraction, region);
-            else
+            if (cube.PendingFloorContact.HasValue)
+            {
+                ReleaseContactPuddle(cube.PendingFloorContact.Value, fraction);
+                cube.PendingFloorContact = null;
                 cube.HasContactMeltwater = true;
+            }
+            else
+                ReleaseAirborneMeltwater(ice, iceCollider, fraction, region);
             cube.ReleasedFraction = melted;
             cube.ReleaseElapsed = 0;
 
@@ -929,7 +940,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (iceCubes.Count == 0) RestoreBounceThreshold();
         }
 
-        private bool TryReleaseContactPuddle(BoxCollider collider, float fraction)
+        private static Vector3 IceFloorContact(BoxCollider collider)
         {
             Vector3 half = collider.size * .5f;
             var body = collider.attachedRigidbody;
@@ -938,11 +949,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             // midpoint of a contact edge or the centre of a contact face.
             Vector3 local = collider.center + Vector3.Scale(half,
                 new Vector3(ContactAxis(down.x), ContactAxis(down.y), ContactAxis(down.z)));
-            Vector3 contact = body.position + body.rotation * local;
-            if (contact.y > iceFloor + .001f) return false;
+            return body.position + body.rotation * local;
+        }
 
+        private void ReleaseContactPuddle(Vector3 contact, float fraction)
+        {
             float volume = releaseVolumeMl * 1e-6f * fraction;
-            float depth = Mathf.Min(.002f, Mathf.Pow(volume, 1f / 3f) * .4f);
+            float depth = Mathf.Min(.0015f, Mathf.Pow(volume, 1f / 3f) * .3f);
             float innerRadius = fluid.beakerCollision.z;
             float radius = Mathf.Min(innerRadius * .75f, Mathf.Sqrt(volume / (Mathf.PI * depth)));
             depth = volume / (Mathf.PI * radius * radius);
@@ -950,7 +963,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 Mathf.Max(0, innerRadius - radius - .0002f));
             SpawnWater(new Vector3(centre.x, fluid.beakerCollision.w + depth * .5f, centre.y),
                 fraction, fromIce: true, puddleRadius: radius, puddleHeight: depth);
-            return true;
         }
 
         private static float ContactAxis(float direction) =>
