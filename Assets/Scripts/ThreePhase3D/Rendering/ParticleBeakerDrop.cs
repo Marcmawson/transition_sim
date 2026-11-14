@@ -947,14 +947,16 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     Rect legend = GUILayoutUtility.GetRect(1, 12, GUILayout.ExpandWidth(true));
                     GUI.DrawTexture(legend, showTemperature ? temperatureLegend : speedLegend, ScaleMode.StretchToFill);
                 }
-                GUI.enabled = !readbackPending && !finishOnNextFrame;
+                bool controlsReady = !readbackPending && !finishOnNextFrame;
+                GUI.enabled = controlsReady;
                 GUILayout.BeginHorizontal();
                 if (GUILayout.Button(running ? "Pause" : "Run"))
                 {
                     SetRunning(!running);
                     measuring = false;
                 }
-                if (!samplingWaterline && GUILayout.Button("Reset"))
+                GUI.enabled = controlsReady && !samplingWaterline;
+                if (GUILayout.Button("Reset"))
                 {
                     SetRunning(false);
                     measuring = false;
@@ -968,26 +970,27 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     solverSteps = 0;
                     evidence = null;
                 }
-                if (!spawnIce && ice == null && waterBatches == 1 && GUILayout.Button("Measure drop + slosh")) StartMeasurement();
+                GUI.enabled = controlsReady && !samplingWaterline && !spawnIce && ice == null && waterBatches == 1;
+                if (GUILayout.Button("Measure drop + slosh")) StartMeasurement();
                 GUILayout.EndHorizontal();
+                GUI.enabled = controlsReady;
                 if (waterSurface != null)
                     nextIceSideMm = Slider($"Next ice cube · {SelectedIceSideMm:F1} mm per side",
                         SelectedIceSideMm, 5f, MaxIceSideMm);
 
-                if (waterSurface != null && !measuring && !readbackPending && !samplingWaterline)
+                if (waterSurface != null)
                 {
                     GUILayout.BeginHorizontal();
                     float reservedMl = waterVolumeMl + (ice == null ? 0 : releaseVolumeMl * activeIceFraction);
-                    if (reservedMl + releaseVolumeMl <= BeakerRenderMockup.MaxMarkedVolumeMl &&
-                        GUILayout.Button($"Spawn water ({releaseVolumeMl:F0} mL)"))
+                    bool canSpawn = controlsReady && !measuring && !samplingWaterline;
+                    GUI.enabled = canSpawn && reservedMl + releaseVolumeMl <= BeakerRenderMockup.MaxMarkedVolumeMl;
+                    if (GUILayout.Button($"Spawn water ({releaseVolumeMl:F0} mL)"))
                         SpawnWater(fluid.spawner.spawnRegions[0].centre);
-                    if (ice == null && waterVolumeMl + SelectedIceYieldMl <= BeakerRenderMockup.MaxMarkedVolumeMl &&
-                        GUILayout.Button($"Spawn ice ({SelectedIceYieldMl:F1} mL yield)"))
+                    GUI.enabled = canSpawn && ice == null && waterVolumeMl + SelectedIceYieldMl <= BeakerRenderMockup.MaxMarkedVolumeMl;
+                    if (GUILayout.Button($"Spawn ice ({SelectedIceYieldMl:F1} mL yield)"))
                         SpawnIce(true);
                     GUILayout.EndHorizontal();
-                }
-                if (waterSurface != null && !running && !readbackPending && !samplingWaterline)
-                {
+                    GUI.enabled = controlsReady && !running && !samplingWaterline;
                     bool selected = GUILayout.Toggle(spawnIce, "Spawn ice cube");
                     if (selected != spawnIce)
                     {
@@ -997,6 +1000,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                         solverSteps = 0;
                     }
                 }
+                GUI.enabled = controlsReady;
                 if (ice != null)
                 {
                     float temperature = Mathf.Min(0, IceStartC + iceHeat / (iceMass * IceHeatCapacity));
@@ -1006,8 +1010,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 }
                 if (fluid.worldSpaceSurface)
                 {
-                    GUI.enabled = !running && !readbackPending && !finishOnNextFrame;
-                    if (hasWater && GUILayout.Button("Measure contained water"))
+                    GUI.enabled = controlsReady && !running && hasWater && !samplingWaterline;
+                    if (GUILayout.Button("Measure contained water"))
                         MeasureContainedWater(FormattableString.Invariant($"Nominal release {waterVolumeMl:F1} mL"));
                     GUI.enabled = !readbackPending && !finishOnNextFrame;
                 }
