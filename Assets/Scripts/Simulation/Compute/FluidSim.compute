@@ -119,16 +119,19 @@ float Remap01(float val, float minVal, float maxVal)
     return saturate((val - minVal) / (maxVal - minVal));
 }
 
-float iceHalfExtent;
-float4x4 iceWorldToLocal, iceLocalToWorld;
-float3 iceVelocity, iceAngularVelocity, iceMassCentre;
+// Match FluidSim.MaxIceBodies and the host uniform arrays.
+#define MAX_ICE_BODIES 4
+int iceCount;
+float4 iceHalfExtents;
+float4x4 iceWorldToLocal[MAX_ICE_BODIES], iceLocalToWorld[MAX_ICE_BODIES];
+float4 iceVelocity[MAX_ICE_BODIES], iceAngularVelocity[MAX_ICE_BODIES], iceMassCentre[MAX_ICE_BODIES];
 
-void ResolveIce(float3 previous, inout float3 position, inout float3 velocity)
+void ResolveIceBody(int index, float3 previous, inout float3 position, inout float3 velocity)
 {
-    if (iceHalfExtent <= 0) return;
+    float iceHalfExtent = iceHalfExtents[index];
     const float separation = .00005;
-    float3 start = mul(iceWorldToLocal, float4(previous, 1)).xyz;
-    float3 end = mul(iceWorldToLocal, float4(position, 1)).xyz;
+    float3 start = mul(iceWorldToLocal[index], float4(previous, 1)).xyz;
+    float3 end = mul(iceWorldToLocal[index], float4(position, 1)).xyz;
     float3 inside = iceHalfExtent - abs(end);
     float3 axis;
     float signNormal;
@@ -162,10 +165,16 @@ void ResolveIce(float3 previous, inout float3 position, inout float3 velocity)
         end = lerp(start, end, entry) + axis * signNormal * separation;
     }
 
-    position = mul(iceLocalToWorld, float4(end, 1)).xyz;
-    float3 normal = mul((float3x3)iceLocalToWorld, axis * signNormal);
-    float3 surfaceVelocity = iceVelocity + cross(iceAngularVelocity, position - iceMassCentre);
+    position = mul(iceLocalToWorld[index], float4(end, 1)).xyz;
+    float3 normal = mul((float3x3)iceLocalToWorld[index], axis * signNormal);
+    float3 surfaceVelocity = iceVelocity[index].xyz + cross(iceAngularVelocity[index].xyz, position - iceMassCentre[index].xyz);
     velocity -= normal * min(0, dot(velocity - surfaceVelocity, normal));
+}
+
+void ResolveIce(float3 previous, inout float3 position, inout float3 velocity)
+{
+    for (int index = 0; index < iceCount; index++)
+        ResolveIceBody(index, previous, position, velocity);
 }
 
 void ResolveCollisions(inout float3 pos, inout float3 vel, float collisionDamping)
@@ -766,10 +775,13 @@ void UpdateDensityTexture(uint3 id : SV_DispatchThreadID)
     // Convert threadID to a world-space position, and sample the fluid density at that point
     float3 texturePos = id / (densityMapSize - 1.0);
     float3 worldPos = (texturePos - 0.5) * boundsSize + densityMapCentre;
-    if (iceHalfExtent > 0 && all(abs(mul(iceWorldToLocal, float4(worldPos, 1)).xyz) < iceHalfExtent))
+    for (int index = 0; index < iceCount; index++)
     {
-        DensityMap[id] = 0;
-        return;
+        if (all(abs(mul(iceWorldToLocal[index], float4(worldPos, 1)).xyz) < iceHalfExtents[index]))
+        {
+            DensityMap[id] = 0;
+            return;
+        }
     }
     DensityMap[id] = CalculateDensitiesAtPoint(worldPos)[0];
 }

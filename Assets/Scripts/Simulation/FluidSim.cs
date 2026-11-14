@@ -81,9 +81,24 @@ namespace Seb.Fluid.Simulation
 		bool isPaused;
 		bool pauseNextFrame;
 		float smoothRadiusOld;
-		public float iceHalfExtent;
-		public Matrix4x4 iceWorldToLocal, iceLocalToWorld;
-		public Vector3 iceVelocity, iceAngularVelocity, iceMassCentre;
+		public const int MaxIceBodies = 4;
+		public int IceCount { get; set; }
+		Vector4 iceHalfExtents;
+		readonly Matrix4x4[] iceWorldToLocal = new Matrix4x4[MaxIceBodies];
+		readonly Matrix4x4[] iceLocalToWorld = new Matrix4x4[MaxIceBodies];
+		readonly Vector4[] iceVelocity = new Vector4[MaxIceBodies];
+		readonly Vector4[] iceAngularVelocity = new Vector4[MaxIceBodies];
+		readonly Vector4[] iceMassCentre = new Vector4[MaxIceBodies];
+
+		public void SetIceBoundary(int index, Rigidbody body, float halfExtent)
+		{
+			iceHalfExtents[index] = halfExtent;
+			iceWorldToLocal[index] = body.transform.worldToLocalMatrix;
+			iceLocalToWorld[index] = body.transform.localToWorldMatrix;
+			iceVelocity[index] = body.velocity;
+			iceAngularVelocity[index] = body.angularVelocity;
+			iceMassCentre[index] = body.worldCenterOfMass;
+		}
 		double simTimer;
 		bool inSlowMode;
 		Spawner3D.SpawnData spawnData;
@@ -525,12 +540,16 @@ namespace Seb.Fluid.Simulation
 			compute.SetFloat("deltaTime", stepDeltaTime);
 			compute.SetFloat("predictionTime", manualControl ? stepDeltaTime : 1f / 120f);
 			compute.SetVector("beakerCollision", beakerCollision);
-			compute.SetFloat("iceHalfExtent", iceHalfExtent);
-			compute.SetMatrix("iceWorldToLocal", iceWorldToLocal);
-			compute.SetMatrix("iceLocalToWorld", iceLocalToWorld);
-			compute.SetVector("iceVelocity", iceVelocity);
-			compute.SetVector("iceAngularVelocity", iceAngularVelocity);
-			compute.SetVector("iceMassCentre", iceMassCentre);
+			compute.SetInt("iceCount", IceCount);
+			if (IceCount > 0)
+			{
+				compute.SetVector("iceHalfExtents", iceHalfExtents);
+				compute.SetMatrixArray("iceWorldToLocal", iceWorldToLocal);
+				compute.SetMatrixArray("iceLocalToWorld", iceLocalToWorld);
+				compute.SetVectorArray("iceVelocity", iceVelocity);
+				compute.SetVectorArray("iceAngularVelocity", iceAngularVelocity);
+				compute.SetVectorArray("iceMassCentre", iceMassCentre);
+			}
 			compute.SetFloat("beakerRimY", beakerRimY);
 			compute.SetFloat("whiteParticleDeltaTime", frameDeltaTime);
 			compute.SetFloat("simTime", (float)simTimer);

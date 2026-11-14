@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using PhysicsSim.ThreePhase3D.Core;
 using PhysicsSim.ThreePhase3D.Flow;
 using PhysicsSim.ThreePhase3D.Geometry;
@@ -107,19 +108,25 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         [SerializeField, Min(5f)] private float nextIceSideMm = 12f;
         private const float IceDensityKgM3 = 917f;
         private const float MeltwaterDensityKgM3 = 998.2f;
-        private Rigidbody ice;
+        private sealed class IceCube
+        {
+            public Rigidbody Body;
+            public Transform Visual;
+            public BoxCollider Collider;
+            public float Side, Mass, Heat, YieldFraction;
+        }
+
+        private readonly List<IceCube> iceCubes = new List<IceCube>();
         private Scene icePhysicsScene;
         private bool hasWater, samplingWaterline;
         private int waterlineVersion, waterBatches;
-        private float waterline, sampledWaterline, nextWaterlineSample, waterVolumeMl, activeIceFraction;
-        private Transform iceVisual;
-        private BoxCollider iceCollider;
+        private float waterline, sampledWaterline, nextWaterlineSample, waterVolumeMl;
         private Material iceMaterial;
         private PhysicMaterial iceContactMaterial;
         private float? previousBounceThreshold;
         private Mesh iceMesh;
         private GameObject iceContacts;
-        private float iceSide, iceMass, iceHeat, iceSpawnY, iceFloor;
+        private float iceSpawnY, iceFloor;
         private const float IceStartC = -5f;
         private const float IceHeatCapacity = 2050f;
         private const float IceLatentHeat = 333550f;
@@ -387,19 +394,21 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
             // Extra water increases the work per GPU step. Prevent slow frames from
             // scheduling an ever larger catch-up burst while keeping the same timestep.
-            if (waterSurface != null && waterBatches > 1 && !measuring)
+            if (waterSurface != null && (waterBatches > 1 || iceCubes.Count > 1) && !measuring)
                 steps = Math.Min(steps, MaxMultiBatchStepsPerFrame);
             if (steps == 0) return;
-            if (ice != null)
+            if (iceCubes.Count > 0)
             {
                 float dt = (float)stepSeconds;
                 for (int remaining = steps; remaining > 0; remaining--)
                 {
-                    if (ice != null)
+                    if (iceCubes.Count > 0)
                     {
-                        ApplyIceForces(dt);
+                        float blend = 1 - Mathf.Exp(-dt / .12f);
+                        waterline = Mathf.Lerp(waterline, sampledWaterline, blend);
+                        foreach (var cube in iceCubes) ApplyIceForces(cube);
                         icePhysicsScene.GetPhysicsScene().Simulate(dt);
-                        AdvanceIce(dt);
+                        for (int i = iceCubes.Count - 1; i >= 0; i--) AdvanceIce(i, dt);
                     }
                     UpdateIceWaterContact();
                     if (hasWater)
@@ -525,8 +534,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void SetRunning(bool value)
         {
             running = value;
-            if (ice != null)
+            foreach (var cube in iceCubes)
             {
+                var ice = cube.Body;
                 ice.isKinematic = !value;
                 ice.collisionDetectionMode = value
                     ? CollisionDetectionMode.ContinuousDynamic : CollisionDetectionMode.ContinuousSpeculative;
@@ -542,13 +552,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             waterVolumeMl = hasWater ? releaseVolumeMl : 0;
             waterlineVersion++;
             waterline = sampledWaterline = iceFloor;
-            fluid.iceHalfExtent = 0;
-            if (ice != null)
+            fluid.IceCount = 0;
+            foreach (var cube in iceCubes)
             {
-                ice.gameObject.SetActive(false);
-                Destroy(ice.gameObject);
-                ice = null;
+                cube.Body.gameObject.SetActive(false);
+                Destroy(cube.Body.gameObject);
             }
+            iceCubes.Clear();
             if (iceContacts != null) iceContacts.SetActive(spawnIce);
             waterSurface.enabled = !spawnIce;
             if (!spawnIce)
@@ -561,9 +571,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void SpawnIce(bool fitThroughRim = false)
         {
-            iceSide = SelectedIceSideMm * .001f;
-            iceMass = IceDensityKgM3 * iceSide * iceSide * iceSide;
-            activeIceFraction = SelectedIceYieldMl / releaseVolumeMl;
+            var state = new IceCube { Side = SelectedIceSideMm * .001f,
+                YieldFraction = SelectedIceYieldMl / releaseVolumeMl };
+            float iceSide = state.Side;
+            state.Mass = IceDensityKgM3 * iceSide * iceSide * iceSide;
             if (!previousBounceThreshold.HasValue)
             {
                 previousBounceThreshold = Physics.bounceThreshold;
@@ -591,16 +602,21 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
             var cube = new GameObject("Ice cube");
             SceneManager.MoveGameObjectToScene(cube, icePhysicsScene);
-            cube.transform.SetPositionAndRotation(Vector3.up * (fitThroughRim ? Mathf.Max(iceSpawnY + iceSide * .68f, (float)geometry.RimHeightM + iceSide) : iceSpawnY + iceSide * .68f), Quaternion.Euler(13, 19, 9));
+            float spawnY = fitThroughRim
+                ? Mathf.Max(iceSpawnY + iceSide * .68f, (float)geometry.RimHeightM + iceSide)
+                : iceSpawnY + iceSide * .68f;
+            foreach (var existing in iceCubes)
+                spawnY = Mathf.Max(spawnY, existing.Collider.bounds.max.y + iceSide + .002f);
+            cube.transform.SetPositionAndRotation(Vector3.up * spawnY, Quaternion.Euler(13, 19, 9));
             var mesh = GameObject.CreatePrimitive(PrimitiveType.Cube);
             mesh.name = "Ice cube mesh";
             if (iceMesh == null) iceMesh = BuildIceMesh();
             mesh.GetComponent<MeshFilter>().sharedMesh = iceMesh;
             mesh.transform.SetParent(cube.transform, false);
             mesh.transform.localScale = Vector3.one * iceSide;
-            iceVisual = mesh.transform;
+            state.Visual = mesh.transform;
             mesh.GetComponent<BoxCollider>().enabled = false;
-            iceCollider = cube.AddComponent<BoxCollider>();
+            var iceCollider = state.Collider = cube.AddComponent<BoxCollider>();
             iceCollider.size = Vector3.one * iceSide;
             iceCollider.contactOffset = .0003f;
             if (iceContactMaterial == null)
@@ -623,14 +639,14 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     : new Material(Shader.Find("Standard")) { color = new Color(.65f, .78f, .84f) };
             }
             mesh.GetComponent<MeshRenderer>().sharedMaterial = iceMaterial;
-            ice = cube.AddComponent<Rigidbody>();
-            ice.mass = iceMass;
+            var ice = state.Body = cube.AddComponent<Rigidbody>();
+            ice.mass = state.Mass;
             ice.useGravity = false;
             ice.interpolation = RigidbodyInterpolation.Interpolate;
             ice.isKinematic = true;
             ice.collisionDetectionMode = CollisionDetectionMode.ContinuousSpeculative;
             ice.centerOfMass = iceSide * new Vector3(.08f, -.05f, .06f);
-            iceHeat = 0;
+            iceCubes.Add(state);
             if (iceContacts != null) iceContacts.SetActive(true);
             SetRunning(running);
         }
@@ -678,18 +694,16 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             collider.contactOffset = .0003f;
         }
 
-        private void ApplyIceForces(float dt)
+        private void ApplyIceForces(IceCube cube)
         {
-            if (!running || ice == null) return;
+            var ice = cube.Body;
             ice.AddForce(Vector3.up * fluid.gravity, ForceMode.Acceleration);
             if (!hasWater || (sampledWaterline <= iceFloor && waterline <= iceFloor)) return;
-            float blend = 1 - Mathf.Exp(-dt / .12f);
-            waterline = Mathf.Lerp(waterline, sampledWaterline, blend);
             if (waterline - iceFloor < .0001f) return;
 
             // Integrate the submerged box volume with evenly spaced sample points.
             const int samples = 4;
-            float side = iceCollider.size.x;
+            float side = cube.Collider.size.x;
             float volumePerSample = side * side * side / (samples * samples * samples);
             float forcePerSample = 998.2f * volumePerSample * Mathf.Abs(fluid.gravity);
             for (int x = 0; x < samples; x++)
@@ -710,13 +724,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void UpdateIceWaterContact()
         {
-            fluid.iceHalfExtent = ice == null ? 0 : iceCollider.size.x * .5f;
-            if (ice == null || !hasWater) return;
-            fluid.iceWorldToLocal = ice.transform.worldToLocalMatrix;
-            fluid.iceLocalToWorld = ice.transform.localToWorldMatrix;
-            fluid.iceVelocity = ice.velocity;
-            fluid.iceAngularVelocity = ice.angularVelocity;
-            fluid.iceMassCentre = ice.worldCenterOfMass;
+            fluid.IceCount = hasWater ? iceCubes.Count : 0;
+            for (int i = 0; i < fluid.IceCount; i++)
+            {
+                var cube = iceCubes[i];
+                fluid.SetIceBoundary(i, cube.Body, cube.Collider.size.x * .5f);
+            }
+            if (fluid.IceCount == 0) return;
 
             if (samplingWaterline || Time.unscaledTime < nextWaterlineSample) return;
             samplingWaterline = true;
@@ -783,22 +797,27 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             waterSurface.enabled = true;
         }
 
-        private void AdvanceIce(float seconds)
+        private void AdvanceIce(int index, float seconds)
         {
+            var cube = iceCubes[index];
+            var ice = cube.Body;
+            var iceCollider = cube.Collider;
+            float iceMass = cube.Mass;
+            float iceSide = cube.Side;
             // Approximate room heating and apply the selected absorbed burner power near the floor.
             float warmup = iceMass * IceHeatCapacity * -IceStartC;
             float latent = iceMass * IceLatentHeat;
-            float temperature = Mathf.Min(0, IceStartC + iceHeat / (iceMass * IceHeatCapacity));
+            float temperature = Mathf.Min(0, IceStartC + cube.Heat / (iceMass * IceHeatCapacity));
             float area = 6 * iceCollider.size.x * iceCollider.size.x;
-            float burner = ice.position.y - iceFloor < iceSide ? absorbedBurnerWatts : 0;
-            iceHeat += (8f * area * (20 - temperature) + burner) * seconds;
-            float remaining = 1 - Mathf.Clamp01((iceHeat - warmup) / latent);
+            float burner = ice.position.y - iceFloor < iceSide ? absorbedBurnerWatts / iceCubes.Count : 0;
+            cube.Heat += (8f * area * (20 - temperature) + burner) * seconds;
+            float remaining = 1 - Mathf.Clamp01((cube.Heat - warmup) / latent);
             if (remaining > .0001f)
             {
                 float side = iceSide * Mathf.Pow(remaining, 1f / 3f);
                 if (side < iceCollider.size.x - .0001f)
                 {
-                    iceVisual.localScale = Vector3.one * side;
+                    cube.Visual.localScale = Vector3.one * side;
                     iceCollider.size = Vector3.one * side;
                     ice.mass = iceMass * remaining;
                     ice.ResetInertiaTensor();
@@ -812,11 +831,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             Vector3 meltCentre = new Vector3(0, Mathf.Max(ice.position.y, iceFloor +
                 fluid.spawner.spawnRegions[0].cylinderHeight * .5f + .001f), 0);
             meltCentre.y = Mathf.Min(meltCentre.y, originalCentre.y);
+            ice.gameObject.SetActive(false);
             Destroy(ice.gameObject);
-            ice = null;
-            RestoreBounceThreshold();
-            fluid.iceHalfExtent = 0;
-            SpawnWater(meltCentre, activeIceFraction);
+            iceCubes.RemoveAt(index);
+            fluid.IceCount = 0;
+            if (iceCubes.Count == 0) RestoreBounceThreshold();
+            SpawnWater(meltCentre, cube.YieldFraction);
         }
 
         private void StartMeasurement(int durationMicroseconds = BenchmarkMicroseconds)
@@ -985,7 +1005,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     solverSteps = 0;
                     evidence = null;
                 };
-                GUI.enabled = controlsReady && !spawnIce && ice == null && waterBatches == 1;
+                GUI.enabled = controlsReady && !spawnIce && iceCubes.Count == 0 && waterBatches == 1;
                 if (GUILayout.Button("Measure drop + slosh")) pendingPanelAction = () => StartMeasurement();
                 GUILayout.EndHorizontal();
                 GUI.enabled = controlsReady;
@@ -996,12 +1016,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (waterSurface != null)
                 {
                     GUILayout.BeginHorizontal();
-                    float reservedMl = waterVolumeMl + (ice == null ? 0 : releaseVolumeMl * activeIceFraction);
+                    float reservedMl = waterVolumeMl;
+                    foreach (var cube in iceCubes) reservedMl += releaseVolumeMl * cube.YieldFraction;
                     bool canSpawn = controlsReady && !measuring;
                     GUI.enabled = canSpawn && reservedMl + releaseVolumeMl <= BeakerRenderMockup.MaxMarkedVolumeMl;
                     if (GUILayout.Button($"Spawn water ({releaseVolumeMl:F0} mL)"))
                         pendingPanelAction = () => SpawnWater(fluid.spawner.spawnRegions[0].centre);
-                    GUI.enabled = canSpawn && ice == null && waterVolumeMl + SelectedIceYieldMl <= BeakerRenderMockup.MaxMarkedVolumeMl;
+                    GUI.enabled = canSpawn && iceCubes.Count < FluidSim.MaxIceBodies && reservedMl + SelectedIceYieldMl <= BeakerRenderMockup.MaxMarkedVolumeMl;
                     if (GUILayout.Button($"Spawn ice ({SelectedIceYieldMl:F1} mL yield)"))
                         pendingPanelAction = () => SpawnIce(true);
                     GUILayout.EndHorizontal();
@@ -1016,10 +1037,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     };
                 }
                 GUI.enabled = controlsReady;
-                if (ice != null)
+                if (iceCubes.Count > 0)
                 {
-                    float temperature = Mathf.Min(0, IceStartC + iceHeat / (iceMass * IceHeatCapacity));
-                    GUILayout.Label($"Ice {temperature:F1} °C · {ice.mass * 1000:F1} g remaining");
+                    float mass = 0;
+                    foreach (var cube in iceCubes) mass += cube.Body.mass;
+                    GUILayout.Label($"Ice cubes {iceCubes.Count} · {mass * 1000:F1} g remaining");
                     absorbedBurnerWatts = Slider($"Absorbed burner power {absorbedBurnerWatts:F0} W",
                         absorbedBurnerWatts, 0, 100);
                 }
@@ -1138,7 +1160,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             RestoreBounceThreshold();
             if (iceContactMaterial != null) Destroy(iceContactMaterial);
-            if (ice != null) Destroy(ice.gameObject);
+            foreach (var cube in iceCubes) Destroy(cube.Body.gameObject);
             if (icePhysicsScene.IsValid() && icePhysicsScene.isLoaded)
                 SceneManager.UnloadSceneAsync(icePhysicsScene);
             if (iceMaterial != null) Destroy(iceMaterial);
