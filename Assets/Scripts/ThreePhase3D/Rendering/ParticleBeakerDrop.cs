@@ -112,7 +112,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             public Rigidbody Body;
             public Transform Visual;
             public BoxCollider Collider;
-            public float Side, Mass, Heat, YieldFraction, ReleasedFraction;
+            public float Side, Mass, Heat, YieldFraction, ReleasedFraction, ReleaseElapsed;
         }
 
         private readonly List<IceCube> iceCubes = new List<IceCube>();
@@ -128,7 +128,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private float iceSpawnY, iceFloor;
         private const float IceStartC = -5f;
         private const float IceHeatCapacity = 2050f;
-        private const float MeltReleaseIncrement = .125f;
+        private const float MeltParticlesPerRelease = 32f;
         private const float IceLatentHeat = 333550f;
 
         private int StepMicroseconds => (int)Timesteps[timestepIndex];
@@ -802,7 +802,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             float puddleRadius = 0, float puddleHeight = 0)
         {
             waterlineVersion++;
-            fluid.AddWater(centre, hasWater, volumeFraction, puddleRadius, puddleHeight);
+            fluid.AddWater(centre, hasWater, volumeFraction, puddleRadius, puddleHeight, refreshSurface: !fromIce);
             waterVolumeMl += releaseVolumeMl * volumeFraction;
             hasWater = true;
             // Meltwater increments share the same pool and are not full water releases.
@@ -840,15 +840,19 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 }
             }
 
+            cube.ReleaseElapsed += seconds;
             float increment = melted - cube.ReleasedFraction;
             if (samplingWaterline || readbackPending || increment <= 0 ||
-                (melted < 1 && increment < MeltReleaseIncrement)) return;
+                (melted < 1 && (cube.ReleaseElapsed < .08f ||
+                    increment * cube.YieldFraction * releaseVolumeMl * 1e-6f *
+                    fluid.spawner.particleSpawnDensity < MeltParticlesPerRelease))) return;
 
             var region = fluid.spawner.spawnRegions[0];
             float fraction = cube.YieldFraction * increment;
             if (!TryReleaseContactPuddle(iceCollider, fraction))
                 ReleaseAirborneMeltwater(ice, iceCollider, fraction, region);
             cube.ReleasedFraction = melted;
+            cube.ReleaseElapsed = 0;
 
             if (melted < 1) return;
             ice.gameObject.SetActive(false);

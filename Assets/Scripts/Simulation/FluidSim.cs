@@ -140,6 +140,7 @@ namespace Seb.Fluid.Simulation
 			{
 				ReleaseParticleBuffers();
 				Initialize(spawnData);
+				if (worldSpaceSurface && renderToTex3D) RunSimulationFrame(0, 1);
 				return;
 			}
 			SetInitialBufferData(spawnData);
@@ -147,7 +148,7 @@ namespace Seb.Fluid.Simulation
 		}
 
 		public void AddWater(Vector3 centre, bool preserveExisting, float volumeFraction,
-			float puddleRadius = 0, float puddleHeight = 0)
+			float puddleRadius = 0, float puddleHeight = 0, bool refreshSurface = true)
 		{
 			if (trackLiquidMass || transportTemperature)
 				throw new InvalidOperationException("Dynamic releases require the beaker mesh solver.");
@@ -167,20 +168,29 @@ namespace Seb.Fluid.Simulation
 				finally { spawner.spawnRegions = original; }
 			}
 			int oldCount = preserveExisting ? positionBuffer.count : 0;
-			var points = new float3[oldCount + batch.points.Length];
-			var velocities = new float3[points.Length];
+			var previousPositions = positionBuffer;
+			var previousVelocities = velocityBuffer;
+			float3 offset = (float3)(centre - spawner.spawnRegions[0].centre);
+			var points = new float3[batch.points.Length];
+			for (int i = 0; i < points.Length; i++)
+				points[i] = batch.points[i] + offset;
+
+			double time = simTimer;
+			ReleaseParticleBuffers(keepParticleState: oldCount > 0);
+			Initialize(new Spawner3D.SpawnData { points = points, velocities = batch.velocities }, oldCount);
+			simTimer = time;
 			if (oldCount > 0)
 			{
-				positionBuffer.GetData(points, 0, 0, oldCount);
-				velocityBuffer.GetData(velocities, 0, 0, oldCount);
+				int copy = compute.FindKernel("CopyWaterState");
+				compute.SetInt("waterCopyCount", oldCount);
+				compute.SetBuffer(copy, "WaterCopyPositions", previousPositions);
+				compute.SetBuffer(copy, "WaterCopyVelocities", previousVelocities);
+				compute.SetBuffer(copy, "Positions", positionBuffer);
+				compute.SetBuffer(copy, "Velocities", velocityBuffer);
+				Dispatch(compute, oldCount, kernelIndex: copy);
+				Release(previousPositions, previousVelocities);
 			}
-			float3 offset = (float3)(centre - spawner.spawnRegions[0].centre);
-			for (int i = 0; i < batch.points.Length; i++)
-				points[oldCount + i] = batch.points[i] + offset;
-			double time = simTimer;
-			ReleaseParticleBuffers();
-			Initialize(new Spawner3D.SpawnData { points = points, velocities = velocities });
-			simTimer = time;
+			if (refreshSurface && renderToTex3D) RunSimulationFrame(0, 1);
 		}
 
 		void Start()
@@ -191,11 +201,11 @@ namespace Seb.Fluid.Simulation
 			Initialize();
 		}
 
-		void Initialize(Spawner3D.SpawnData? release = null)
+		void Initialize(Spawner3D.SpawnData? release = null, int existingCount = 0)
 		{
 			if (release == null) spawnData = spawner.GetSpawnData();
 			var initial = release ?? spawnData;
-			int numParticles = initial.points.Length;
+			int numParticles = existingCount + initial.points.Length;
 
 			spatialHash = new SpatialHash(numParticles);
 			
@@ -295,7 +305,7 @@ namespace Seb.Fluid.Simulation
 			}
 
 			// Set buffer data
-			SetInitialBufferData(initial);
+			SetInitialBufferData(initial, existingCount);
 
 			// External forces kernel
 			SetBuffers(compute, activeExternalForcesKernel, bufferNameLookup, new ComputeBuffer[]
@@ -416,7 +426,7 @@ namespace Seb.Fluid.Simulation
 
 			// Run single frame of sim with deltaTime = 0 to initialize density texture
 			// (so that display can work even if paused at start)
-			if (renderToTex3D)
+			if (renderToTex3D && release == null)
 			{
 				RunSimulationFrame(0);
 			}
@@ -582,11 +592,11 @@ namespace Seb.Fluid.Simulation
 			compute.SetFloat("bubbleScale", bubbleScale);
 		}
 
-		void SetInitialBufferData(Spawner3D.SpawnData spawnData)
+		void SetInitialBufferData(Spawner3D.SpawnData spawnData, int offset = 0)
 		{
-			positionBuffer.SetData(spawnData.points);
-			predictedPositionsBuffer.SetData(spawnData.points);
-			velocityBuffer.SetData(spawnData.velocities);
+			positionBuffer.SetData(spawnData.points, 0, offset, spawnData.points.Length);
+			predictedPositionsBuffer.SetData(spawnData.points, 0, offset, spawnData.points.Length);
+			velocityBuffer.SetData(spawnData.velocities, 0, offset, spawnData.velocities.Length);
 			if (TemperatureRise != null) TemperatureRise.SetData(initialTemperature);
 			LiquidFraction?.SetData(initialLiquidFraction);
 
@@ -630,7 +640,7 @@ namespace Seb.Fluid.Simulation
 
 		private float ActiveTimeScale => inSlowMode ? slowTimeScale : normalTimeScale;
 
-		void ReleaseParticleBuffers()
+		void ReleaseParticleBuffers(bool keepParticleState = false)
 		{
 			if (bufferNameLookup != null)
 			{
@@ -640,6 +650,7 @@ namespace Seb.Fluid.Simulation
 					if (spatialHash != null && (buffer == spatialHash.SpatialKeys ||
 						buffer == spatialHash.SpatialOffsets || buffer == spatialHash.SpatialIndices))
 						continue;
+					if (keepParticleState && (buffer == positionBuffer || buffer == velocityBuffer)) continue;
 					Release(buffer);
 				}
 				bufferNameLookup = null;

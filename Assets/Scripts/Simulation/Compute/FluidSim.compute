@@ -1,3 +1,4 @@
+#pragma kernel CopyWaterState
 #pragma kernel ExternalForces
 #pragma kernel UpdateSpatialHash
 #pragma kernel Reorder
@@ -903,4 +904,16 @@ void WhiteParticlePrepareNextFrame(uint3 id : SV_DispatchThreadID)
     {
         WhiteParticleCounters[0] = WhiteParticleCounters[1];
     }
+}
+
+StructuredBuffer<float3> WaterCopyPositions;
+StructuredBuffer<float3> WaterCopyVelocities;
+int waterCopyCount;
+
+[numthreads(ThreadGroupSize, 1, 1)]
+void CopyWaterState(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= waterCopyCount) return;
+    Positions[id.x] = WaterCopyPositions[id.x];
+    Velocities[id.x] = WaterCopyVelocities[id.x];
 }
