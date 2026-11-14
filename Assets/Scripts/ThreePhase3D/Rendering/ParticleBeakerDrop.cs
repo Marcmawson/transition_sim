@@ -102,6 +102,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private MarchingCubesFluidRenderer waterSurface;
         private float waterTint;
         [SerializeField] private bool spawnIce;
+        [SerializeField, Min(5f)] private float nextIceSideMm = 12f;
+        private const float IceDensityKgM3 = 917f;
+        private const float MeltwaterDensityKgM3 = 998.2f;
         private Rigidbody ice;
         private Scene icePhysicsScene;
         private bool hasWater, samplingWaterline;
@@ -183,8 +186,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             float dropBottom = meshWater ? floor + Mathf.Clamp(spawnHeightAboveBottomMm, 0f, 150f) * .001f : floor + DropGapM;
             if (meshWater)
             {
-                iceMass = volumeM3 * 998.2f;
-                iceSide = Mathf.Pow(iceMass / 917f, 1f / 3f);
                 iceFloor = floor;
                 iceSpawnY = dropBottom;
                 float apparatusTop = dropBottom + cylinderHeight;
@@ -545,9 +546,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void SpawnIce(bool fitThroughRim = false)
         {
-            activeIceFraction = fitThroughRim ? DynamicIceFraction : IceHalfSizeVolumeFraction;
-            iceMass = releaseVolumeMl * 1e-6f * 998.2f * activeIceFraction;
-            iceSide = Mathf.Pow(iceMass / 917f, 1f / 3f);
+            iceSide = SelectedIceSideMm * .001f;
+            iceMass = IceDensityKgM3 * iceSide * iceSide * iceSide;
+            activeIceFraction = SelectedIceYieldMl / releaseVolumeMl;
             if (!previousBounceThreshold.HasValue)
             {
                 previousBounceThreshold = Physics.bounceThreshold;
@@ -743,17 +744,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             });
         }
 
-        // Half the side length leaves one eighth of the original volume.
-        private const float IceHalfSizeVolumeFraction = .125f;
+        private float MaxIceSideMm => Mathf.Min((float)geometry.innerRadiusM * 1000f,
+            1000f * Mathf.Pow(releaseVolumeMl * 1e-6f * MeltwaterDensityKgM3 / IceDensityKgM3, 1f / 3f));
 
-        private float DynamicIceFraction
+        private float SelectedIceSideMm => Mathf.Clamp(nextIceSideMm, 5f, MaxIceSideMm);
+
+        private float SelectedIceYieldMl
         {
             get
             {
-                float radius = (float)geometry.innerRadiusM;
-                // Allow room below the cube for shallow-water flotation and around it for rotation.
-                float side = radius * .73f;
-                return IceHalfSizeVolumeFraction * Mathf.Min(1, side * side * side * 917f / (releaseVolumeMl * 1e-6f * 998.2f));
+                float side = SelectedIceSideMm * .001f;
+                return IceDensityKgM3 * side * side * side / MeltwaterDensityKgM3 * 1e6f;
             }
         }
 
@@ -969,6 +970,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 }
                 if (!spawnIce && ice == null && waterBatches == 1 && GUILayout.Button("Measure drop + slosh")) StartMeasurement();
                 GUILayout.EndHorizontal();
+                if (waterSurface != null)
+                    nextIceSideMm = Slider($"Next ice cube · {SelectedIceSideMm:F1} mm per side",
+                        SelectedIceSideMm, 5f, MaxIceSideMm);
+
                 if (waterSurface != null && !measuring && !readbackPending && !samplingWaterline)
                 {
                     GUILayout.BeginHorizontal();
@@ -976,8 +981,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     if (reservedMl + releaseVolumeMl <= BeakerRenderMockup.MaxMarkedVolumeMl &&
                         GUILayout.Button($"Spawn water ({releaseVolumeMl:F0} mL)"))
                         SpawnWater(fluid.spawner.spawnRegions[0].centre);
-                    if (ice == null && waterVolumeMl + releaseVolumeMl * DynamicIceFraction <= BeakerRenderMockup.MaxMarkedVolumeMl &&
-                        GUILayout.Button($"Spawn ice ({releaseVolumeMl * DynamicIceFraction:F0} mL yield)"))
+                    if (ice == null && waterVolumeMl + SelectedIceYieldMl <= BeakerRenderMockup.MaxMarkedVolumeMl &&
+                        GUILayout.Button($"Spawn ice ({SelectedIceYieldMl:F1} mL yield)"))
                         SpawnIce(true);
                     GUILayout.EndHorizontal();
                 }
