@@ -432,17 +432,34 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
         }
 
+        private void UpdateWaterSurfaceDetail()
+        {
+            if (waterSurface == null) return;
+            if (waterBatches == 0 && hasWater)
+            {
+                // A shallow meltwater film can fall between coarse density-map samples.
+                fluid.densityTextureRes = 144;
+                waterSurface.isoLevel = fluid.targetDensity * .32f;
+                return;
+            }
+
+            waterSurface.isoLevel = fluid.targetDensity * .45f;
+            if (beakerCamera == null)
+            {
+                fluid.densityTextureRes = 96;
+                return;
+            }
+            float distance = Vector3.Distance(beakerCamera.transform.position, solverObject.transform.position);
+            fluid.densityTextureRes = fluid.densityTextureRes == 56
+                ? (distance < .55f ? 96 : 56)
+                : (distance > .65f ? 56 : 96);
+        }
+
         private void AdvanceDrop(double stepSeconds, int steps, bool updateSurface = true)
         {
             fluid.thermalBuoyancy = measuring ? measuredBuoyancy : thermalBuoyancy;
             fluid.beakerFloorPressure = measuring ? measuredFloorPressure : glassFloorPressure;
-            if (fluid.worldSpaceSurface && beakerCamera != null)
-            {
-                float distance = Vector3.Distance(beakerCamera.transform.position, solverObject.transform.position);
-                fluid.densityTextureRes = fluid.densityTextureRes == 96
-                    ? (distance > .65f ? 56 : 96)
-                    : (distance < .55f ? 96 : 56);
-            }
+            if (updateSurface) UpdateWaterSurfaceDetail();
             fluid.AdvanceManually((float)stepSeconds, steps, updateSurface);
             double dt = stepSeconds * steps;
             movingHeat?.Advance(dt, measuring ? measuredBurnerWatts : absorbedBurnerWatts);
@@ -790,6 +807,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             hasWater = true;
             // Meltwater increments share the same pool and are not full water releases.
             if (!fromIce) waterBatches++;
+            UpdateWaterSurfaceDetail();
             waterSurface.enabled = true;
         }
 
