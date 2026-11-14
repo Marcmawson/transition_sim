@@ -908,7 +908,7 @@ void WhiteParticlePrepareNextFrame(uint3 id : SV_DispatchThreadID)
 
 StructuredBuffer<float3> WaterCopyPositions;
 StructuredBuffer<float3> WaterCopyVelocities;
-int waterCopyCount;
+uint waterCopyCount;
 
 [numthreads(ThreadGroupSize, 1, 1)]
 void CopyWaterState(uint3 id : SV_DispatchThreadID)
