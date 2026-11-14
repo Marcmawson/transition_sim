@@ -9,9 +9,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     public sealed class GlassTankDamBreak : MonoBehaviour
     {
         private static readonly Vector3 TankSize = new Vector3(1.2f, .5f, .4f);
-        private static readonly Vector3 ColumnSize = new Vector3(.2f, .3f, .4f);
+        private Vector3 ColumnSize => new Vector3(doubleVolume ? .4f : .2f, .3f, TankSize.z);
         private const float StepSeconds = .0004f;
-        private const float VolumeLitres = 24f;
+        private float VolumeLitres => doubleVolume ? 48f : 24f;
         private const float ArrivalPlane = .55f;
 
         [SerializeField] private ComputeShader fluidCompute;
@@ -22,6 +22,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private GameObject solverObject;
         private FluidSim fluid;
         private ComputeShader solverCompute;
+        private bool doubleVolume = true;
         private bool fine, running, sampling;
         private float pendingSeconds, nextSample, arrival = -1, retained = -1, submitMs;
         private int generation;
@@ -98,10 +99,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             solverObject.transform.localScale = TankSize;
             var spawner = solverObject.AddComponent<Spawner3D>();
             spawner.particleSpawnDensity = fine ? 3375000 : 1000000;
+            Vector3 column = ColumnSize;
             spawner.spawnRegions = new[] { new Spawner3D.SpawnRegion
             {
-                centre = new Vector3(-.5f, .15f, 0),
-                boxSize = ColumnSize
+                centre = new Vector3((column.x - TankSize.x) * .5f, column.y * .5f, 0),
+                boxSize = column
             }};
             float spacing = fine ? 1f / 150f : .01f;
             float radius = 2 * spacing;
@@ -190,8 +192,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(16, 16, 340, 230), GUI.skin.box);
-            GUILayout.Label("Glass Tank Dam Break · 24 L");
+            GUILayout.BeginArea(new Rect(16, 16, 340, 255), GUI.skin.box);
+            GUILayout.Label($"Glass Tank Dam Break · {VolumeLitres:F0} L");
             if (fluid == null)
             {
                 GUILayout.Label("GPU water assets or compute support unavailable.");
@@ -208,9 +210,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 }
                 GUI.enabled = previousEnabled && ready && !sampling;
                 if (GUILayout.Button("Reset column")) PrepareColumn();
-                bool selectedFine = GUILayout.Toggle(fine, "Fine resolution (81,000 particles)");
-                if (selectedFine != fine)
+                bool selectedDouble = GUILayout.Toggle(doubleVolume, "Double water volume (48 L)");
+                int fineCount = selectedDouble ? 162000 : 81000;
+                bool selectedFine = GUILayout.Toggle(fine, $"Fine resolution ({fineCount:N0} particles)");
+                if (selectedDouble != doubleVolume || selectedFine != fine)
                 {
+                    doubleVolume = selectedDouble;
                     fine = selectedFine;
                     PrepareColumn();
                 }
