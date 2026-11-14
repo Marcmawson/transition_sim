@@ -125,7 +125,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private float? previousBounceThreshold;
         private Mesh iceMesh;
         private GameObject iceContacts;
-        private float iceSpawnY, iceFloor;
+        private float iceFloor;
+        private float nextWaterVolumeMl, nextIceVolumeMl;
         private const float IceStartC = -5f;
         private const float IceHeatCapacity = 2050f;
         private const float MeltParticlesPerRelease = 32f;
@@ -196,7 +197,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (meshWater)
             {
                 iceFloor = floor;
-                iceSpawnY = dropBottom;
+                nextWaterVolumeMl = releaseVolumeMl;
+                nextIceVolumeMl = Mathf.Pow(nextIceSideMm * .1f, 3);
                 float apparatusTop = dropBottom + cylinderHeight;
                 releaseViewCentre = Vector3.up * (apparatusTop / 2f);
                 releaseViewHeight = apparatusTop;
@@ -208,7 +210,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (meshWater)
             {
                 float width = (float)geometry.OuterRadiusM * 2 + .018f;
-                float height = dropBottom + cylinderHeight - floor + .024f;
+                float height = Mathf.Max(.150f, rim - floor + .001f) + WaterDropHeightM(BeakerRenderMockup.MaxMarkedVolumeMl) + .024f;
                 solverObject.transform.position = Vector3.up * (floor + height / 2 - .012f);
                 solverObject.transform.localScale = new Vector3(width, height, width);
             }
@@ -615,7 +617,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
             var cube = new GameObject("Ice cube");
             SceneManager.MoveGameObjectToScene(cube, icePhysicsScene);
-            float spawnY = Mathf.Max(iceSpawnY + iceSide * .68f, (float)geometry.RimHeightM + iceSide);
+            float spawnY = iceFloor + spawnHeightAboveBottomMm * .001f + RotatedIceHalfHeight(iceSide);
             foreach (var existing in iceCubes)
                 spawnY = Mathf.Max(spawnY, existing.Collider.bounds.max.y + iceSide + .002f);
             cube.transform.SetPositionAndRotation(Vector3.up * spawnY, Quaternion.Euler(13, 19, 9));
@@ -784,10 +786,34 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             });
         }
 
-        private float MaxIceSideMm => Mathf.Min((float)geometry.innerRadiusM * 1000f,
-            1000f * Mathf.Pow(releaseVolumeMl * 1e-6f * MeltwaterDensityKgM3 / IceDensityKgM3, 1f / 3f));
+        private float MaxIceVolumeMl => Mathf.Pow((float)geometry.innerRadiusM * 100f, 3);
 
-        private float SelectedIceSideMm => Mathf.Clamp(nextIceSideMm, 5f, MaxIceSideMm);
+        private float SelectedIceSideMm => 10f * Mathf.Pow(Mathf.Clamp(nextIceVolumeMl, .125f, MaxIceVolumeMl), 1f / 3f);
+
+        private static float RotatedIceHalfHeight(float side)
+        {
+            Vector3 up = Quaternion.Inverse(Quaternion.Euler(13, 19, 9)) * Vector3.up;
+            return side * .5f * (Mathf.Abs(up.x) + Mathf.Abs(up.y) + Mathf.Abs(up.z));
+        }
+
+        private float WaterDropRadiusM(float volumeMl) => Mathf.Min((float)geometry.innerRadiusM * .9f,
+            Mathf.Pow(volumeMl * 1e-6f / (2 * Mathf.PI), 1f / 3f));
+
+        private float WaterDropHeightM(float volumeMl)
+        {
+            float radius = WaterDropRadiusM(volumeMl);
+            return volumeMl * 1e-6f / (Mathf.PI * radius * radius);
+        }
+
+        private void SpawnSelectedWater()
+        {
+            float height = WaterDropHeightM(nextWaterVolumeMl);
+            float bottom = Mathf.Max(fluid.beakerCollision.w, iceFloor + spawnHeightAboveBottomMm * .001f);
+            if (hasWater || iceCubes.Count > 0)
+                bottom = Mathf.Max(bottom, (float)geometry.RimHeightM + .001f);
+            SpawnWater(Vector3.up * (bottom + height * .5f), nextWaterVolumeMl / releaseVolumeMl,
+                puddleRadius: WaterDropRadiusM(nextWaterVolumeMl), puddleHeight: height);
+        }
 
         private float SelectedIceYieldMl
         {
@@ -1002,7 +1028,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             var bounds = new Rect(16, 16, Mathf.Max(1, Mathf.Min(460, Screen.width - 32)),
                 Mathf.Max(1, Mathf.Min(heatMovingWater ? 590 : 400, Screen.height - 32)));
             GUILayout.BeginArea(bounds, GUI.skin.box);
-            GUILayout.Label($"Simulation Controls · {releaseVolumeMl:F0} mL release", GUI.skin.box);
+            GUILayout.Label("Simulation Controls", GUI.skin.box);
             if (beakerCamera != null && geometry != null &&
                 GUILayout.Button(beakerCamera.IsUndersideView ? "Return to free camera" : "Underside view"))
                 beakerCamera.ToggleUndersideView((float)geometry.externalBaseHeightM, (float)geometry.OuterRadiusM);
@@ -1075,19 +1101,22 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.EndHorizontal();
                 GUI.enabled = controlsReady;
                 if (waterSurface != null)
-                    nextIceSideMm = Slider($"Next ice cube · {SelectedIceSideMm:F1} mm per side",
-                        SelectedIceSideMm, 5f, MaxIceSideMm);
-
-                if (waterSurface != null)
                 {
+                    nextWaterVolumeMl = Slider($"Water volume · {nextWaterVolumeMl:F1} mL",
+                        nextWaterVolumeMl, 1f, BeakerRenderMockup.MaxMarkedVolumeMl);
+                    nextIceVolumeMl = Slider($"Ice volume · {nextIceVolumeMl:F2} mL",
+                        Mathf.Clamp(nextIceVolumeMl, .125f, MaxIceVolumeMl), .125f, MaxIceVolumeMl);
+                    spawnHeightAboveBottomMm = Slider($"Drop height · {spawnHeightAboveBottomMm:F0} mm",
+                        spawnHeightAboveBottomMm, 0f, 150f);
+                    GUILayout.Label($"Ice side {SelectedIceSideMm:F1} mm · drop height above the beaker floor");
                     GUILayout.BeginHorizontal();
                     float reservedMl = waterVolumeMl;
                     foreach (var cube in iceCubes)
                         reservedMl += releaseVolumeMl * cube.YieldFraction * (1 - cube.ReleasedFraction);
                     bool canSpawn = controlsReady && !measuring;
-                    GUI.enabled = canSpawn && reservedMl + releaseVolumeMl <= BeakerRenderMockup.MaxMarkedVolumeMl;
-                    if (GUILayout.Button($"Spawn water ({releaseVolumeMl:F0} mL)"))
-                        pendingPanelAction = () => SpawnWater(fluid.spawner.spawnRegions[0].centre);
+                    GUI.enabled = canSpawn && reservedMl + nextWaterVolumeMl <= BeakerRenderMockup.MaxMarkedVolumeMl;
+                    if (GUILayout.Button($"Spawn water ({nextWaterVolumeMl:F1} mL)"))
+                        pendingPanelAction = SpawnSelectedWater;
                     GUI.enabled = canSpawn && iceCubes.Count < FluidSim.MaxIceBodies && reservedMl + SelectedIceYieldMl <= BeakerRenderMockup.MaxMarkedVolumeMl;
                     if (GUILayout.Button($"Spawn ice ({SelectedIceYieldMl:F1} mL yield)"))
                         pendingPanelAction = SpawnIce;
