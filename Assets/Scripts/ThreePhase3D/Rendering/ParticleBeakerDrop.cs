@@ -554,6 +554,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.IceCount = 0;
             foreach (var cube in iceCubes)
             {
+                if (cube.Body == null) continue;
                 cube.Body.gameObject.SetActive(false);
                 Destroy(cube.Body.gameObject);
             }
@@ -1143,7 +1144,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             RestoreBounceThreshold();
             if (iceContactMaterial != null) Destroy(iceContactMaterial);
-            foreach (var cube in iceCubes) Destroy(cube.Body.gameObject);
+            // The local scene owns the cubes and contacts, including any already destroyed during shutdown.
+            iceCubes.Clear();
             if (icePhysicsScene.IsValid() && icePhysicsScene.isLoaded)
                 SceneManager.UnloadSceneAsync(icePhysicsScene);
             if (iceMaterial != null) Destroy(iceMaterial);
