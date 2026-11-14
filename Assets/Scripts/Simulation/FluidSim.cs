@@ -146,18 +146,19 @@ namespace Seb.Fluid.Simulation
 			if (worldSpaceSurface && renderToTex3D) RunSimulationFrame(0, 1);
 		}
 
-		public void AddWater(Vector3 centre, bool preserveExisting, float volumeFraction)
+		public void AddWater(Vector3 centre, bool preserveExisting, float volumeFraction,
+			float puddleRadius = 0, float puddleHeight = 0)
 		{
 			if (trackLiquidMass || transportTemperature)
 				throw new InvalidOperationException("Dynamic releases require the beaker mesh solver.");
 			var batch = spawnData;
 			var region = spawner.spawnRegions[0];
-			if (volumeFraction < .999f)
+			if (volumeFraction < .999f || puddleRadius > 0)
 			{
 				var original = spawner.spawnRegions;
 				float scale = Mathf.Pow(volumeFraction, 1f / 3f);
-				region.cylinderRadius *= scale;
-				region.cylinderHeight *= scale;
+				region.cylinderRadius = puddleRadius > 0 ? puddleRadius : region.cylinderRadius * scale;
+				region.cylinderHeight = puddleRadius > 0 ? puddleHeight : region.cylinderHeight * scale;
 				try
 				{
 					spawner.spawnRegions = new[] { region };

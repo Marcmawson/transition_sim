@@ -781,10 +781,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
         }
 
-        private void SpawnWater(Vector3 centre, float volumeFraction = 1, bool fromIce = false)
+        private void SpawnWater(Vector3 centre, float volumeFraction = 1, bool fromIce = false,
+            float puddleRadius = 0, float puddleHeight = 0)
         {
             waterlineVersion++;
-            fluid.AddWater(centre, hasWater, volumeFraction);
+            fluid.AddWater(centre, hasWater, volumeFraction, puddleRadius, puddleHeight);
             waterVolumeMl += releaseVolumeMl * volumeFraction;
             hasWater = true;
             // Meltwater increments share the same pool and are not full water releases.
@@ -827,6 +828,47 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
             var region = fluid.spawner.spawnRegions[0];
             float fraction = cube.YieldFraction * increment;
+            if (!TryReleaseContactPuddle(iceCollider, fraction))
+                ReleaseAirborneMeltwater(ice, iceCollider, fraction, region);
+            cube.ReleasedFraction = melted;
+
+            if (melted < 1) return;
+            ice.gameObject.SetActive(false);
+            Destroy(ice.gameObject);
+            iceCubes.RemoveAt(index);
+            fluid.IceCount = 0;
+            if (iceCubes.Count == 0) RestoreBounceThreshold();
+        }
+
+        private bool TryReleaseContactPuddle(BoxCollider collider, float fraction)
+        {
+            float half = collider.size.x * .5f;
+            var body = collider.attachedRigidbody;
+            Vector3 down = Quaternion.Inverse(body.rotation) * Vector3.down;
+            // A downward-facing axis selects the low face. Neutral axes keep the
+            // midpoint of a contact edge or the centre of a contact face.
+            Vector3 local = new Vector3(ContactAxis(down.x), ContactAxis(down.y), ContactAxis(down.z)) * half;
+            Vector3 contact = body.position + body.rotation * local;
+            if (contact.y > iceFloor + .001f) return false;
+
+            float volume = releaseVolumeMl * 1e-6f * fraction;
+            float depth = Mathf.Min(.002f, Mathf.Pow(volume, 1f / 3f) * .4f);
+            float innerRadius = fluid.beakerCollision.z;
+            float radius = Mathf.Min(innerRadius * .75f, Mathf.Sqrt(volume / (Mathf.PI * depth)));
+            depth = volume / (Mathf.PI * radius * radius);
+            Vector2 centre = Vector2.ClampMagnitude(new Vector2(contact.x, contact.z),
+                Mathf.Max(0, innerRadius - radius - .0002f));
+            SpawnWater(new Vector3(centre.x, fluid.beakerCollision.w + depth * .5f, centre.y),
+                fraction, fromIce: true, puddleRadius: radius, puddleHeight: depth);
+            return true;
+        }
+
+        private static float ContactAxis(float direction) =>
+            Mathf.Abs(direction) < .005f ? 0 : Mathf.Sign(direction);
+
+        private void ReleaseAirborneMeltwater(Rigidbody ice, BoxCollider iceCollider,
+            float fraction, Spawner3D.SpawnRegion region)
+        {
             float scale = Mathf.Pow(fraction, 1f / 3f);
             float halfHeight = region.cylinderHeight * scale * .5f;
             float clearance = iceCollider.size.x * .87f + region.cylinderRadius * scale + .001f;
@@ -838,14 +880,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             float height = Mathf.Clamp(ice.position.y, poolHeight + halfHeight + .001f,
                 Mathf.Max(poolHeight + halfHeight + .001f, region.centre.y));
             SpawnWater(new Vector3(horizontal.x, height, horizontal.y), fraction, fromIce: true);
-            cube.ReleasedFraction = melted;
-
-            if (melted < 1) return;
-            ice.gameObject.SetActive(false);
-            Destroy(ice.gameObject);
-            iceCubes.RemoveAt(index);
-            fluid.IceCount = 0;
-            if (iceCubes.Count == 0) RestoreBounceThreshold();
         }
 
         private void StartMeasurement(int durationMicroseconds = BenchmarkMicroseconds)
