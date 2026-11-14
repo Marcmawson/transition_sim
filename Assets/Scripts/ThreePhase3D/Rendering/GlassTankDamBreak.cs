@@ -28,16 +28,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void Start()
         {
-            var eye = new GameObject("Tank camera");
-            eye.transform.SetParent(transform);
-            eye.transform.position = new Vector3(1.05f, .78f, -1.45f);
-            eye.transform.LookAt(new Vector3(0, .19f, 0));
-            var view = eye.AddComponent<Camera>();
-            view.clearFlags = CameraClearFlags.SolidColor;
-            view.backgroundColor = new Color(.66f, .74f, .81f);
-            view.nearClipPlane = .02f;
-            eye.AddComponent<BeakerFreeLookCamera>();
-
             var sunlight = new GameObject("Tank daylight").AddComponent<Light>();
             sunlight.transform.SetParent(transform);
             sunlight.transform.rotation = Quaternion.Euler(48, -30, 0);
