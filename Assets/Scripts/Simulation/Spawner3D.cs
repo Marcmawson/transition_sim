@@ -31,6 +31,21 @@ namespace Seb.Fluid.Simulation
 					continue;
 				}
 
+				if (region.HasBox)
+				{
+					Vector3Int count = region.BoxParticleCount(particleSpawnDensity);
+					for (int x = 0; x < count.x; x++)
+					for (int y = 0; y < count.y; y++)
+					for (int z = 0; z < count.z; z++)
+					{
+						var offset = new Vector3((x + .5f) / count.x - .5f,
+							(y + .5f) / count.y - .5f, (z + .5f) / count.z - .5f);
+						allPoints.Add((float3)(region.centre + Vector3.Scale(offset, region.boxSize)));
+						allVelocities.Add(initialVel);
+					}
+					continue;
+				}
+
 				int particlesPerAxis = region.CalculateParticleCountPerAxis(particleSpawnDensity);
 				(float3[] points, float3[] velocities) = SpawnCube(particlesPerAxis, region.centre, Vector3.one * region.size);
 				allPoints.AddRange(points);
@@ -111,7 +126,9 @@ namespace Seb.Fluid.Simulation
 				{
 					debug_spawn_volume += region.Volume;
 					int numPerAxis = region.CalculateParticleCountPerAxis(particleSpawnDensity);
-					debug_num_particles += region.cylinderRadius > 0 && region.cylinderHeight > 0
+					var boxCount = region.BoxParticleCount(particleSpawnDensity);
+					debug_num_particles += region.HasBox ? boxCount.x * boxCount.y * boxCount.z :
+						region.cylinderRadius > 0 && region.cylinderHeight > 0
 						? Mathf.RoundToInt(region.Volume * particleSpawnDensity)
 						: numPerAxis * numPerAxis * numPerAxis;
 				}
@@ -125,7 +142,7 @@ namespace Seb.Fluid.Simulation
 				foreach (SpawnRegion region in spawnRegions)
 				{
 					Gizmos.color = region.debugDisplayCol;
-					Gizmos.DrawWireCube(region.centre, region.cylinderRadius > 0 && region.cylinderHeight > 0
+					Gizmos.DrawWireCube(region.centre, region.HasBox ? region.boxSize : region.cylinderRadius > 0 && region.cylinderHeight > 0
 						? new Vector3(2 * region.cylinderRadius, region.cylinderHeight, 2 * region.cylinderRadius)
 						: Vector3.one * region.size);
 				}
@@ -137,11 +154,21 @@ namespace Seb.Fluid.Simulation
 		{
 			public Vector3 centre;
 			public float size;
+			public Vector3 boxSize;
+			public bool HasBox => boxSize.x > 0 && boxSize.y > 0 && boxSize.z > 0;
 			public float cylinderRadius, cylinderHeight;
 			public Color debugDisplayCol;
 
-			public float Volume => cylinderRadius > 0 && cylinderHeight > 0
+			public float Volume => HasBox ? boxSize.x * boxSize.y * boxSize.z : cylinderRadius > 0 && cylinderHeight > 0
 				? Mathf.PI * cylinderRadius * cylinderRadius * cylinderHeight : size * size * size;
+
+			public Vector3Int BoxParticleCount(int particleDensity)
+			{
+				float countPerMetre = Mathf.Pow(particleDensity, 1f / 3f);
+				return new Vector3Int(Mathf.Max(1, Mathf.RoundToInt(boxSize.x * countPerMetre)),
+					Mathf.Max(1, Mathf.RoundToInt(boxSize.y * countPerMetre)),
+					Mathf.Max(1, Mathf.RoundToInt(boxSize.z * countPerMetre)));
+			}
 
 			public int CalculateParticleCountPerAxis(int particleDensity)
 			{
