@@ -23,6 +23,7 @@ namespace Seb.Fluid.Simulation
 		public float pressureMultiplier = 288;
 		public float nearPressureMultiplier = 2.15f;
 		public float viscosityStrength = 0;
+		public bool approachOnlyDamping;
 		[Range(0, 1)] public float collisionDamping = 0.95f;
 
 		[Header("Foam Settings")] public bool foamActive;
@@ -69,7 +70,7 @@ namespace Seb.Fluid.Simulation
 		int reorderCopybackKernel;
 		int densityKernel;
 		int pressureKernel;
-		int viscosityKernel;
+		int viscosityKernel, commitDampedVelocitiesKernel;
 		int updatePositionsKernel;
 		int renderKernel;
 		int foamUpdateKernel;
@@ -210,6 +211,7 @@ namespace Seb.Fluid.Simulation
 			densityKernel = compute.FindKernel("CalculateDensities");
 			pressureKernel = compute.FindKernel("CalculatePressureForce");
 			viscosityKernel = compute.FindKernel("CalculateViscosity");
+			commitDampedVelocitiesKernel = compute.FindKernel("CommitDampedVelocities");
 			updatePositionsKernel = compute.FindKernel("UpdatePositions");
 			renderKernel = compute.FindKernel("UpdateDensityTexture");
 			foamUpdateKernel = compute.FindKernel("UpdateWhiteParticles");
@@ -395,6 +397,10 @@ namespace Seb.Fluid.Simulation
 				spatialHash.SpatialOffsets
 			});
 
+			compute.SetBuffer(viscosityKernel, "SortTarget_Velocities", sortTarget_velocityBuffer);
+			compute.SetBuffer(commitDampedVelocitiesKernel, "SortTarget_Velocities", sortTarget_velocityBuffer);
+			compute.SetBuffer(commitDampedVelocitiesKernel, "Velocities", velocityBuffer);
+
 			// Update positions kernel
 			SetBuffers(compute, updatePositionsKernel, bufferNameLookup, new ComputeBuffer[]
 			{
@@ -534,7 +540,12 @@ namespace Seb.Fluid.Simulation
 
 			Dispatch(compute, positionBuffer.count, kernelIndex: densityKernel);
 			Dispatch(compute, positionBuffer.count, kernelIndex: activePressureKernel);
-			if (viscosityStrength != 0) Dispatch(compute, positionBuffer.count, kernelIndex: viscosityKernel);
+			if (viscosityStrength != 0)
+			{
+				Dispatch(compute, positionBuffer.count, kernelIndex: viscosityKernel);
+				if (approachOnlyDamping)
+					Dispatch(compute, positionBuffer.count, kernelIndex: commitDampedVelocitiesKernel);
+			}
 			Dispatch(compute, positionBuffer.count, kernelIndex: updatePositionsKernel);
 		}
 
@@ -590,6 +601,7 @@ namespace Seb.Fluid.Simulation
 			compute.SetFloat("pressureMultiplier", pressureMultiplier);
 			compute.SetFloat("nearPressureMultiplier", nearPressureMultiplier);
 			compute.SetFloat("viscosityStrength", viscosityStrength);
+			compute.SetBool("approachOnlyDamping", approachOnlyDamping);
 			compute.SetVector("boundsSize", simBoundsSize);
 			compute.SetVector("centre", simBoundsCentre);
 

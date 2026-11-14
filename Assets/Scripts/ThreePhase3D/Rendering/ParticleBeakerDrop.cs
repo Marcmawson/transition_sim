@@ -1245,6 +1245,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 fluid.nearPressureMultiplier = nearPressurePa / referencePressure;
                 GUILayout.Label("Near-pressure reference uses the bulk target density as its input.");
                 float dampingScale = spacingScale * spacingScale * spacingScale;
+                if (waterSurface != null)
+                    fluid.approachOnlyDamping = GUILayout.Toggle(fluid.approachOnlyDamping, "Approach-only damping");
                 float damping = fluid.viscosityStrength / dampingScale;
                 float dampingLimit = fluid.worldSpaceSurface ? .0000001f : 1f;
                 string dampingLabel = fluid.worldSpaceSurface ? $"Viscosity strength  {damping:E2}" : $"Viscosity strength  {damping:F2}";

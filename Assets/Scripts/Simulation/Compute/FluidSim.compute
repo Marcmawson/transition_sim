@@ -1,4 +1,5 @@
 #pragma kernel CopyWaterState
+#pragma kernel CommitDampedVelocities
 #pragma kernel ExternalForces
 #pragma kernel UpdateSpatialHash
 #pragma kernel Reorder
@@ -62,6 +63,7 @@ const float targetDensity;
 const float pressureMultiplier;
 const float nearPressureMultiplier;
 const float viscosityStrength;
+bool approachOnlyDamping;
 const float edgeForce;
 const float edgeForceDst;
 const float3 boundsSize;
@@ -742,10 +744,19 @@ void CalculateViscosity(uint3 id : SV_DispatchThreadID)
             // Calculate viscosity
             float dst = sqrt(sqrDstToNeighbour);
             float3 neighbourVelocity = Velocities[neighbourIndex];
-            viscosityForce += LiquidWeight(neighbourIndex) * (neighbourVelocity - velocity) * SmoothingKernelPoly6(dst, smoothingRadius);
+            float3 relative = neighbourVelocity - velocity;
+            if (approachOnlyDamping)
+            {
+                if (dst <= 1e-8) continue;
+                float3 axis = offsetToNeighbour / dst;
+                relative = min(0.0, dot(relative, axis)) * axis;
+            }
+            viscosityForce += LiquidWeight(neighbourIndex) * relative * SmoothingKernelPoly6(dst, smoothingRadius);
         }
     }
-    Velocities[id.x] += viscosityForce * viscosityStrength * deltaTime;
+    float3 damped = velocity + viscosityForce * viscosityStrength * deltaTime;
+    if (approachOnlyDamping) SortTarget_Velocities[id.x] = damped;
+    else Velocities[id.x] = damped;
 }
 
 [numthreads(ThreadGroupSize, 1, 1)]
@@ -916,4 +927,11 @@ void CopyWaterState(uint3 id : SV_DispatchThreadID)
     if (id.x >= waterCopyCount) return;
     Positions[id.x] = WaterCopyPositions[id.x];
     Velocities[id.x] = WaterCopyVelocities[id.x];
+}
+
+[numthreads(ThreadGroupSize, 1, 1)]
+void CommitDampedVelocities(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= numParticles) return;
+    Velocities[id.x] = SortTarget_Velocities[id.x];
 }
