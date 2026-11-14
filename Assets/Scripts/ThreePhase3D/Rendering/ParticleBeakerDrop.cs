@@ -478,7 +478,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void ResetHeat()
         {
             movingHeat?.Reset();
-            vapour?.Clear();
+            if (vapour != null) vapour.Clear();
             plume?.Reset();
             pendingVapourKg = vapourStepSeconds = 0;
         }
