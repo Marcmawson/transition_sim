@@ -110,6 +110,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private sealed class IceCube
         {
             public Rigidbody Body;
+            public float SubmergedFraction;
             public Transform Visual;
             public BoxCollider Collider;
             public float Side, Mass, Heat, YieldFraction, ReleasedFraction, ReleaseElapsed;
@@ -710,6 +711,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void ApplyIceForces(IceCube cube)
         {
             var ice = cube.Body;
+            cube.SubmergedFraction = 0;
             ice.AddForce(Vector3.up * fluid.gravity, ForceMode.Acceleration);
             if (!hasWater || (sampledWaterline <= iceFloor && waterline <= iceFloor)) return;
             if (waterline - iceFloor < .0001f) return;
@@ -727,6 +729,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 Vector3 point = ice.transform.TransformPoint(local * side);
                 if (point.x * point.x + point.z * point.z > fluid.beakerCollision.z * fluid.beakerCollision.z) continue;
                 float fraction = Mathf.Clamp01(.5f + (waterline - point.y) * samples / side);
+                cube.SubmergedFraction += fraction / (samples * samples * samples);
+                if (fraction <= 0) continue;
                 Vector3 velocity = ice.GetPointVelocity(point);
                 float dragFactor = (ice.mass * 2f + .5f * 998.2f * side * side * velocity.magnitude)
                     / (samples * samples * samples);
@@ -1128,6 +1132,14 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     float mass = 0;
                     foreach (var cube in iceCubes) mass += cube.Body.mass;
                     GUILayout.Label($"Ice cubes {iceCubes.Count} · {mass * 1000:F1} g remaining");
+                    GUILayout.Label($"Estimated water depth · {Mathf.Max(0, waterline - iceFloor) * 1000f:F1} mm");
+                    for (int i = 0; i < iceCubes.Count; i++)
+                    {
+                        var cube = iceCubes[i];
+                        float side = cube.Collider.size.x;
+                        float required = cube.Body.mass / (MeltwaterDensityKgM3 * side * side * side);
+                        GUILayout.Label($"Cube {i + 1} · {cube.SubmergedFraction:P0} submerged · {required:P0} needed for lift");
+                    }
                     absorbedBurnerWatts = Slider($"Absorbed burner power {absorbedBurnerWatts:F0} W",
                         absorbedBurnerWatts, 0, 100);
                 }
