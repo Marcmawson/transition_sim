@@ -93,6 +93,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private int previousFrameRate, previousVSync;
         private string evidence;
         private float frameMs;
+        private Action pendingPanelAction;
+        private const int MaxMultiBatchStepsPerFrame = 8;
         private float playbackSpeed;
         private float measuredPlaybackSpeed, measuredBurnerWatts;
         private bool measuredBuoyancy, measuredFloorPressure;
@@ -350,6 +352,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 FinishMeasurement();
             }
             if (fluid == null || fluid.positionBuffer == null) return;
+            if (pendingPanelAction != null)
+            {
+                if (samplingWaterline) return;
+                var action = pendingPanelAction;
+                pendingPanelAction = null;
+                action();
+                lastTick = Time.realtimeSinceStartupAsDouble;
+                return;
+            }
             if (heatMovingWater && movingHeat == null)
             {
                 try { movingHeat = new MovingBeakerHeat(fluid, geometry, releaseVolumeMl * 1e-6, showBoiling); }
@@ -374,6 +385,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 measuredFrames++;
                 steps = (int)Math.Min(steps, benchmarkSteps - solverSteps);
             }
+            // Extra water increases the work per GPU step. Prevent slow frames from
+            // scheduling an ever larger catch-up burst while keeping the same timestep.
+            if (waterSurface != null && waterBatches > 1 && !measuring)
+                steps = Math.Min(steps, MaxMultiBatchStepsPerFrame);
             if (steps == 0) return;
             if (ice != null)
             {
@@ -947,7 +962,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     Rect legend = GUILayoutUtility.GetRect(1, 12, GUILayout.ExpandWidth(true));
                     GUI.DrawTexture(legend, showTemperature ? temperatureLegend : speedLegend, ScaleMode.StretchToFill);
                 }
-                bool controlsReady = !readbackPending && !finishOnNextFrame;
+                bool controlsReady = !readbackPending && !finishOnNextFrame && pendingPanelAction == null;
                 GUI.enabled = controlsReady;
                 GUILayout.BeginHorizontal();
                 if (GUILayout.Button(running ? "Pause" : "Run"))
@@ -955,8 +970,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     SetRunning(!running);
                     measuring = false;
                 }
-                GUI.enabled = controlsReady && !samplingWaterline;
-                if (GUILayout.Button("Reset"))
+                GUI.enabled = controlsReady;
+                if (GUILayout.Button("Reset")) pendingPanelAction = () =>
                 {
                     SetRunning(false);
                     measuring = false;
@@ -969,9 +984,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     ResetHeat();
                     solverSteps = 0;
                     evidence = null;
-                }
-                GUI.enabled = controlsReady && !samplingWaterline && !spawnIce && ice == null && waterBatches == 1;
-                if (GUILayout.Button("Measure drop + slosh")) StartMeasurement();
+                };
+                GUI.enabled = controlsReady && !spawnIce && ice == null && waterBatches == 1;
+                if (GUILayout.Button("Measure drop + slosh")) pendingPanelAction = () => StartMeasurement();
                 GUILayout.EndHorizontal();
                 GUI.enabled = controlsReady;
                 if (waterSurface != null)
@@ -982,23 +997,23 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 {
                     GUILayout.BeginHorizontal();
                     float reservedMl = waterVolumeMl + (ice == null ? 0 : releaseVolumeMl * activeIceFraction);
-                    bool canSpawn = controlsReady && !measuring && !samplingWaterline;
+                    bool canSpawn = controlsReady && !measuring;
                     GUI.enabled = canSpawn && reservedMl + releaseVolumeMl <= BeakerRenderMockup.MaxMarkedVolumeMl;
                     if (GUILayout.Button($"Spawn water ({releaseVolumeMl:F0} mL)"))
-                        SpawnWater(fluid.spawner.spawnRegions[0].centre);
+                        pendingPanelAction = () => SpawnWater(fluid.spawner.spawnRegions[0].centre);
                     GUI.enabled = canSpawn && ice == null && waterVolumeMl + SelectedIceYieldMl <= BeakerRenderMockup.MaxMarkedVolumeMl;
                     if (GUILayout.Button($"Spawn ice ({SelectedIceYieldMl:F1} mL yield)"))
-                        SpawnIce(true);
+                        pendingPanelAction = () => SpawnIce(true);
                     GUILayout.EndHorizontal();
-                    GUI.enabled = controlsReady && !running && !samplingWaterline;
+                    GUI.enabled = controlsReady && !running;
                     bool selected = GUILayout.Toggle(spawnIce, "Spawn ice cube");
-                    if (selected != spawnIce)
+                    if (selected != spawnIce) pendingPanelAction = () =>
                     {
                         spawnIce = selected;
                         fluid.ResetParticles();
                         ResetIce();
                         solverSteps = 0;
-                    }
+                    };
                 }
                 GUI.enabled = controlsReady;
                 if (ice != null)
@@ -1010,9 +1025,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 }
                 if (fluid.worldSpaceSurface)
                 {
-                    GUI.enabled = controlsReady && !running && hasWater && !samplingWaterline;
+                    GUI.enabled = controlsReady && !running && hasWater;
                     if (GUILayout.Button("Measure contained water"))
-                        MeasureContainedWater(FormattableString.Invariant($"Nominal release {waterVolumeMl:F1} mL"));
+                        pendingPanelAction = () => MeasureContainedWater(FormattableString.Invariant($"Nominal release {waterVolumeMl:F1} mL"));
                     GUI.enabled = !readbackPending && !finishOnNextFrame;
                 }
                 if (movingHeat != null && GUILayout.Button("Measure circulation · 30 simulated s"))
