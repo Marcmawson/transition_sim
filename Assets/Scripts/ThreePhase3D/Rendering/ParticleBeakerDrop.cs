@@ -104,7 +104,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private Vector2 panelScroll;
         private MarchingCubesFluidRenderer waterSurface;
         private float waterTint;
-        [SerializeField] private bool spawnIce;
         [SerializeField, Min(5f)] private float nextIceSideMm = 12f;
         private const float IceDensityKgM3 = 917f;
         private const float MeltwaterDensityKgM3 = 998.2f;
@@ -305,10 +304,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 waterSurface.col = new Color(1f, 1f, 1f, waterTint);
             }
             solverObject.SetActive(true);
-            hasWater = !spawnIce || !meshWater;
+            hasWater = !meshWater;
             waterBatches = hasWater ? 1 : 0;
             waterVolumeMl = hasWater ? releaseVolumeMl : 0;
-            if (spawnIce && meshWater) ResetIce();
+            if (meshWater) ClearBeaker();
             SetRunning(!meshWater);
             if (meshWater) beakerCamera?.FrameRelease(releaseViewCentre, releaseViewHeight);
         }
@@ -545,11 +544,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             lastTick = Time.realtimeSinceStartupAsDouble;
         }
 
-        private void ResetIce()
+        private void ClearBeaker()
         {
-            hasWater = !spawnIce;
-            waterBatches = hasWater ? 1 : 0;
-            waterVolumeMl = hasWater ? releaseVolumeMl : 0;
+            hasWater = false;
+            waterBatches = 0;
+            waterVolumeMl = 0;
             waterlineVersion++;
             waterline = sampledWaterline = iceFloor;
             fluid.IceCount = 0;
@@ -559,17 +558,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 Destroy(cube.Body.gameObject);
             }
             iceCubes.Clear();
-            if (iceContacts != null) iceContacts.SetActive(spawnIce);
-            waterSurface.enabled = !spawnIce;
-            if (!spawnIce)
-            {
-                RestoreBounceThreshold();
-                return;
-            }
-            SpawnIce();
+            if (iceContacts != null) iceContacts.SetActive(false);
+            waterSurface.enabled = false;
+            RestoreBounceThreshold();
         }
 
-        private void SpawnIce(bool fitThroughRim = false)
+        private void SpawnIce()
         {
             var state = new IceCube { Side = SelectedIceSideMm * .001f,
                 YieldFraction = SelectedIceYieldMl / releaseVolumeMl };
@@ -602,9 +596,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
             var cube = new GameObject("Ice cube");
             SceneManager.MoveGameObjectToScene(cube, icePhysicsScene);
-            float spawnY = fitThroughRim
-                ? Mathf.Max(iceSpawnY + iceSide * .68f, (float)geometry.RimHeightM + iceSide)
-                : iceSpawnY + iceSide * .68f;
+            float spawnY = Mathf.Max(iceSpawnY + iceSide * .68f, (float)geometry.RimHeightM + iceSide);
             foreach (var existing in iceCubes)
                 spawnY = Mathf.Max(spawnY, existing.Collider.bounds.max.y + iceSide + .002f);
             cube.transform.SetPositionAndRotation(Vector3.up * spawnY, Quaternion.Euler(13, 19, 9));
@@ -945,8 +937,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             panelScroll = GUILayout.BeginScrollView(panelScroll);
             if (fluid != null && fluid.positionBuffer != null)
             {
-                GUILayout.Label($"{fluid.positionBuffer.count} particles · {(frameMs > 0 ? 1000 / frameMs : 0):F1} FPS");
-                GUILayout.Label($"{fluid.SimulatedSeconds:F4} s simulated · {solverSteps:N0} solver steps");
+                GUILayout.Label($"{(hasWater ? fluid.positionBuffer.count : 0)} particles · {(frameMs > 0 ? 1000 / frameMs : 0):F1} FPS");
+                GUILayout.Label($"{(hasWater ? fluid.SimulatedSeconds : 0):F4} s simulated · {solverSteps:N0} solver steps");
                 if (movingHeat != null)
                 {
                     double solid = movingHeat.SampledSolidJ, water = movingHeat.SampledWaterJ;
@@ -999,13 +991,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     {
                         fluid.densityTextureRes = 96;
                     }
-                    fluid.ResetParticles();
-                    if (waterSurface != null) ResetIce();
+                    if (waterSurface != null) ClearBeaker();
+                    else fluid.ResetParticles();
                     ResetHeat();
                     solverSteps = 0;
                     evidence = null;
                 };
-                GUI.enabled = controlsReady && !spawnIce && iceCubes.Count == 0 && waterBatches == 1;
+                GUI.enabled = controlsReady && hasWater && iceCubes.Count == 0 && waterBatches == 1;
                 if (GUILayout.Button("Measure drop + slosh")) pendingPanelAction = () => StartMeasurement();
                 GUILayout.EndHorizontal();
                 GUI.enabled = controlsReady;
@@ -1024,17 +1016,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                         pendingPanelAction = () => SpawnWater(fluid.spawner.spawnRegions[0].centre);
                     GUI.enabled = canSpawn && iceCubes.Count < FluidSim.MaxIceBodies && reservedMl + SelectedIceYieldMl <= BeakerRenderMockup.MaxMarkedVolumeMl;
                     if (GUILayout.Button($"Spawn ice ({SelectedIceYieldMl:F1} mL yield)"))
-                        pendingPanelAction = () => SpawnIce(true);
+                        pendingPanelAction = SpawnIce;
                     GUILayout.EndHorizontal();
-                    GUI.enabled = controlsReady && !running;
-                    bool selected = GUILayout.Toggle(spawnIce, "Spawn ice cube");
-                    if (selected != spawnIce) pendingPanelAction = () =>
-                    {
-                        spawnIce = selected;
-                        fluid.ResetParticles();
-                        ResetIce();
-                        solverSteps = 0;
-                    };
                 }
                 GUI.enabled = controlsReady;
                 if (iceCubes.Count > 0)
@@ -1055,7 +1038,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (movingHeat != null && GUILayout.Button("Measure circulation · 30 simulated s"))
                     StartMeasurement(CirculationMicroseconds);
 
-                GUI.enabled = !running && !measuring && !readbackPending && !finishOnNextFrame;
+                GUI.enabled = controlsReady && !running && !measuring && hasWater && iceCubes.Count == 0;
                 if (GUILayout.Button("Step once"))
                 {
                     AdvanceDrop(StepSeconds, 1);
