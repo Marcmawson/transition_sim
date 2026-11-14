@@ -11,7 +11,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     {
         private static readonly Vector3 TankSize = new Vector3(1.2f, .5f, .4f);
         private Vector3 ColumnSize => new Vector3(doubleVolume ? .4f : .2f, .3f, TankSize.z);
-        private const float StepSeconds = .0004f;
+        private static readonly int[] ParticleStepMicroseconds = { 400, 800, 1000 };
+        private static readonly string[] ParticleStepLabels = { "0.4 ms", "0.8 ms", "1.0 ms" };
+        private int particleStepIndex;
+        private long elapsedMicroseconds;
         private float VolumeLitres => doubleVolume ? 48f : 24f;
         private const float ArrivalPlane = .55f;
 
@@ -26,9 +29,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private bool doubleVolume = true;
         private bool fine, running, sampling;
         private bool adaptivePressure;
-        private float nextProjection;
         private int pressureSamples;
-        private const float ProjectionInterval = .02f;
+        private const int ProjectionIntervalMicroseconds = 20000;
         private float pendingSeconds, nextSample, arrival = -1, retained = -1, submitMs;
         private int generation;
 
@@ -90,7 +92,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             running = sampling = false;
             pendingSeconds = nextSample = submitMs = 0;
             arrival = retained = -1;
-            nextProjection = ProjectionInterval;
+            elapsedMicroseconds = 0;
             pressureSamples = 0;
             if (solverObject != null)
             {
@@ -157,18 +159,23 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             if (!running || fluid.positionBuffer == null) return;
             pendingSeconds = Mathf.Min(pendingSeconds + Time.unscaledDeltaTime * .25f, .008f);
-            int steps = Mathf.Min(12, Mathf.FloorToInt(pendingSeconds / StepSeconds));
+            int stepMicroseconds = ParticleStepMicroseconds[particleStepIndex];
+            float stepSeconds = stepMicroseconds / 1000000f;
+            int steps = Mathf.Min(12, Mathf.FloorToInt(pendingSeconds / stepSeconds));
+            if (adaptivePressure)
+            {
+                long untilProjection = ProjectionIntervalMicroseconds - elapsedMicroseconds % ProjectionIntervalMicroseconds;
+                steps = Mathf.Min(steps, (int)(untilProjection / stepMicroseconds));
+            }
             if (steps == 0) return;
 
             double start = Time.realtimeSinceStartupAsDouble;
-            fluid.AdvanceManually(StepSeconds, steps);
+            fluid.AdvanceManually(stepSeconds, steps);
             submitMs = (float)((Time.realtimeSinceStartupAsDouble - start) * 1000 / steps);
-            pendingSeconds -= steps * StepSeconds;
-            if (adaptivePressure && fluid.SimulatedSeconds >= nextProjection)
-            {
+            pendingSeconds -= steps * stepSeconds;
+            elapsedMicroseconds += steps * stepMicroseconds;
+            if (adaptivePressure && elapsedMicroseconds % ProjectionIntervalMicroseconds == 0)
                 ApplyAdaptivePressure();
-                nextProjection = fluid.SimulatedSeconds + ProjectionInterval;
-            }
             if (!sampling && SystemInfo.supportsAsyncGPUReadback && fluid.SimulatedSeconds >= nextSample)
                 SampleWater();
         }
@@ -269,7 +276,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(16, 16, 390, 330), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(16, 16, 390, 380), GUI.skin.box);
             GUILayout.Label($"Glass Tank Dam Break · {VolumeLitres:F0} L");
             if (fluid == null)
             {
@@ -286,13 +293,16 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     pendingSeconds = 0;
                 }
                 GUI.enabled = previousEnabled && ready && !sampling;
-                if (GUILayout.Button("Reset column")) PrepareColumn();
+                bool reset = GUILayout.Button("Reset column");
+                GUILayout.Label("GPU particle timestep · changing it resets the column");
+                int selectedStep = GUILayout.Toolbar(particleStepIndex, ParticleStepLabels);
                 adaptivePressure = GUILayout.Toggle(adaptivePressure, "Adaptive pressure (experimental CPU/GPU)");
                 bool selectedDouble = GUILayout.Toggle(doubleVolume, "Double water volume (48 L)");
                 int fineCount = selectedDouble ? 162000 : 81000;
                 bool selectedFine = GUILayout.Toggle(fine, $"Fine resolution ({fineCount:N0} particles)");
-                if (selectedDouble != doubleVolume || selectedFine != fine)
+                if (reset || selectedStep != particleStepIndex || selectedDouble != doubleVolume || selectedFine != fine)
                 {
+                    particleStepIndex = selectedStep;
                     doubleVolume = selectedDouble;
                     fine = selectedFine;
                     PrepareColumn();
@@ -334,7 +344,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 $"face velocity RMS difference {System.Math.Sqrt(difference / baseline.Velocity.Length):E2} m/s", this);
 
             double SampleVelocity(int axis, double x, double y, double z) =>
-                axis == 1 ? -9.81 * StepSeconds : .025 * System.Math.Sin(9 * x + 4 * y + 7 * z + axis);
+                axis == 1 ? -9.81 * .0004 : .025 * System.Math.Sin(9 * x + 4 * y + 7 * z + axis);
         }
 
         private void OnDestroy()
