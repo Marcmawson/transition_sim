@@ -219,7 +219,7 @@ void ResolveBeaker(float3 previous, inout float3 position, inout float3 velocity
     float2 radial = position.xz - centre;
     float distance = length(radial);
     float2 previousRadial = previous.xz - centre;
-    bool wasInside = previous.y >= floorY && previous.y < beakerRimY &&
+    bool wasInside = previous.y >= beakerGlassFloorY - 1e-5 && previous.y < beakerRimY &&
         dot(previousRadial, previousRadial) <= radius * radius * 1.00001;
     bool enteredOpening = previous.y >= beakerRimY && distance <= radius;
     if (position.y >= beakerRimY || (!wasInside && !enteredOpening)) return;
@@ -759,8 +759,8 @@ void UpdatePositions(uint3 id : SV_DispatchThreadID)
     float3 pos = previous + vel * deltaTime;
 
     ResolveIce(previous, pos, vel);
-    ResolveBeaker(previous, pos, vel);
     ResolveCollisions(pos, vel, collisionDamping);
+    ResolveBeaker(previous, pos, vel);
 
     // Write results
     Positions[id.x] = pos;

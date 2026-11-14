@@ -41,6 +41,14 @@ namespace Seb.Fluid.Rendering
             // Each triangle contains 3 vertices: assign these all to the vertex buffer on the draw material
             drawMat.SetBuffer("VertexBuffer", triangleBuffer);
             drawMat.SetColor("col", col);
+            if (worldSpaceSurface && drawMat.HasProperty("_BeakerFloorClip"))
+            {
+                var floorClip = sim.beakerCollision;
+                floorClip.z += sim.smoothingRadius;
+                floorClip.w = sim.beakerGlassFloorY;
+                if (sim.beakerCollision.z <= 0) floorClip.z = 0;
+                drawMat.SetVector("_BeakerFloorClip", floorClip);
+            }
             drawMat.SetVector("_SurfaceCentre", worldSpaceSurface ? sim.transform.position : Vector3.zero);
             
             // Create render arguments. This stores 5 values:

@@ -3,6 +3,7 @@ Shader "PhysicsSim/BeakerWaterSurface"
 	Properties
 	{
 		_MainTex ("Texture", 2D) = "white" {}
+        [HideInInspector] _BeakerFloorClip ("Beaker floor clip", Vector) = (0,0,0,0)
 	}
 	SubShader
 	{
@@ -42,6 +43,7 @@ Shader "PhysicsSim/BeakerWaterSurface"
 			float4 col;
             sampler2D _BeakerWaterBackground;
             float3 _SurfaceCentre;
+            float4 _BeakerFloorClip;
 
 			v2f vert (appdata v)
 			{
@@ -57,6 +59,9 @@ Shader "PhysicsSim/BeakerWaterSurface"
 			float4 frag (v2f i) : SV_Target
 			{
 				float3 n = normalize(i.normal);
+                if (_BeakerFloorClip.z > 0 &&
+                    length(i.world.xz - _BeakerFloorClip.xy) <= _BeakerFloorClip.z)
+                    clip(i.world.y - _BeakerFloorClip.w);
                 float3 view = normalize(_WorldSpaceCameraPos - i.world);
                 const float waterIndex = 1.333;
                 const float normalReflectance = .02037;
