@@ -63,17 +63,17 @@ namespace Seb.Fluid.Simulation
 		ComputeBuffer sortTarget_predictedPositionsBuffer;
 
 		// Kernel IDs
-		const int externalForcesKernel = 0;
-		const int spatialHashKernel = 1;
-		const int reorderKernel = 2;
-		const int reorderCopybackKernel = 3;
-		const int densityKernel = 4;
-		const int pressureKernel = 5;
-		const int viscosityKernel = 6;
-		const int updatePositionsKernel = 7;
-		const int renderKernel = 8;
-		const int foamUpdateKernel = 9;
-		const int foamReorderCopyBackKernel = 10;
+		int externalForcesKernel;
+		int spatialHashKernel;
+		int reorderKernel;
+		int reorderCopybackKernel;
+		int densityKernel;
+		int pressureKernel;
+		int viscosityKernel;
+		int updatePositionsKernel;
+		int renderKernel;
+		int foamUpdateKernel;
+		int foamReorderCopyBackKernel;
 
 		SpatialHash spatialHash;
 
@@ -119,9 +119,9 @@ namespace Seb.Fluid.Simulation
 		int sumThermalKernel, diffuseHeatKernel, commitHeatKernel;
 		ComputeBuffer sortedTemperature;
 		float[] initialTemperature;
-		int activeReorderKernel = reorderKernel, activeCopyBackKernel = reorderCopybackKernel;
-		int activeExternalForcesKernel = externalForcesKernel;
-		int activePressureKernel = pressureKernel;
+		int activeReorderKernel, activeCopyBackKernel;
+		int activeExternalForcesKernel;
+		int activePressureKernel;
 		[HideInInspector] public Vector4 beakerCollision; // Centre X/Z, inner radius, floor height.
 		[HideInInspector] public float beakerRimY;
 		public float SimulatedSeconds => (float)simTimer;
@@ -203,6 +203,21 @@ namespace Seb.Fluid.Simulation
 
 		void Initialize(Spawner3D.SpawnData? release = null, int existingCount = 0)
 		{
+			externalForcesKernel = compute.FindKernel("ExternalForces");
+			spatialHashKernel = compute.FindKernel("UpdateSpatialHash");
+			reorderKernel = compute.FindKernel("Reorder");
+			reorderCopybackKernel = compute.FindKernel("ReorderCopyBack");
+			densityKernel = compute.FindKernel("CalculateDensities");
+			pressureKernel = compute.FindKernel("CalculatePressureForce");
+			viscosityKernel = compute.FindKernel("CalculateViscosity");
+			updatePositionsKernel = compute.FindKernel("UpdatePositions");
+			renderKernel = compute.FindKernel("UpdateDensityTexture");
+			foamUpdateKernel = compute.FindKernel("UpdateWhiteParticles");
+			foamReorderCopyBackKernel = compute.FindKernel("WhiteParticlePrepareNextFrame");
+			activeReorderKernel = reorderKernel;
+			activeCopyBackKernel = reorderCopybackKernel;
+			activeExternalForcesKernel = externalForcesKernel;
+			activePressureKernel = pressureKernel;
 			if (release == null) spawnData = spawner.GetSpawnData();
 			var initial = release ?? spawnData;
 			int numParticles = existingCount + initial.points.Length;
