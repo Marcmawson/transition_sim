@@ -111,6 +111,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             public Rigidbody Body;
             public float SubmergedFraction;
+            public bool HasContactMeltwater;
             public Transform Visual;
             public BoxCollider Collider;
             public float Side, Mass, Heat, YieldFraction, ReleasedFraction, ReleaseElapsed;
@@ -122,7 +123,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private int waterlineVersion, waterBatches;
         private float waterline, sampledWaterline, nextWaterlineSample, waterVolumeMl;
         private Material iceMaterial;
-        private PhysicMaterial iceContactMaterial;
+        private PhysicMaterial iceContactMaterial, wetIceContactMaterial;
         private float? previousBounceThreshold;
         private Mesh iceMesh;
         private GameObject iceContacts;
@@ -644,6 +645,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     frictionCombine = PhysicMaterialCombine.Minimum
                 };
             }
+            if (wetIceContactMaterial == null)
+            {
+                wetIceContactMaterial = new PhysicMaterial("Wet ice on glass")
+                {
+                    bounciness = .52f,
+                    bounceCombine = PhysicMaterialCombine.Maximum,
+                    staticFriction = .07f,
+                    dynamicFriction = .04f,
+                    frictionCombine = PhysicMaterialCombine.Minimum
+                };
+            }
             iceCollider.sharedMaterial = iceContactMaterial;
             if (iceMaterial == null)
             {
@@ -718,15 +730,16 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
             // Integrate the submerged box volume with evenly spaced sample points.
             const int samples = 4;
-            float side = cube.Collider.size.x;
-            float volumePerSample = side * side * side / (samples * samples * samples);
+            Vector3 size = cube.Collider.size;
+            float side = Mathf.Max(size.x, Mathf.Max(size.y, size.z));
+            float volumePerSample = size.x * size.y * size.z / (samples * samples * samples);
             float forcePerSample = 998.2f * volumePerSample * Mathf.Abs(fluid.gravity);
             for (int x = 0; x < samples; x++)
             for (int y = 0; y < samples; y++)
             for (int z = 0; z < samples; z++)
             {
                 var local = new Vector3(x + .5f, y + .5f, z + .5f) / samples - Vector3.one * .5f;
-                Vector3 point = ice.transform.TransformPoint(local * side);
+                Vector3 point = ice.transform.TransformPoint(cube.Collider.center + Vector3.Scale(local, size));
                 if (point.x * point.x + point.z * point.z > fluid.beakerCollision.z * fluid.beakerCollision.z) continue;
                 float fraction = Mathf.Clamp01(.5f + (waterline - point.y) * samples / side);
                 cube.SubmergedFraction += fraction / (samples * samples * samples);
@@ -745,7 +758,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             for (int i = 0; i < fluid.IceCount; i++)
             {
                 var cube = iceCubes[i];
-                fluid.SetIceBoundary(i, cube.Body, cube.Collider.size.x * .5f);
+                fluid.SetIceBoundary(i, cube.Body, cube.Collider);
             }
             if (fluid.IceCount == 0) return;
 
@@ -847,28 +860,50 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             var ice = cube.Body;
             var iceCollider = cube.Collider;
             float iceMass = cube.Mass;
-            float iceSide = cube.Side;
             // Approximate room heating and apply the selected absorbed burner power near the floor.
             float warmup = iceMass * IceHeatCapacity * -IceStartC;
             float latent = iceMass * IceLatentHeat;
             float temperature = Mathf.Min(0, IceStartC + cube.Heat / (iceMass * IceHeatCapacity));
-            float area = 6 * iceCollider.size.x * iceCollider.size.x;
-            float burner = ice.position.y - iceFloor < iceSide ? absorbedBurnerWatts / iceCubes.Count : 0;
-            cube.Heat += (8f * area * (20 - temperature) + burner) * seconds;
+            Vector3 size = iceCollider.size;
+            float area = 2 * (size.x * size.y + size.y * size.z + size.z * size.x);
+            bool onFloor = iceCollider.bounds.min.y <= iceFloor + .001f;
+            float burner = onFloor ? absorbedBurnerWatts / iceCubes.Count : 0;
+            float ambient = 8f * area * (20 - temperature);
+            cube.Heat += (ambient + burner) * seconds;
             float melted = Mathf.Clamp01((cube.Heat - warmup) / latent);
             float remaining = 1 - melted;
             if (remaining > 0)
             {
-                float side = iceSide * Mathf.Pow(remaining, 1f / 3f);
-                if (side < iceCollider.size.x - .0001f)
+                float volumeRatio = Mathf.Min(1, iceMass * remaining /
+                    (IceDensityKgM3 * size.x * size.y * size.z));
+                // Accumulate sub-millimetre changes before rebuilding the collider.
+                if (volumeRatio < .995f)
                 {
-                    cube.Visual.localScale = Vector3.one * side;
-                    iceCollider.size = Vector3.one * side;
+                    float uniformScale = Mathf.Pow(volumeRatio, ambient / (ambient + burner) / 3f);
+                    Vector3 newSize = size * uniformScale;
+                    Vector3 centre = iceCollider.center;
+                    if (burner > 0)
+                    {
+                        Vector3 down = Quaternion.Inverse(ice.rotation) * Vector3.down;
+                        Vector3 weight = new Vector3(Mathf.Abs(down.x), Mathf.Abs(down.y), Mathf.Abs(down.z));
+                        int axis = weight.x >= weight.y && weight.x >= weight.z ? 0 : weight.y >= weight.z ? 1 : 2;
+                        float thickness = newSize[axis];
+                        float heatedRatio = Mathf.Pow(volumeRatio, burner / (ambient + burner));
+                        newSize[axis] *= heatedRatio;
+                        centre[axis] -= Mathf.Sign(down[axis]) * (thickness - newSize[axis]) * .5f;
+                    }
+                    cube.Visual.localScale = newSize;
+                    cube.Visual.localPosition = centre;
+                    iceCollider.size = newSize;
+                    iceCollider.center = centre;
                     ice.mass = iceMass * remaining;
                     ice.ResetInertiaTensor();
-                    ice.centerOfMass = side * new Vector3(.08f, -.05f, .06f);
+                    ice.centerOfMass = centre + Vector3.Scale(newSize, new Vector3(.08f, -.05f, .06f));
                 }
             }
+            var contactMaterial = onFloor && (cube.HasContactMeltwater || waterline > iceFloor + .001f)
+                ? wetIceContactMaterial : iceContactMaterial;
+            if (iceCollider.sharedMaterial != contactMaterial) iceCollider.sharedMaterial = contactMaterial;
 
             cube.ReleaseElapsed += seconds;
             float increment = melted - cube.ReleasedFraction;
@@ -881,6 +916,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             float fraction = cube.YieldFraction * increment;
             if (!TryReleaseContactPuddle(iceCollider, fraction))
                 ReleaseAirborneMeltwater(ice, iceCollider, fraction, region);
+            else
+                cube.HasContactMeltwater = true;
             cube.ReleasedFraction = melted;
             cube.ReleaseElapsed = 0;
 
@@ -894,12 +931,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private bool TryReleaseContactPuddle(BoxCollider collider, float fraction)
         {
-            float half = collider.size.x * .5f;
+            Vector3 half = collider.size * .5f;
             var body = collider.attachedRigidbody;
             Vector3 down = Quaternion.Inverse(body.rotation) * Vector3.down;
             // A downward-facing axis selects the low face. Neutral axes keep the
             // midpoint of a contact edge or the centre of a contact face.
-            Vector3 local = new Vector3(ContactAxis(down.x), ContactAxis(down.y), ContactAxis(down.z)) * half;
+            Vector3 local = collider.center + Vector3.Scale(half,
+                new Vector3(ContactAxis(down.x), ContactAxis(down.y), ContactAxis(down.z)));
             Vector3 contact = body.position + body.rotation * local;
             if (contact.y > iceFloor + .001f) return false;
 
@@ -923,7 +961,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             float scale = Mathf.Pow(fraction, 1f / 3f);
             float halfHeight = region.cylinderHeight * scale * .5f;
-            float clearance = iceCollider.size.x * .87f + region.cylinderRadius * scale + .001f;
+            float clearance = iceCollider.size.magnitude * .5f + region.cylinderRadius * scale + .001f;
             Vector2 horizontal = new Vector2(ice.position.x, ice.position.z);
             Vector2 direction = horizontal.sqrMagnitude > 1e-8f ? -horizontal.normalized : Vector2.right;
             horizontal = Vector2.ClampMagnitude(horizontal + direction * clearance,
@@ -1136,8 +1174,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     for (int i = 0; i < iceCubes.Count; i++)
                     {
                         var cube = iceCubes[i];
-                        float side = cube.Collider.size.x;
-                        float required = cube.Body.mass / (MeltwaterDensityKgM3 * side * side * side);
+                        Vector3 size = cube.Collider.size;
+                        float required = cube.Body.mass / (MeltwaterDensityKgM3 * size.x * size.y * size.z);
                         GUILayout.Label($"Cube {i + 1} · {cube.SubmergedFraction:P0} submerged · {required:P0} needed for lift");
                     }
                     absorbedBurnerWatts = Slider($"Absorbed burner power {absorbedBurnerWatts:F0} W",
@@ -1258,6 +1296,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             RestoreBounceThreshold();
             if (iceContactMaterial != null) Destroy(iceContactMaterial);
+            if (wetIceContactMaterial != null) Destroy(wetIceContactMaterial);
             // The local scene owns the cubes and contacts, including any already destroyed during shutdown.
             iceCubes.Clear();
             if (icePhysicsScene.IsValid() && icePhysicsScene.isLoaded)

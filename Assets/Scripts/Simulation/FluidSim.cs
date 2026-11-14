@@ -83,18 +83,18 @@ namespace Seb.Fluid.Simulation
 		float smoothRadiusOld;
 		public const int MaxIceBodies = 4;
 		public int IceCount { get; set; }
-		Vector4 iceHalfExtents;
+		readonly Vector4[] iceHalfExtents = new Vector4[MaxIceBodies];
 		readonly Matrix4x4[] iceWorldToLocal = new Matrix4x4[MaxIceBodies];
 		readonly Matrix4x4[] iceLocalToWorld = new Matrix4x4[MaxIceBodies];
 		readonly Vector4[] iceVelocity = new Vector4[MaxIceBodies];
 		readonly Vector4[] iceAngularVelocity = new Vector4[MaxIceBodies];
 		readonly Vector4[] iceMassCentre = new Vector4[MaxIceBodies];
 
-		public void SetIceBoundary(int index, Rigidbody body, float halfExtent)
+		public void SetIceBoundary(int index, Rigidbody body, BoxCollider collider)
 		{
-			iceHalfExtents[index] = halfExtent;
-			iceWorldToLocal[index] = body.transform.worldToLocalMatrix;
-			iceLocalToWorld[index] = body.transform.localToWorldMatrix;
+			iceHalfExtents[index] = collider.size * .5f;
+			iceLocalToWorld[index] = Matrix4x4.TRS(body.position + body.rotation * collider.center, body.rotation, Vector3.one);
+			iceWorldToLocal[index] = iceLocalToWorld[index].inverse;
 			iceVelocity[index] = body.velocity;
 			iceAngularVelocity[index] = body.angularVelocity;
 			iceMassCentre[index] = body.worldCenterOfMass;
@@ -569,7 +569,7 @@ namespace Seb.Fluid.Simulation
 			compute.SetInt("iceCount", IceCount);
 			if (IceCount > 0)
 			{
-				compute.SetVector("iceHalfExtents", iceHalfExtents);
+				compute.SetVectorArray("iceHalfExtents", iceHalfExtents);
 				compute.SetMatrixArray("iceWorldToLocal", iceWorldToLocal);
 				compute.SetMatrixArray("iceLocalToWorld", iceLocalToWorld);
 				compute.SetVectorArray("iceVelocity", iceVelocity);

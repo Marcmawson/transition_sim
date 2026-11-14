@@ -123,13 +123,13 @@ float Remap01(float val, float minVal, float maxVal)
 // Match FluidSim.MaxIceBodies and the host uniform arrays.
 #define MAX_ICE_BODIES 4
 int iceCount;
-float4 iceHalfExtents;
+float4 iceHalfExtents[MAX_ICE_BODIES];
 float4x4 iceWorldToLocal[MAX_ICE_BODIES], iceLocalToWorld[MAX_ICE_BODIES];
 float4 iceVelocity[MAX_ICE_BODIES], iceAngularVelocity[MAX_ICE_BODIES], iceMassCentre[MAX_ICE_BODIES];
 
 void ResolveIceBody(int index, float3 previous, inout float3 position, inout float3 velocity)
 {
-    float iceHalfExtent = iceHalfExtents[index];
+    float3 iceHalfExtent = iceHalfExtents[index].xyz;
     const float separation = .00005;
     float3 start = mul(iceWorldToLocal[index], float4(previous, 1)).xyz;
     float3 end = mul(iceWorldToLocal[index], float4(position, 1)).xyz;
@@ -778,7 +778,7 @@ void UpdateDensityTexture(uint3 id : SV_DispatchThreadID)
     float3 worldPos = (texturePos - 0.5) * boundsSize + densityMapCentre;
     for (int index = 0; index < iceCount; index++)
     {
-        if (all(abs(mul(iceWorldToLocal[index], float4(worldPos, 1)).xyz) < iceHalfExtents[index]))
+        if (all(abs(mul(iceWorldToLocal[index], float4(worldPos, 1)).xyz) < iceHalfExtents[index].xyz))
         {
             DensityMap[id] = 0;
             return;
