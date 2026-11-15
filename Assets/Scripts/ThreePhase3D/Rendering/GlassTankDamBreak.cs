@@ -23,12 +23,18 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const float ArrivalPlane = .55f;
         private static readonly Bounds[] Buildings =
         {
-            new Bounds(new Vector3(-.045f, .075f, -.25f), new Vector3(.15f, .15f, .16f)),
-            new Bounds(new Vector3(.035f, .150f, 0), new Vector3(.18f, .30f, .14f)),
-            new Bounds(new Vector3(-.030f, .100f, .25f), new Vector3(.14f, .20f, .15f)),
-            new Bounds(new Vector3(.300f, .175f, -.25f), new Vector3(.17f, .35f, .17f)),
-            new Bounds(new Vector3(.375f, .100f, 0), new Vector3(.16f, .20f, .13f)),
-            new Bounds(new Vector3(.285f, .125f, .25f), new Vector3(.20f, .25f, .16f))
+            new Bounds(new Vector3(-.085f, .050f, -.265f), new Vector3(.120f, .100f, .130f)),
+            new Bounds(new Vector3(-.045f, .075f, -.090f), new Vector3(.110f, .150f, .140f)),
+            new Bounds(new Vector3(-.080f, .050f, .090f), new Vector3(.120f, .100f, .130f)),
+            new Bounds(new Vector3(-.050f, .075f, .265f), new Vector3(.100f, .150f, .130f)),
+            new Bounds(new Vector3(.110f, .075f, -.265f), new Vector3(.120f, .150f, .140f)),
+            new Bounds(new Vector3(.145f, .100f, -.090f), new Vector3(.120f, .200f, .130f)),
+            new Bounds(new Vector3(.110f, .075f, .090f), new Vector3(.110f, .150f, .140f)),
+            new Bounds(new Vector3(.150f, .050f, .265f), new Vector3(.120f, .100f, .130f)),
+            new Bounds(new Vector3(.305f, .050f, -.265f), new Vector3(.120f, .100f, .130f)),
+            new Bounds(new Vector3(.340f, .075f, -.090f), new Vector3(.110f, .150f, .140f)),
+            new Bounds(new Vector3(.305f, .100f, .090f), new Vector3(.120f, .200f, .130f)),
+            new Bounds(new Vector3(.340f, .075f, .265f), new Vector3(.120f, .150f, .130f))
         };
         private Mesh cityBuildingMesh;
         private Texture2D cityFacade;
@@ -142,11 +148,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             var concrete = MakeMaterial(new Color(.92f, .89f, .83f));
             var brick = MakeMaterial(new Color(.76f, .58f, .47f));
             var slate = MakeMaterial(new Color(.67f, .76f, .83f));
-            var palette = new[] { brick, slate, concrete, concrete, brick, slate };
+            var palette = new[] { brick, slate, concrete };
             for (int i = 0; i < Buildings.Length; i++)
             {
                 Bounds building = Buildings[i];
-                Material material = palette[i];
+                Material material = palette[(i + i / 4) % palette.Length];
                 material.mainTexture = cityFacade;
                 MeshFilter mesh = Box($"City building {i + 1}", building.center, building.size, material);
                 if (cityBuildingMesh == null)
@@ -362,8 +368,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 float worldZ = (z + .5f) * spacing - TankSize.z * .5f;
                 foreach (Bounds building in Buildings)
                 {
-                    if (Mathf.Abs(worldX - building.center.x) < building.extents.x + spacing * .5f &&
-                        Mathf.Abs(worldZ - building.center.z) < building.extents.z + spacing * .5f)
+                    if (Mathf.Abs(worldX - building.center.x) < building.extents.x &&
+                        Mathf.Abs(worldZ - building.center.z) < building.extents.z)
                         floor[x + width * z] = Mathf.Max(floor[x + width * z],
                             Mathf.RoundToInt(building.size.y / spacing));
                 }
