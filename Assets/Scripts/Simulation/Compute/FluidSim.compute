@@ -3,6 +3,7 @@
 #pragma kernel ExternalForces
 #pragma kernel UpdateSpatialHash
 #pragma kernel UpdateMixedSpatialHash MIXED_RESOLUTION
+#pragma kernel BuildMixedFineCellMasks MIXED_RESOLUTION
 #pragma kernel Reorder
 #pragma kernel ReorderCopyBack;
 #pragma kernel CalculateDensities
@@ -477,12 +478,12 @@ float BoxPlaneDistance(float4 plane, float3 position)
 }
 
 // Reject cells whose closest point lies outside the particle's support sphere.
-bool IntersectsSupportCell(float3 gridPosition, int3 cell, float3 padding, float supportSquared)
+bool IntersectsSupportCell(float3 gridPosition, int3 cell, float3 padding)
 {
     float3 minimum = (float3)cell;
     float3 gap = max(minimum - gridPosition, gridPosition - (minimum + 1));
     gap = max(0, gap - padding);
-    return dot(gap, gap) <= supportSquared;
+    return dot(gap, gap) <= 1;
 }
 
 float2 CalculateDensitiesAtPoint(float3 pos, bool includeBoxPressure)
@@ -502,7 +503,7 @@ float2 CalculateDensitiesAtPoint(float3 pos, bool includeBoxPressure)
     for (int i = 0; i < 27; i++)
     {
         int3 cell = originCell + offsets3D[i];
-        if (!IntersectsSupportCell(gridPosition, cell, cellPadding, 1)) continue;
+        if (!IntersectsSupportCell(gridPosition, cell, cellPadding)) continue;
         uint hash = HashCell3D(cell);
         uint key = KeyFromHash(hash, numParticles);
         uint currIndex = SpatialOffsets[key];
@@ -554,6 +555,58 @@ float2 CalculateDensitiesAtPoint(float3 pos, bool includeBoxPressure)
     return float2(density, nearDensity);
 }
 
+// A coarse cell spans two fine cells per axis, with two fine cells of support on each side.
+static const uint FineMaskWords = 7;
+static const uint FineCellsPerAxis = 6;
+int3 MixedCacheOrigin;
+int3 MixedCacheSize;
+uint MixedCacheGeneration;
+RWStructuredBuffer<uint> MixedCacheClaims;
+RWStructuredBuffer<uint> MixedFineMaskOutput;
+StructuredBuffer<uint> MixedFineMasks;
+
+bool TryMixedCacheIndex(int3 coarseCell, out uint index)
+{
+    int3 cell = coarseCell - MixedCacheOrigin;
+    index = 0;
+    if (any(cell < 0) || any(cell >= MixedCacheSize)) return false;
+    index = cell.x + MixedCacheSize.x * (cell.y + MixedCacheSize.y * cell.z);
+    return true;
+}
+
+int3 FineMaskOffset(uint bit)
+{
+    return int3(bit % FineCellsPerAxis, (bit / FineCellsPerAxis) % FineCellsPerAxis,
+        bit / (FineCellsPerAxis * FineCellsPerAxis));
+}
+
+[numthreads(ThreadGroupSize, 1, 1)]
+void BuildMixedFineCellMasks(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= numParticles || MixedLevel(id.x) != 1) return;
+
+    int3 coarseCell = GetCell3D(PredictedPositions[id.x], 2 * smoothingRadius);
+    uint index;
+    if (!TryMixedCacheIndex(coarseCell, index)) return;
+    uint previous;
+    InterlockedExchange(MixedCacheClaims[index], MixedCacheGeneration, previous);
+    if (previous == MixedCacheGeneration) return;
+
+    int3 firstFineCell = 2 * coarseCell - 2;
+    uint mask = 0;
+    for (uint bit = 0; bit < 216; bit++)
+    {
+        uint key = MixedCellKey(firstFineCell + FineMaskOffset(bit), 0);
+        // Hash aliases can set extra bits. Query-time cell and level checks reject them.
+        if (SpatialOffsets[key] < numParticles) mask |= 1u << (bit % 32);
+        if (bit % 32 == 31 || bit == 215)
+        {
+            MixedFineMaskOutput[index * FineMaskWords + bit / 32] = mask;
+            mask = 0;
+        }
+    }
+}
+
 // The two levels share a sparse hash table. Their cell widths are h and 2h.
 struct MixedNeighbourQuery
 {
@@ -567,6 +620,11 @@ struct MixedNeighbourQuery
     int3 cell;
     uint key;
     uint cursor;
+    bool useFineMask;
+    int3 firstFineCell;
+    uint fineMaskIndex;
+    uint fineMaskWord;
+    uint fineMaskBits;
 };
 
 void SetMixedQueryLevel(inout MixedNeighbourQuery query, uint level)
@@ -581,6 +639,22 @@ void SetMixedQueryLevel(inout MixedNeighbourQuery query, uint level)
     query.cell.x--;
     query.key = 0;
     query.cursor = numParticles;
+    query.useFineMask = false;
+    query.firstFineCell = 0;
+    query.fineMaskIndex = 0;
+    query.fineMaskWord = 0;
+    query.fineMaskBits = 0;
+    if (query.selfLevel == 1 && level == 0)
+    {
+        int3 coarseCell = GetCell3D(query.position, 2 * smoothingRadius);
+        query.firstFineCell = 2 * coarseCell - 2;
+        if (all(query.firstCell >= query.firstFineCell) && all(query.lastCell <= query.firstFineCell + 5) &&
+            TryMixedCacheIndex(coarseCell, query.fineMaskIndex))
+        {
+            query.useFineMask = true;
+            query.fineMaskBits = MixedFineMasks[query.fineMaskIndex * FineMaskWords];
+        }
+    }
 }
 
 MixedNeighbourQuery MakeMixedQuery(float3 position, uint selfLevel)
@@ -613,6 +687,27 @@ bool NextMixedNeighbour(inout MixedNeighbourQuery query, out uint index, out flo
             return true;
         }
 
+        if (query.useFineMask)
+        {
+            while (query.fineMaskBits == 0 && query.fineMaskWord + 1 < FineMaskWords)
+            {
+                query.fineMaskWord++;
+                query.fineMaskBits = MixedFineMasks[query.fineMaskIndex * FineMaskWords + query.fineMaskWord];
+            }
+            if (query.fineMaskBits == 0)
+            {
+                SetMixedQueryLevel(query, 1);
+                continue;
+            }
+            uint bit = firstbitlow(query.fineMaskBits);
+            query.fineMaskBits &= query.fineMaskBits - 1;
+            query.cell = query.firstFineCell + FineMaskOffset(32 * query.fineMaskWord + bit);
+            if (any(query.cell < query.firstCell) || any(query.cell > query.lastCell)) continue;
+            query.key = MixedCellKey(query.cell, 0);
+            query.cursor = SpatialOffsets[query.key];
+            continue;
+        }
+
         query.cell.x++;
         if (query.cell.x > query.lastCell.x)
         {
@@ -628,17 +723,6 @@ bool NextMixedNeighbour(inout MixedNeighbourQuery query, out uint index, out flo
                     SetMixedQueryLevel(query, 1);
                     continue;
                 }
-            }
-        }
-        if (query.selfLevel == 1 && query.level == 0)
-        {
-            float3 gridPosition = query.position / query.cellWidth;
-            float3 padding = 1e-6 * max(abs(gridPosition), 1);
-            // Coarse support spans two fine cell widths.
-            if (!IntersectsSupportCell(gridPosition, query.cell, padding, 4))
-            {
-                query.cursor = numParticles;
-                continue;
             }
         }
         query.key = MixedCellKey(query.cell, query.level);
@@ -878,7 +962,7 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
     for (int i = 0; i < 27; i++)
     {
         int3 cell = originCell + offsets3D[i];
-        if (!IntersectsSupportCell(gridPosition, cell, cellPadding, 1)) continue;
+        if (!IntersectsSupportCell(gridPosition, cell, cellPadding)) continue;
         uint hash = HashCell3D(cell);
         uint key = KeyFromHash(hash, numParticles);
         uint currIndex = SpatialOffsets[key];
@@ -1053,7 +1137,7 @@ void CalculateViscosity(uint3 id : SV_DispatchThreadID)
     for (int i = 0; i < 27; i++)
     {
         int3 cell = originCell + offsets3D[i];
-        if (!IntersectsSupportCell(gridPosition, cell, cellPadding, 1)) continue;
+        if (!IntersectsSupportCell(gridPosition, cell, cellPadding)) continue;
         uint hash = HashCell3D(cell);
         uint key = KeyFromHash(hash, numParticles);
         uint currIndex = SpatialOffsets[key];
