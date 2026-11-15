@@ -16,6 +16,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private static readonly Color Background = new Color(.035f, .049f, .068f);
         private static readonly Color ParticleColor = new Color(.37f, .70f, .91f);
 
+        private static readonly Color CoarseParticleColor = new Color(1f, .61f, .25f);
+        private SphDamBreak2D damBreak;
+        private bool damBreakView = true, damRunning;
+        private float damPendingSeconds;
+
         private readonly Vector2[] particles = new Vector2[Columns * Rows];
         private readonly SearchResult[] results = new SearchResult[CellRatios.Length];
         private int selected = 4;
@@ -27,6 +32,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void Awake()
         {
+            damBreak = new SphDamBreak2D();
             // A repeatable, near-uniform sampling with a little jitter to exercise grid boundaries.
             var random = new System.Random(601);
             for (int y = 0; y < Rows; y++)
@@ -124,17 +130,37 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             measuring = false;
         }
 
+        private void Update()
+        {
+            if (!damBreakView || !damRunning) return;
+            damPendingSeconds = Mathf.Min(damPendingSeconds + Time.unscaledDeltaTime, .012f);
+            int steps = Mathf.Min(24, Mathf.FloorToInt(damPendingSeconds / SphDamBreak2D.StepSeconds));
+            if (steps == 0) return;
+            damBreak.Advance(steps);
+            damPendingSeconds -= steps * SphDamBreak2D.StepSeconds;
+        }
+
         private void OnGUI()
         {
             float panelWidth = Mathf.Min(375, Screen.width * .46f);
             if (Event.current.type == EventType.Repaint)
             {
                 DrawRect(new Rect(0, 0, Screen.width, Screen.height), Background);
-                DrawGrid(new Rect(panelWidth + 24, 24, Screen.width - panelWidth - 48, Screen.height - 48));
+                var area = new Rect(panelWidth + 24, 24, Screen.width - panelWidth - 48, Screen.height - 48);
+                if (damBreakView) DrawDamBreak(area);
+                else DrawGrid(area);
             }
 
             GUILayout.BeginArea(new Rect(12, 12, panelWidth, Mathf.Max(0, Screen.height - 24)), GUI.skin.box);
             scroll = GUILayout.BeginScrollView(scroll);
+            damBreakView = GUILayout.Toolbar(damBreakView ? 0 : 1, new[] { "Dam break", "Grid calibration" }) == 0;
+            if (damBreakView)
+            {
+                DrawDamBreakControls();
+                GUILayout.EndScrollView();
+                GUILayout.EndArea();
+                return;
+            }
             GUILayout.Label("2D SPH Grid Calibration");
             GUILayout.Label($"Particle spacing {SpacingMm:0} mm · support radius {SupportMm:0} mm");
             GUILayout.Label($"Grid {CellWidth:0.##} mm · {CellRatios[selected]:0.##}× support");
@@ -160,6 +186,82 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
             GUILayout.EndScrollView();
             GUILayout.EndArea();
+        }
+
+        private void DrawDamBreakControls()
+        {
+            GUILayout.Label("2D SPH Dam Break");
+            GUILayout.Label($"Simulated time {damBreak.StepCount * SphDamBreak2D.StepSeconds:F3} s");
+            GUILayout.Label($"{damBreak.Count:N0} particles · timestep {SphDamBreak2D.StepSeconds * 1000:0.###} ms");
+            DrawGridLegend(ParticleColor, $"Fine · {damBreak.FineCount:N0} particles · 15 mm cells");
+            DrawGridLegend(CoarseParticleColor, $"Coarse · {damBreak.Count - damBreak.FineCount:N0} particles · 30 mm cells");
+            GUILayout.Label("White borders show occupied search cells.");
+            showParticles = GUILayout.Toggle(showParticles, "Show particles");
+            if (GUILayout.Button(damRunning ? "Pause" : damBreak.StepCount == 0 ? "Release water" : "Resume"))
+            {
+                damRunning = !damRunning;
+                damPendingSeconds = 0;
+            }
+            if (GUILayout.Button("Reset dam break"))
+            {
+                damRunning = false;
+                damPendingSeconds = 0;
+                damBreak.Reset();
+            }
+        }
+
+        private static void DrawGridLegend(Color color, string label)
+        {
+            Color previous = GUI.contentColor;
+            GUI.contentColor = color;
+            GUILayout.Label(label);
+            GUI.contentColor = previous;
+        }
+
+        private void DrawDamBreak(Rect area)
+        {
+            if (area.width <= 0 || area.height <= 0) return;
+            float scale = Mathf.Min(area.width / SphDamBreak2D.Width, area.height / SphDamBreak2D.Height);
+            float width = SphDamBreak2D.Width * scale;
+            float height = SphDamBreak2D.Height * scale;
+            Vector2 origin = new Vector2(area.center.x - width * .5f, area.center.y + height * .5f);
+            DrawOutline(new Rect(origin.x, origin.y - height, width, height), 2, Color.white);
+            DrawOccupiedCells(damBreak.CoarseOccupiedCells, damBreak.CoarseCellsAcross,
+                SphDamBreak2D.CoarseCellWidth * scale, origin, 1.5f, new Color(1, 1, 1, .55f));
+            DrawOccupiedCells(damBreak.FineOccupiedCells, damBreak.FineCellsAcross,
+                SphDamBreak2D.FineCellWidth * scale, origin, 1, Color.white);
+
+            if (!showParticles) return;
+            for (int i = 0; i < damBreak.Count; i++)
+            {
+                Vector2 position = damBreak.Position(i);
+                Vector2 screen = origin + new Vector2(position.x, -position.y) * scale;
+                bool fine = i < damBreak.FineCount;
+                float size = Mathf.Max(2, (fine ? 2.5f : 4f) * scale);
+                DrawRect(new Rect(screen.x - size * .5f, screen.y - size * .5f, size, size),
+                    fine ? ParticleColor : CoarseParticleColor);
+            }
+        }
+
+        private static void DrawOccupiedCells(IReadOnlyList<int> occupied, int columns, float cellPixels,
+            Vector2 origin, float thickness, Color color)
+        {
+            foreach (int cell in occupied)
+            {
+                int x = cell % columns;
+                int y = cell / columns;
+                DrawOutline(new Rect(origin.x + x * cellPixels, origin.y - (y + 1) * cellPixels,
+                    cellPixels, cellPixels), thickness, color);
+            }
+        }
+
+        private static void DrawOutline(Rect bounds, float thickness, Color color)
+        {
+            float half = thickness * .5f;
+            DrawRect(new Rect(bounds.xMin - half, bounds.yMin - half, bounds.width + thickness, thickness), color);
+            DrawRect(new Rect(bounds.xMin - half, bounds.yMax - half, bounds.width + thickness, thickness), color);
+            DrawRect(new Rect(bounds.xMin - half, bounds.yMin - half, thickness, bounds.height + thickness), color);
+            DrawRect(new Rect(bounds.xMax - half, bounds.yMin - half, thickness, bounds.height + thickness), color);
         }
 
         private void DrawGrid(Rect area)
