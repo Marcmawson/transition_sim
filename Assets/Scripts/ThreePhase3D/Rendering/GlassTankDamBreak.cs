@@ -22,10 +22,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const int BenchmarkEndTime = 1800000;
         private bool benchmark;
         private bool benchmarkWallPressure;
-        private static readonly float[] BenchmarkSpacings = { .02f, .015f, .0075f };
-        private static readonly string[] BenchmarkSpacingLabels = { "20 mm", "15 mm", "7.5 mm" };
+        private static readonly float[] BenchmarkSpacings = { .02f, .0175f, .015f, .0125f, .01f, .0075f, .005f };
+        private static readonly string[] BenchmarkSpacingLabels = { "20", "17.5", "15", "12.5", "10", "7.5", "5" };
         private int benchmarkSpacingIndex;
-        private int selectedBenchmarkSpacing = 2;
+        private int selectedBenchmarkSpacing = 5;
         private bool benchmarkMeasurementsOnly;
         private bool selectedMeasurementsOnly;
         private double benchmarkStartTime;
@@ -600,7 +600,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.Label($"GPU wall pressure: {(benchmarkWallPressure ? "ON (1)" : "OFF (0)")}");
                 bool controlsEnabled = GUI.enabled;
                 GUI.enabled = controlsEnabled && !pendingBenchmarkRun.HasValue;
-                GUILayout.Label("Particle spacing for next run");
+                GUILayout.Label("Particle spacing for next run (mm)");
                 selectedBenchmarkSpacing = GUILayout.Toolbar(selectedBenchmarkSpacing, BenchmarkSpacingLabels);
                 selectedMeasurementsOnly = GUILayout.Toggle(selectedMeasurementsOnly, "Measurements only · skip water rendering (next run)");
                 GUILayout.Label($"Current spacing {BenchmarkSpacing * 1000:0.#} mm · {fluid.positionBuffer?.count ?? 0:N0} particles");
