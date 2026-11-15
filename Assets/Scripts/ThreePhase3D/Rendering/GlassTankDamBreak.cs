@@ -19,6 +19,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const float JetSliceDepth = .06f;
         private const float JetSupportHeight = .04f;
         private const int BenchmarkSampleInterval = 20000;
+        private const int BenchmarkMaxStepsPerFrame = 24;
         private const int BenchmarkEndTime = 1800000;
         private bool benchmark;
         private bool benchmarkWallPressure;
@@ -317,9 +318,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
 
             if (!running || fluid.positionBuffer == null) return;
-            pendingSeconds = Mathf.Min(pendingSeconds + Time.unscaledDeltaTime * .25f, .008f);
+            float playbackRate = benchmark ? 1f : .25f;
+            float maxPendingSeconds = benchmark ? BenchmarkSampleInterval / 1000000f : .008f;
+            pendingSeconds = Mathf.Min(pendingSeconds + Time.unscaledDeltaTime * playbackRate, maxPendingSeconds);
             int stepMicroseconds = benchmark ? BenchmarkStepMicroseconds : ParticleStepMicroseconds[particleStepIndex];
-            int maxSteps = 12;
+            int maxSteps = benchmark ? BenchmarkMaxStepsPerFrame : 12;
             if (benchmark)
             {
                 int remaining = BenchmarkSampleInterval - (int)(elapsedMicroseconds % BenchmarkSampleInterval);
@@ -336,14 +339,16 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
             if (steps == 0) return;
 
+            long nextElapsed = elapsedMicroseconds + steps * stepMicroseconds;
+            bool benchmarkSample = benchmark && nextElapsed % BenchmarkSampleInterval == 0;
             double start = Time.realtimeSinceStartupAsDouble;
-            fluid.AdvanceManually(stepSeconds, steps);
+            fluid.AdvanceManually(stepSeconds, steps, updateSurface: !benchmark || benchmarkSample);
             submitMs = (float)((Time.realtimeSinceStartupAsDouble - start) * 1000 / steps);
             pendingSeconds -= steps * stepSeconds;
-            elapsedMicroseconds += steps * stepMicroseconds;
+            elapsedMicroseconds = nextElapsed;
             if (benchmark)
             {
-                if (elapsedMicroseconds % BenchmarkSampleInterval == 0 && SystemInfo.supportsAsyncGPUReadback)
+                if (benchmarkSample && SystemInfo.supportsAsyncGPUReadback)
                     SampleBenchmark();
                 if (elapsedMicroseconds >= BenchmarkEndTime) running = false;
                 return;
