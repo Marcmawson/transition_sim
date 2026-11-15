@@ -129,6 +129,7 @@ namespace Seb.Fluid.Simulation
 		[HideInInspector] public bool transportTemperature;
 		[HideInInspector] public bool thermalBuoyancy;
 		[HideInInspector] public bool beakerFloorPressure;
+		[HideInInspector] public bool boxWallPressure;
 		[HideInInspector] public float beakerGlassFloorY;
 		[NonSerialized] public float[] buoyancyDensityByDegree;
 		public ComputeBuffer TemperatureRise { get; private set; }
@@ -613,6 +614,7 @@ namespace Seb.Fluid.Simulation
 			compute.SetBool("sprayOnly", foamActive && sprayOnly);
 			compute.SetFloat("simTime", (float)simTimer);
 			compute.SetFloat("gravity", gravity);
+			compute.SetBool("BoxWallPressure", boxWallPressure);
 			compute.SetFloat("BeakerFloorPressure", beakerFloorPressure ? 1f : 0f);
 			compute.SetFloat("beakerGlassFloorY", beakerGlassFloorY);
 			if (activePressureKernel != pressureKernel)
