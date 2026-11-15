@@ -35,6 +35,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private bool benchmarkWallPressure;
         private const float MixedFineLayerHeight = .05f;
         private bool benchmarkMixed, selectedBenchmarkMixed, profileMixed;
+        private bool benchmarkWideGrid, selectedWideGrid;
+        private float MixedGridScale => benchmarkWideGrid ? 1.5f : 1f;
         private static readonly float[] BenchmarkSpacings = { .02f, .0175f, .015f, .0125f, .01f, .0075f, .005f };
         private static readonly string[] BenchmarkSpacingLabels = { "20", "17.5", "15", "12.5", "10", "7.5", "5" };
         private int benchmarkSpacingIndex;
@@ -45,7 +47,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private bool benchmarkMeasurementsOnly;
         private bool selectedMeasurementsOnly;
         private double benchmarkStartTime;
-        private (bool WallPressure, int SpacingIndex, bool MeasurementsOnly, bool Mixed, int StepOverride)? pendingBenchmarkRun;
+        private (bool WallPressure, int SpacingIndex, bool MeasurementsOnly, bool Mixed, int StepOverride, bool WideGrid)? pendingBenchmarkRun;
         private float BenchmarkSpacing => BenchmarkSpacings[benchmarkSpacingIndex];
         private int BenchmarkStepMicroseconds => benchmarkStepOverride > 0 ? benchmarkStepOverride :
             Mathf.RoundToInt(400 * BenchmarkSpacing / BenchmarkSpacings[0]);
@@ -298,6 +300,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.spawner = spawner;
             fluid.MixedCoarseParticleCount = coarseCount;
             fluid.MixedCoarseMass = coarseMass;
+            fluid.MixedGridCellScale = MixedGridScale;
             fluid.manualControl = true;
             fluid.gravity = -9.81f;
             if (benchmark)
@@ -402,7 +405,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 #endif
             if (pendingBenchmarkRun.HasValue && benchmarkReadsPending == 0)
             {
-                (benchmarkWallPressure, benchmarkSpacingIndex, benchmarkMeasurementsOnly, benchmarkMixed, benchmarkStepOverride) = pendingBenchmarkRun.Value;
+                (benchmarkWallPressure, benchmarkSpacingIndex, benchmarkMeasurementsOnly, benchmarkMixed, benchmarkStepOverride, benchmarkWideGrid) = pendingBenchmarkRun.Value;
                 pendingBenchmarkRun = null;
                 PrepareColumn();
                 running = true;
@@ -462,6 +465,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void StartPerformanceRun()
         {
             benchmarkMixed = profileMixed;
+            benchmarkWideGrid = profileMixed && selectedWideGrid;
             benchmarkSpacingIndex = profileMixed ? BenchmarkSpacings.Length - 1 : profileSpacing;
             benchmarkWallPressure = !profileMixed && profileWallPressure;
             PrepareColumn();
@@ -519,7 +523,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             Debug.Log($"MARIN synchronized stage timings · {SystemInfo.graphicsDeviceName} · {SystemInfo.graphicsDeviceType} · " +
                 $"{fluid.positionBuffer.count:N0} particles · {BenchmarkSpacing * 1000:0.#} mm · " +
                 $"{BenchmarkStepMicroseconds / 1000f:0.###} ms step · sampled from {profileWarmup * stepSeconds:F4} s · " +
-                $"{(benchmarkMixed ? "mixed 5/10 mm" : "uniform")} · box wall pressure {(benchmarkWallPressure ? "ON" : "OFF")} · {profileSubmitted} completed steps\n" +
+                $"{(benchmarkMixed ? $"mixed 5/10 mm · grid {(benchmarkWideGrid ? "15/30" : "10/20")} mm" : "uniform")} · box wall pressure {(benchmarkWallPressure ? "ON" : "OFF")} · {profileSubmitted} completed steps\n" +
                 "Elapsed time includes CPU submission and a one-element GPU readback per stage.\n" +
                 string.Join("\n", profileResults), this);
         }
@@ -535,6 +539,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             GUILayout.Label("Particle spacing (mm)");
             profileSpacing = GUILayout.Toolbar(profileSpacing, BenchmarkSpacingLabels);
             profileMixed = GUILayout.Toggle(profileMixed, "Mixed spacing · 5 mm surface / 10 mm bulk");
+            if (profileMixed) selectedWideGrid = GUILayout.Toggle(selectedWideGrid, "Larger mixed grid · 15/30 mm");
             GUI.enabled = enabled && !profileRunning && !profileMixed;
             profileWallPressure = GUILayout.Toggle(profileWallPressure, "Box wall pressure (uniform runs)");
             GUI.enabled = enabled && !profileRunning;
@@ -646,6 +651,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             float seconds = elapsedMicroseconds / 1000000f;
             int wallPressure = benchmarkWallPressure ? 1 : 0;
             int mixedResolution = benchmarkMixed ? 1 : 0;
+            float gridScale = benchmarkMixed ? MixedGridScale : 1;
             float spacingMillimetres = BenchmarkSpacing * 1000;
             float maxStepMilliseconds = BenchmarkStepMicroseconds / 1000f;
             benchmarkReadsPending++;
@@ -682,7 +688,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 benchmarkJet = SupportedJetHeight(jet);
                 benchmarkJetPeak = Mathf.Max(benchmarkJetPeak, benchmarkJet);
                 Debug.Log(System.FormattableString.Invariant(
-                    $"MARIN,t_s,H2_p95_m,box_zone_p95_m,jet_max_m,jet_supported_m,jet_count,max_step_ms,spacing_mm,mixed_resolution,wall_pressure: {seconds:F3},{benchmarkH2:F3},{benchmarkSheet:F3},{jetMax:F3},{benchmarkJet:F3},{jet.Count},{maxStepMilliseconds:0.###},{spacingMillimetres:0.#},{mixedResolution},{wallPressure}"), this);
+                    $"MARIN,t_s,H2_p95_m,box_zone_p95_m,jet_max_m,jet_supported_m,jet_count,max_step_ms,spacing_mm,grid_scale,mixed_resolution,wall_pressure: {seconds:F3},{benchmarkH2:F3},{benchmarkSheet:F3},{jetMax:F3},{benchmarkJet:F3},{jet.Count},{maxStepMilliseconds:0.###},{spacingMillimetres:0.#},{gridScale:0.#},{mixedResolution},{wallPressure}"), this);
                 if (seconds >= BenchmarkEndTime / 1000000f) LogBenchmarkCompletion();
             });
         }
@@ -861,7 +867,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             int finest = BenchmarkSpacings.Length - 1;
             int spacing = mixed ? finest : selectedBenchmarkSpacing;
             int step = spacing == finest ? FineBenchmarkSteps[selectedFineBenchmarkStep] : 0;
-            pendingBenchmarkRun = (useWallPressure, spacing, selectedMeasurementsOnly, mixed, step);
+            pendingBenchmarkRun = (useWallPressure, spacing, selectedMeasurementsOnly, mixed, step, mixed && selectedWideGrid);
         }
 
         private void OnGUI()
@@ -915,7 +921,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.Label($"Current spacing {BenchmarkSpacing * 1000:0.#} mm · {fluid.positionBuffer?.count ?? 0:N0} particles");
                 if (benchmarkMeasurementsOnly) GUILayout.Label("Water hidden · timing and jet measurements are active");
                 selectedBenchmarkMixed = GUILayout.Toggle(selectedBenchmarkMixed, "Mixed spacing · 5 mm surface / 10 mm bulk");
-                if (benchmarkMixed) GUILayout.Label("Current run: mixed 5/10 mm");
+                if (selectedBenchmarkMixed)
+                    selectedWideGrid = GUILayout.Toggle(selectedWideGrid, "Larger mixed grid · 15/30 mm");
+                if (benchmarkMixed) GUILayout.Label($"Current run: mixed 5/10 mm · grid {(benchmarkWideGrid ? "15/30" : "10/20")} mm");
                 if (selectedBenchmarkMixed || selectedBenchmarkSpacing == BenchmarkSpacings.Length - 1)
                 {
                     GUILayout.Label("Maximum timestep for next run (ms)");
