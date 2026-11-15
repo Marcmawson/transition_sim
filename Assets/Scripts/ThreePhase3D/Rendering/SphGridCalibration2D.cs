@@ -16,7 +16,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private static readonly Color Background = new Color(.035f, .049f, .068f);
         private static readonly Color ParticleColor = new Color(.37f, .70f, .91f);
 
-        private static readonly Color CoarseParticleColor = new Color(1f, .61f, .25f);
+        private static readonly Color[] DamGridColors =
+        {
+            new Color(1f, .61f, .25f), new Color(.95f, .83f, .38f),
+            new Color(.45f, .83f, .57f), ParticleColor
+        };
         private SphDamBreak2D damBreak;
         private bool damBreakView = true, damRunning;
         private float damPendingSeconds;
@@ -193,8 +197,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             GUILayout.Label("2D SPH Dam Break");
             GUILayout.Label($"Simulated time {damBreak.StepCount * SphDamBreak2D.StepSeconds:F3} s");
             GUILayout.Label($"{damBreak.Count:N0} particles · timestep {SphDamBreak2D.StepSeconds * 1000:0.###} ms");
-            DrawGridLegend(ParticleColor, $"Fine · {damBreak.FineCount:N0} particles · 15 mm cells");
-            DrawGridLegend(CoarseParticleColor, $"Coarse · {damBreak.Count - damBreak.FineCount:N0} particles · 30 mm cells");
+            for (int level = 0; level < damBreak.GridLevelCount; level++)
+                DrawGridLegend(DamGridColors[level], $"{damBreak.CellWidthAtLevel(level):0} mm cells · {damBreak.ParticlesAtLevel(level):N0} particles");
             GUILayout.Label("White borders show occupied search cells.");
             GUILayout.Label("Slow surface water splits below 0.40 m/s. Nearby siblings merge in the bulk or above 0.65 m/s.");
             showParticles = GUILayout.Toggle(showParticles, "Show particles");
@@ -227,10 +231,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             float height = SphDamBreak2D.Height * scale;
             Vector2 origin = new Vector2(area.center.x - width * .5f, area.center.y + height * .5f);
             DrawOutline(new Rect(origin.x, origin.y - height, width, height), 2, Color.white);
-            DrawOccupiedCells(damBreak.CoarseOccupiedCells, damBreak.CoarseCellsAcross,
-                SphDamBreak2D.CoarseCellWidth * scale, origin, 1.5f, new Color(1, 1, 1, .55f));
-            DrawOccupiedCells(damBreak.FineOccupiedCells, damBreak.FineCellsAcross,
-                SphDamBreak2D.FineCellWidth * scale, origin, 1, Color.white);
+            for (int level = 0; level < damBreak.GridLevelCount; level++)
+                DrawOccupiedCells(damBreak.OccupiedCellsAtLevel(level), damBreak.CellsAcrossAtLevel(level),
+                    damBreak.CellWidthAtLevel(level) * scale, origin, 1f,
+                    new Color(1, 1, 1, .55f + .15f * level));
 
             if (!showParticles) return;
             foreach (int i in damBreak.ActiveParticles)
@@ -240,7 +244,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 bool fine = damBreak.IsFine(i);
                 float size = Mathf.Max(2, (fine ? 2.5f : 4f) * scale);
                 DrawRect(new Rect(screen.x - size * .5f, screen.y - size * .5f, size, size),
-                    fine ? ParticleColor : CoarseParticleColor);
+                    DamGridColors[damBreak.GridLevel(i)]);
             }
         }
 
