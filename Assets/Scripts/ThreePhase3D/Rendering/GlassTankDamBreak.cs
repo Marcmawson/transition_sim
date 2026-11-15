@@ -46,6 +46,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private float BenchmarkSpacing => BenchmarkSpacings[benchmarkSpacingIndex];
         private int BenchmarkStepMicroseconds => Mathf.RoundToInt(400 * BenchmarkSpacing / BenchmarkSpacings[0]);
         private int benchmarkReadsPending;
+        private float benchmarkSampledSeconds;
         private float benchmarkH2, benchmarkSheet, benchmarkPeak, benchmarkJet, benchmarkJetPeak;
         private Transform tankGeometry;
         private Material tankStone, tankGlass, benchmarkMaterial;
@@ -237,6 +238,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             pendingSeconds = nextSample = submitMs = 0;
             arrival = retained = -1;
             benchmarkH2 = benchmarkSheet = benchmarkPeak = benchmarkJet = benchmarkJetPeak = 0;
+            benchmarkSampledSeconds = 0;
             elapsedMicroseconds = 0;
             pressureSamples = 0;
             if (solverObject != null)
@@ -405,7 +407,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 return;
             }
 
-            if (!running || fluid.positionBuffer == null) return;
+            if (!running || fluid.positionBuffer == null || (benchmark && benchmarkReadsPending > 0)) return;
             float playbackRate = benchmark ? 1f : .25f;
             float maxPendingSeconds = benchmark ? 2 * BenchmarkSampleInterval / 1000000f : .008f;
             pendingSeconds = Mathf.Min(pendingSeconds + Time.unscaledDeltaTime * playbackRate, maxPendingSeconds);
@@ -416,7 +418,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 int remaining = BenchmarkSampleInterval - (int)(elapsedMicroseconds % BenchmarkSampleInterval);
                 // Take a shorter last step when needed to land exactly on the sample time.
                 stepMicroseconds = Mathf.Min(stepMicroseconds, remaining);
-                maxSteps = remaining / stepMicroseconds;
+                // Keep GPU submissions short at the highest particle counts.
+                int batchLimit = BenchmarkSpacing <= .0075f ? 8 : 24;
+                maxSteps = Mathf.Min(batchLimit, remaining / stepMicroseconds);
             }
             float stepSeconds = stepMicroseconds / 1000000f;
             int steps = Mathf.Min(maxSteps, Mathf.FloorToInt(pendingSeconds / stepSeconds));
@@ -651,6 +655,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     if (seconds >= BenchmarkEndTime / 1000000f) LogBenchmarkCompletion();
                     return;
                 }
+                benchmarkSampledSeconds = seconds;
                 var gauge = new List<float>();
                 var impact = new List<float>();
                 var jet = new List<float>();
@@ -884,7 +889,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 GUILayout.Label($"MARIN single-box benchmark · GPU · max step {BenchmarkStepMicroseconds / 1000f:0.###} ms");
                 GUILayout.Label("Bulk-water sheet only · 20 ms samples in Console");
-                GUILayout.Label($"Time {elapsedMicroseconds / 1000000f:F3} s / 1.800 s");
+                string status = pendingBenchmarkRun.HasValue ? "Starting"
+                    : benchmarkReadsPending > 0 ? "Waiting for GPU sample"
+                    : running ? "Running" : elapsedMicroseconds >= BenchmarkEndTime ? "Finished"
+                    : elapsedMicroseconds > 0 ? "Paused" : "Ready";
+                GUILayout.Label($"{status} · submitted {elapsedMicroseconds / 1000000f:F3} / 1.800 s");
+                if (SystemInfo.supportsAsyncGPUReadback)
+                    GUILayout.Label($"Last completed sample · {benchmarkSampledSeconds:F3} s");
                 GUILayout.Label($"H2 {benchmarkH2:F3} m · box zone {benchmarkSheet:F3} m · peak {benchmarkPeak:F3} m (p95)");
                 GUILayout.Label($"Upstream jet {benchmarkJet:F3} m · peak {benchmarkJetPeak:F3} m (supported)");
                 if (!SystemInfo.supportsAsyncGPUReadback) GUILayout.Label("GPU readback unavailable.");
@@ -895,7 +906,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 selectedBenchmarkSpacing = GUILayout.Toolbar(selectedBenchmarkSpacing, BenchmarkSpacingLabels);
                 selectedMeasurementsOnly = GUILayout.Toggle(selectedMeasurementsOnly, "Measurements only · skip water rendering (next run)");
                 GUILayout.Label($"Current spacing {BenchmarkSpacing * 1000:0.#} mm · {fluid.positionBuffer?.count ?? 0:N0} particles");
-                if (benchmarkMeasurementsOnly) GUILayout.Label("Current run: measurements only");
+                if (benchmarkMeasurementsOnly) GUILayout.Label("Water hidden · timing and jet measurements are active");
                 selectedBenchmarkMixed = GUILayout.Toggle(selectedBenchmarkMixed, "Mixed spacing · 5 mm surface / 10 mm bulk");
                 if (benchmarkMixed) GUILayout.Label("Current run: mixed 5/10 mm");
                 if (GUILayout.Button(selectedBenchmarkMixed ? "Start mixed run · wall pressure OFF" : "Start baseline run · wall pressure OFF"))
