@@ -22,12 +22,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const int BenchmarkEndTime = 1800000;
         private bool benchmark;
         private bool benchmarkWallPressure;
-        private const float StandardBenchmarkSpacing = .02f;
-        private const float FineBenchmarkSpacing = .015f;
-        private bool benchmarkFine;
-        private bool selectedBenchmarkFine;
-        private (bool WallPressure, bool Fine)? pendingBenchmarkRun;
-        private float BenchmarkSpacing => benchmarkFine ? FineBenchmarkSpacing : StandardBenchmarkSpacing;
+        private static readonly float[] BenchmarkSpacings = { .02f, .015f, .0075f };
+        private static readonly string[] BenchmarkSpacingLabels = { "20 mm", "15 mm", "7.5 mm" };
+        private int benchmarkSpacingIndex;
+        private int selectedBenchmarkSpacing = 2;
+        private (bool WallPressure, int SpacingIndex)? pendingBenchmarkRun;
+        private float BenchmarkSpacing => BenchmarkSpacings[benchmarkSpacingIndex];
         private int benchmarkReadsPending;
         private float benchmarkH2, benchmarkSheet, benchmarkPeak, benchmarkJet, benchmarkJetPeak;
         private Transform tankGeometry;
@@ -307,11 +307,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             if (pendingBenchmarkRun.HasValue && benchmarkReadsPending == 0)
             {
-                (benchmarkWallPressure, benchmarkFine) = pendingBenchmarkRun.Value;
+                (benchmarkWallPressure, benchmarkSpacingIndex) = pendingBenchmarkRun.Value;
                 pendingBenchmarkRun = null;
                 PrepareColumn();
                 running = true;
-                Debug.Log($"MARIN run started · {BenchmarkSpacing * 1000:F0} mm particle spacing · GPU wall pressure {(benchmarkWallPressure ? "ON (1)" : "OFF (0)")}", this);
+                Debug.Log($"MARIN run started · {BenchmarkSpacing * 1000:0.#} mm particle spacing · GPU wall pressure {(benchmarkWallPressure ? "ON (1)" : "OFF (0)")}", this);
                 return;
             }
 
@@ -476,7 +476,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 benchmarkJet = SupportedJetHeight(jet);
                 benchmarkJetPeak = Mathf.Max(benchmarkJetPeak, benchmarkJet);
                 Debug.Log(System.FormattableString.Invariant(
-                    $"MARIN,t_s,H2_p95_m,box_zone_p95_m,jet_max_m,jet_supported_m,jet_count,spacing_mm,wall_pressure: {seconds:F3},{benchmarkH2:F3},{benchmarkSheet:F3},{jetMax:F3},{benchmarkJet:F3},{jet.Count},{spacingMillimetres:F0},{wallPressure}"), this);
+                    $"MARIN,t_s,H2_p95_m,box_zone_p95_m,jet_max_m,jet_supported_m,jet_count,spacing_mm,wall_pressure: {seconds:F3},{benchmarkH2:F3},{benchmarkSheet:F3},{jetMax:F3},{benchmarkJet:F3},{jet.Count},{spacingMillimetres:0.#},{wallPressure}"), this);
             });
         }
 
@@ -543,7 +543,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void QueueBenchmarkRun(bool useWallPressure)
         {
             running = false;
-            pendingBenchmarkRun = (useWallPressure, selectedBenchmarkFine);
+            pendingBenchmarkRun = (useWallPressure, selectedBenchmarkSpacing);
         }
 
         private void OnGUI()
@@ -569,8 +569,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.Label($"GPU wall pressure: {(benchmarkWallPressure ? "ON (1)" : "OFF (0)")}");
                 bool controlsEnabled = GUI.enabled;
                 GUI.enabled = controlsEnabled && !pendingBenchmarkRun.HasValue;
-                selectedBenchmarkFine = GUILayout.Toggle(selectedBenchmarkFine, "Finer benchmark · 15 mm spacing (next run)");
-                GUILayout.Label($"Current spacing {BenchmarkSpacing * 1000:F0} mm · {fluid.positionBuffer?.count ?? 0:N0} particles");
+                GUILayout.Label("Particle spacing for next run");
+                selectedBenchmarkSpacing = GUILayout.Toolbar(selectedBenchmarkSpacing, BenchmarkSpacingLabels);
+                GUILayout.Label($"Current spacing {BenchmarkSpacing * 1000:0.#} mm · {fluid.positionBuffer?.count ?? 0:N0} particles");
                 if (GUILayout.Button("Start baseline run · wall pressure OFF"))
                     QueueBenchmarkRun(false);
                 if (GUILayout.Button("Start wall-pressure run · ON"))
