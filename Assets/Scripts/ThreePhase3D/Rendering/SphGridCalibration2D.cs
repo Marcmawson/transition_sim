@@ -196,7 +196,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             DrawGridLegend(ParticleColor, $"Fine · {damBreak.FineCount:N0} particles · 15 mm cells");
             DrawGridLegend(CoarseParticleColor, $"Coarse · {damBreak.Count - damBreak.FineCount:N0} particles · 30 mm cells");
             GUILayout.Label("White borders show occupied search cells.");
-            GUILayout.Label("Slow water splits below 0.40 m/s. Fast siblings can merge above 0.65 m/s.");
+            GUILayout.Label("Slow surface water splits below 0.40 m/s. Nearby siblings merge in the bulk or above 0.65 m/s.");
             showParticles = GUILayout.Toggle(showParticles, "Show particles");
             if (GUILayout.Button(damRunning ? "Pause" : damBreak.StepCount == 0 ? "Release water" : "Resume"))
             {
