@@ -4,6 +4,11 @@ using Seb.Fluid.Rendering;
 using Seb.Fluid.Simulation;
 using UnityEngine;
 using UnityEngine.Rendering;
+#if UNITY_EDITOR
+using System.Collections;
+using System.IO;
+using UnityEditor.Media;
+#endif
 
 namespace PhysicsSim.ThreePhase3D.Rendering
 {
@@ -21,6 +26,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const int BenchmarkSampleInterval = 20000;
         private const int BenchmarkEndTime = 1800000;
         private bool benchmark;
+#if UNITY_EDITOR
+        private bool offlineQueued, offlineCapture, offlineFramePending;
+        private int offlineFrames;
+        private MediaEncoder offlineEncoder;
+        private string offlineOutput, lastOfflineVideo;
+#endif
         private bool benchmarkWallPressure;
         private static readonly float[] BenchmarkSpacings = { .02f, .0175f, .015f, .0125f, .01f, .0075f, .005f };
         private static readonly string[] BenchmarkSpacingLabels = { "20", "17.5", "15", "12.5", "10", "7.5", "5" };
@@ -313,6 +324,31 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void Update()
         {
+#if UNITY_EDITOR
+            if (offlineQueued && benchmarkReadsPending == 0)
+            {
+                offlineQueued = false;
+                StartOfflineCapture();
+                return;
+            }
+            if (offlineCapture)
+            {
+                if (Input.GetKeyDown(KeyCode.Escape)) FinishOfflineCapture(false);
+                else if (!offlineFramePending && fluid.positionBuffer != null)
+                {
+                    try
+                    {
+                        AdvanceOfflineCapture();
+                    }
+                    catch (System.Exception error)
+                    {
+                        Debug.LogException(error, this);
+                        FinishOfflineCapture(false);
+                    }
+                }
+                return;
+            }
+#endif
             if (pendingBenchmarkRun.HasValue && benchmarkReadsPending == 0)
             {
                 (benchmarkWallPressure, benchmarkSpacingIndex, benchmarkMeasurementsOnly) = pendingBenchmarkRun.Value;
@@ -571,6 +607,103 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             });
         }
 
+#if UNITY_EDITOR
+        private void StartOfflineCapture()
+        {
+            try
+            {
+                string directory = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "MARIN Captures"));
+                Directory.CreateDirectory(directory);
+                offlineOutput = Path.Combine(directory, $"MARIN-5mm-{System.DateTime.Now:yyyyMMdd-HHmmss-fff}.mp4");
+                benchmarkSpacingIndex = BenchmarkSpacings.Length - 1;
+                benchmarkMeasurementsOnly = false;
+                PrepareColumn();
+                offlineFrames = 0;
+                offlineCapture = true;
+                Debug.Log($"MARIN offline capture started · 5 mm · 0.100 ms solver step · 50 FPS · wall pressure {(benchmarkWallPressure ? "ON" : "OFF")}", this);
+            }
+            catch (System.Exception error)
+            {
+                Debug.LogException(error, this);
+            }
+        }
+
+        private void AdvanceOfflineCapture()
+        {
+            const int stepsPerBatch = 24;
+            int stepMicroseconds = BenchmarkStepMicroseconds;
+            int remaining = BenchmarkSampleInterval - (int)(elapsedMicroseconds % BenchmarkSampleInterval);
+            int steps = Mathf.Min(stepsPerBatch, remaining / stepMicroseconds);
+            offlineFramePending = steps * stepMicroseconds == remaining;
+            fluid.AdvanceManually(stepMicroseconds / 1000000f, steps, updateSurface: offlineFramePending);
+            elapsedMicroseconds += steps * stepMicroseconds;
+            if (offlineFramePending) StartCoroutine(CaptureOfflineFrame());
+        }
+
+        private IEnumerator CaptureOfflineFrame()
+        {
+            yield return new WaitForEndOfFrame();
+            if (!offlineCapture) yield break;
+
+            Texture2D frame = null;
+            Texture2D cropped = null;
+            try
+            {
+                frame = ScreenCapture.CaptureScreenshotAsTexture();
+                int width = frame.width & ~1;
+                int height = frame.height & ~1;
+                if (width != frame.width || height != frame.height)
+                {
+                    cropped = new Texture2D(width, height, TextureFormat.RGBA32, false);
+                    cropped.SetPixels(frame.GetPixels(0, 0, width, height));
+                    cropped.Apply();
+                }
+
+                offlineEncoder ??= new MediaEncoder(offlineOutput, new VideoTrackAttributes
+                {
+                    frameRate = new MediaRational(1000000 / BenchmarkSampleInterval),
+                    width = (uint)width,
+                    height = (uint)height,
+                    includeAlpha = false
+                });
+                if (!offlineEncoder.AddFrame(cropped != null ? cropped : frame))
+                    throw new System.InvalidOperationException("Unity could not encode the frame. Keep the Game view at a fixed size during capture.");
+
+                offlineFrames++;
+                if (elapsedMicroseconds >= BenchmarkEndTime) FinishOfflineCapture(true);
+            }
+            catch (System.Exception error)
+            {
+                Debug.LogException(error, this);
+                FinishOfflineCapture(false);
+            }
+            finally
+            {
+                offlineFramePending = false;
+                if (cropped != null) Destroy(cropped);
+                if (frame != null) Destroy(frame);
+            }
+        }
+
+        private void FinishOfflineCapture(bool completed)
+        {
+            offlineCapture = offlineFramePending = false;
+            offlineEncoder?.Dispose();
+            offlineEncoder = null;
+            if (!completed) return;
+
+            lastOfflineVideo = offlineOutput;
+            Debug.Log($"MARIN offline capture complete · {offlineFrames} frames · {lastOfflineVideo}", this);
+            PlayOfflineVideo();
+        }
+
+        private void PlayOfflineVideo()
+        {
+            if (File.Exists(lastOfflineVideo))
+                Application.OpenURL(new System.Uri(lastOfflineVideo).AbsoluteUri);
+        }
+#endif
+
         private void QueueBenchmarkRun(bool useWallPressure)
         {
             running = false;
@@ -579,6 +712,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnGUI()
         {
+#if UNITY_EDITOR
+            if (offlineFramePending) return;
+            if (offlineCapture)
+            {
+                GUILayout.BeginArea(new Rect(16, 16, 390, 90), GUI.skin.box);
+                GUILayout.Label($"Rendering MARIN at 5 mm · {offlineFrames} / {BenchmarkEndTime / BenchmarkSampleInterval} frames");
+                if (GUILayout.Button("Cancel offline capture")) FinishOfflineCapture(false);
+                GUILayout.EndArea();
+                return;
+            }
+#endif
             GUILayout.BeginArea(new Rect(16, 16, 390, 410), GUI.skin.box);
             GUILayout.Label($"Glass Tank Dam Break · {VolumeLitres:F0} L");
             if (fluid != null)
@@ -615,6 +759,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     running = !running;
                     pendingSeconds = 0;
                 }
+#if UNITY_EDITOR
+                if (GUILayout.Button("Render 5 mm offline · 50 FPS"))
+                {
+                    running = false;
+                    offlineQueued = true;
+                }
+                if (File.Exists(lastOfflineVideo) && GUILayout.Button("Play last 5 mm video"))
+                    PlayOfflineVideo();
+#endif
                 GUI.enabled = controlsEnabled;
                 GUILayout.EndArea();
                 return;
@@ -708,6 +861,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnDestroy()
         {
+#if UNITY_EDITOR
+            if (offlineCapture) FinishOfflineCapture(false);
+#endif
             if (solverCompute != null) Destroy(solverCompute);
             foreach (var material in materials) Destroy(material);
         }
