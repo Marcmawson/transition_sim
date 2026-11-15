@@ -2,7 +2,8 @@ using System;
 using UnityEngine;
 using Seb.GPUSorting;
 using Unity.Mathematics;
-using UnityEngine.Profiling;
+using UnityEngine.Rendering;
+using Stopwatch = System.Diagnostics.Stopwatch;
 using System.Collections.Generic;
 using Seb.Helpers;
 using static Seb.Helpers.ComputeHelper;
@@ -544,34 +545,35 @@ namespace Seb.Fluid.Simulation
 			"MARIN.Predict", "MARIN.HashAndSort", "MARIN.Reorder", "MARIN.Density",
 			"MARIN.Pressure", "MARIN.Viscosity", "MARIN.Integrate"
 		};
-		private CustomSampler[] stageSamplers;
+		internal long[] StageCompletionTicks { get; set; }
 
-		internal Recorder[] StartStageProfiling()
+		internal void WaitForSubmittedWork() => WaitForStageBuffer(positionBuffer);
+
+		private static void WaitForStageBuffer(ComputeBuffer buffer)
 		{
-			stageSamplers = new CustomSampler[StageProfileLabels.Length];
-			var recorders = new Recorder[stageSamplers.Length];
-			for (int i = 0; i < stageSamplers.Length; i++)
-			{
-				stageSamplers[i] = CustomSampler.Create(StageProfileLabels[i], true);
-				recorders[i] = stageSamplers[i].GetRecorder();
-				recorders[i].enabled = true;
-			}
-			return recorders;
+			var request = AsyncGPUReadback.Request(buffer, buffer.stride, 0);
+			request.WaitForCompletion();
+			if (request.hasError) throw new InvalidOperationException("MARIN stage-completion readback failed.");
 		}
 
-		internal void StopStageProfiling() => stageSamplers = null;
+		private long CompleteStage(int stage, ComputeBuffer buffer, long start)
+		{
+			if (StageCompletionTicks == null) return 0;
+			WaitForStageBuffer(buffer);
+			long end = Stopwatch.GetTimestamp();
+			StageCompletionTicks[stage] += end - start;
+			return end;
+		}
 
 		void RunSimulationStep()
 		{
-			stageSamplers?[0].Begin();
+			long stageStart = StageCompletionTicks != null ? Stopwatch.GetTimestamp() : 0;
 			Dispatch(compute, positionBuffer.count, kernelIndex: activeExternalForcesKernel);
-			stageSamplers?[0].End();
-			stageSamplers?[1].Begin();
+			stageStart = CompleteStage(0, predictedPositionsBuffer, stageStart);
 
 			Dispatch(compute, positionBuffer.count, kernelIndex: spatialHashKernel);
 			spatialHash.Run();
-			stageSamplers?[1].End();
-			stageSamplers?[2].Begin();
+			stageStart = CompleteStage(1, spatialHash.SpatialIndices, stageStart);
 			
 			if (trackLiquidMass)
 			{
@@ -580,7 +582,7 @@ namespace Seb.Fluid.Simulation
 			}
 			Dispatch(compute, positionBuffer.count, kernelIndex: activeReorderKernel);
 			Dispatch(compute, positionBuffer.count, kernelIndex: activeCopyBackKernel);
-			stageSamplers?[2].End();
+			stageStart = CompleteStage(2, positionBuffer, stageStart);
 			if (commitHeatKernel != 0)
 			{
 				Dispatch(compute, positionBuffer.count, kernelIndex: sumThermalKernel);
@@ -588,23 +590,19 @@ namespace Seb.Fluid.Simulation
 				Dispatch(compute, positionBuffer.count, kernelIndex: commitHeatKernel);
 			}
 
-			stageSamplers?[3].Begin();
 			Dispatch(compute, positionBuffer.count, kernelIndex: densityKernel);
-			stageSamplers?[3].End();
-			stageSamplers?[4].Begin();
+			stageStart = CompleteStage(3, densityBuffer, stageStart);
 			Dispatch(compute, positionBuffer.count, kernelIndex: activePressureKernel);
-			stageSamplers?[4].End();
-			stageSamplers?[5].Begin();
+			stageStart = CompleteStage(4, velocityBuffer, stageStart);
 			if (viscosityStrength != 0 || approachOnlyDamping)
 			{
 				Dispatch(compute, positionBuffer.count, kernelIndex: viscosityKernel);
 				if (approachOnlyDamping)
 					Dispatch(compute, positionBuffer.count, kernelIndex: commitDampedVelocitiesKernel);
 			}
-			stageSamplers?[5].End();
-			stageSamplers?[6].Begin();
+			stageStart = CompleteStage(5, velocityBuffer, stageStart);
 			Dispatch(compute, positionBuffer.count, kernelIndex: updatePositionsKernel);
-			stageSamplers?[6].End();
+			CompleteStage(6, positionBuffer, stageStart);
 		}
 
 		void UpdateSmoothingConstants()
