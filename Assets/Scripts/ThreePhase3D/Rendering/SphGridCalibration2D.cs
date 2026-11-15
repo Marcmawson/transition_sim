@@ -138,10 +138,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             if (!damBreakView || !damRunning) return;
             damPendingSeconds = Mathf.Min(damPendingSeconds + Time.unscaledDeltaTime, .012f);
-            int steps = Mathf.Min(24, Mathf.FloorToInt(damPendingSeconds / SphDamBreak2D.StepSeconds));
-            if (steps == 0) return;
-            damBreak.Advance(steps);
-            damPendingSeconds -= steps * SphDamBreak2D.StepSeconds;
+            for (int steps = 0; steps < 48 && damPendingSeconds >= damBreak.StepSeconds; steps++)
+            {
+                damPendingSeconds -= damBreak.StepSeconds;
+                damBreak.Advance();
+            }
         }
 
         private void OnGUI()
@@ -195,12 +196,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void DrawDamBreakControls()
         {
             GUILayout.Label("2D SPH Dam Break");
-            GUILayout.Label($"Simulated time {damBreak.StepCount * SphDamBreak2D.StepSeconds:F3} s");
-            GUILayout.Label($"{damBreak.Count:N0} particles · timestep {SphDamBreak2D.StepSeconds * 1000:0.###} ms");
+            GUILayout.Label($"Simulated time {damBreak.SimulatedSeconds:F3} s");
+            GUILayout.Label($"{damBreak.Count:N0} particles · timestep {damBreak.StepSeconds * 1000:0.###} ms");
             for (int level = 0; level < damBreak.GridLevelCount; level++)
                 DrawGridLegend(DamGridColors[level], $"{damBreak.CellWidthAtLevel(level):0} mm cells · {damBreak.ParticlesAtLevel(level):N0} particles");
             GUILayout.Label("White borders show occupied search cells.");
-            GUILayout.Label("Slow surface water splits below 0.40 m/s. Nearby siblings merge in the bulk or above 0.65 m/s.");
+            GUILayout.Label("Each surface refinement replaces one parent with four smaller particles.");
             showParticles = GUILayout.Toggle(showParticles, "Show particles");
             if (GUILayout.Button(damRunning ? "Pause" : damBreak.StepCount == 0 ? "Release water" : "Resume"))
             {
@@ -241,8 +242,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 Vector2 position = damBreak.Position(i);
                 Vector2 screen = origin + new Vector2(position.x, -position.y) * scale;
-                bool fine = damBreak.IsFine(i);
-                float size = Mathf.Max(2, (fine ? 2.5f : 4f) * scale);
+                float size = Mathf.Max(1.5f, damBreak.ParticleSpacing(i) * .5f * scale);
                 DrawRect(new Rect(screen.x - size * .5f, screen.y - size * .5f, size, size),
                     DamGridColors[damBreak.GridLevel(i)]);
             }
