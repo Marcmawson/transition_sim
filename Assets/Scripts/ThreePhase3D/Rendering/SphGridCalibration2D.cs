@@ -196,6 +196,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             DrawGridLegend(ParticleColor, $"Fine · {damBreak.FineCount:N0} particles · 15 mm cells");
             DrawGridLegend(CoarseParticleColor, $"Coarse · {damBreak.Count - damBreak.FineCount:N0} particles · 30 mm cells");
             GUILayout.Label("White borders show occupied search cells.");
+            GUILayout.Label("Slow water splits below 0.40 m/s. Fast siblings can merge above 0.65 m/s.");
             showParticles = GUILayout.Toggle(showParticles, "Show particles");
             if (GUILayout.Button(damRunning ? "Pause" : damBreak.StepCount == 0 ? "Release water" : "Resume"))
             {
@@ -232,11 +233,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 SphDamBreak2D.FineCellWidth * scale, origin, 1, Color.white);
 
             if (!showParticles) return;
-            for (int i = 0; i < damBreak.Count; i++)
+            foreach (int i in damBreak.ActiveParticles)
             {
                 Vector2 position = damBreak.Position(i);
                 Vector2 screen = origin + new Vector2(position.x, -position.y) * scale;
-                bool fine = i < damBreak.FineCount;
+                bool fine = damBreak.IsFine(i);
                 float size = Mathf.Max(2, (fine ? 2.5f : 4f) * scale);
                 DrawRect(new Rect(screen.x - size * .5f, screen.y - size * .5f, size, size),
                     fine ? ParticleColor : CoarseParticleColor);
