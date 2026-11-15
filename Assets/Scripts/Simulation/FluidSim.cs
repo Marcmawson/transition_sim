@@ -141,6 +141,8 @@ namespace Seb.Fluid.Simulation
 		internal int MixedCoarseParticleCount { get; set; }
 		internal float MixedCoarseMass { get; set; }
 		private bool MixedResolution => MixedCoarseParticleCount > 0;
+		private int mixedFineMaskKernel, mixedCacheGeneration;
+		private ComputeBuffer mixedFineMasks;
 		int sortLiquidMassKernel, copyLiquidMassKernel;
 		[HideInInspector] public float liquidThermalDiffusivity;
 		int sumThermalKernel, diffuseHeatKernel, commitHeatKernel;
@@ -319,7 +321,11 @@ namespace Seb.Fluid.Simulation
 			for (int i = 0; i < initialLiquidFraction.Length; i++) initialLiquidFraction[i] = i < MixedCoarseParticleCount ? MixedCoarseMass : 1;
 			foreach (int kernel in new[] { densityKernel, activePressureKernel, viscosityKernel, renderKernel })
 				compute.SetBuffer(kernel, "LiquidFraction", LiquidFraction);
-			if (MixedResolution) compute.SetBuffer(spatialHashKernel, "LiquidFraction", LiquidFraction);
+			if (MixedResolution)
+			{
+				compute.SetBuffer(spatialHashKernel, "LiquidFraction", LiquidFraction);
+				InitializeMixedFineMasks();
+			}
 			if (sortParticleWeights)
 			{
 				sortLiquidMassKernel = compute.FindKernel("SortLiquidMass");
@@ -545,6 +551,36 @@ namespace Seb.Fluid.Simulation
 			Dispatch(compute, DensityMap.width, DensityMap.height, DensityMap.volumeDepth, renderKernel);
 		}
 
+		private void InitializeMixedFineMasks()
+		{
+			const int wordsPerMask = 7;
+			float coarseWidth = 2 * smoothingRadius;
+			Vector3 halfSize = transform.localScale * .5f;
+			Vector3Int origin = Vector3Int.FloorToInt((transform.position - halfSize) / coarseWidth);
+			Vector3Int last = Vector3Int.FloorToInt((transform.position + halfSize) / coarseWidth);
+			Vector3Int dimensions = last - origin + Vector3Int.one;
+			int cellCount = dimensions.x * dimensions.y * dimensions.z;
+			var claims = CreateStructuredBuffer<uint>(cellCount);
+			claims.SetData(new uint[cellCount]);
+			mixedFineMasks = CreateStructuredBuffer<uint>(cellCount * wordsPerMask);
+			bufferNameLookup.Add(claims, "MixedCacheClaims");
+			bufferNameLookup.Add(mixedFineMasks, "MixedFineMaskOutput");
+
+			mixedCacheGeneration = 0;
+			mixedFineMaskKernel = compute.FindKernel("BuildMixedFineCellMasks");
+			compute.SetInts("MixedCacheOrigin", origin.x, origin.y, origin.z);
+			compute.SetInts("MixedCacheSize", dimensions.x, dimensions.y, dimensions.z);
+			compute.SetBuffer(mixedFineMaskKernel, "MixedCacheClaims", claims);
+			compute.SetBuffer(mixedFineMaskKernel, "MixedFineMaskOutput", mixedFineMasks);
+			compute.SetBuffer(mixedFineMaskKernel, "LiquidFraction", LiquidFraction);
+			compute.SetBuffer(mixedFineMaskKernel, "PredictedPositions", predictedPositionsBuffer);
+			compute.SetBuffer(mixedFineMaskKernel, "SpatialOffsets", spatialHash.SpatialOffsets);
+			foreach (int kernel in new[] { densityKernel, activePressureKernel, viscosityKernel })
+				compute.SetBuffer(kernel, "MixedFineMasks", mixedFineMasks);
+			// Surface queries use level 0, but DX11 still requires the resource binding.
+			compute.SetBuffer(renderKernel, "MixedFineMasks", mixedFineMasks);
+		}
+
 		internal static readonly string[] StageProfileLabels =
 		{
 			"MARIN.Predict", "MARIN.HashAndSort", "MARIN.Reorder", "MARIN.Density",
@@ -587,7 +623,12 @@ namespace Seb.Fluid.Simulation
 			}
 			Dispatch(compute, positionBuffer.count, kernelIndex: activeReorderKernel);
 			Dispatch(compute, positionBuffer.count, kernelIndex: activeCopyBackKernel);
-			stageStart = CompleteStage(2, positionBuffer, stageStart);
+			if (MixedResolution)
+			{
+				compute.SetInt("MixedCacheGeneration", ++mixedCacheGeneration);
+				Dispatch(compute, positionBuffer.count, kernelIndex: mixedFineMaskKernel);
+			}
+			stageStart = CompleteStage(2, MixedResolution ? mixedFineMasks : positionBuffer, stageStart);
 			if (commitHeatKernel != 0)
 			{
 				Dispatch(compute, positionBuffer.count, kernelIndex: sumThermalKernel);
