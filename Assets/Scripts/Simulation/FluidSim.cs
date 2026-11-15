@@ -140,6 +140,7 @@ namespace Seb.Fluid.Simulation
 		float[] initialLiquidFraction;
 		internal int MixedCoarseParticleCount { get; set; }
 		internal float MixedCoarseMass { get; set; }
+		internal float MixedGridCellScale { get; set; } = 1f;
 		private bool MixedResolution => MixedCoarseParticleCount > 0;
 		int sortLiquidMassKernel, copyLiquidMassKernel;
 		[HideInInspector] public float liquidThermalDiffusivity;
@@ -319,7 +320,11 @@ namespace Seb.Fluid.Simulation
 			for (int i = 0; i < initialLiquidFraction.Length; i++) initialLiquidFraction[i] = i < MixedCoarseParticleCount ? MixedCoarseMass : 1;
 			foreach (int kernel in new[] { densityKernel, activePressureKernel, viscosityKernel, renderKernel })
 				compute.SetBuffer(kernel, "LiquidFraction", LiquidFraction);
-			if (MixedResolution) compute.SetBuffer(spatialHashKernel, "LiquidFraction", LiquidFraction);
+			if (MixedResolution)
+			{
+				compute.SetFloat("MixedGridCellScale", MixedGridCellScale);
+				compute.SetBuffer(spatialHashKernel, "LiquidFraction", LiquidFraction);
+			}
 			if (sortParticleWeights)
 			{
 				sortLiquidMassKernel = compute.FindKernel("SortLiquidMass");
