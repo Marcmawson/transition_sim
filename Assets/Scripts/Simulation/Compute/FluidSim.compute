@@ -127,6 +127,7 @@ float Remap01(float val, float minVal, float maxVal)
 // Match FluidSim.MaxIceBodies and the host uniform arrays.
 #define MAX_BOX_BOUNDARIES 12
 int iceCount;
+bool BoxWallPressure;
 float4 iceHalfExtents[MAX_BOX_BOUNDARIES];
 float4x4 iceWorldToLocal[MAX_BOX_BOUNDARIES], iceLocalToWorld[MAX_BOX_BOUNDARIES];
 float4 iceVelocity[MAX_BOX_BOUNDARIES], iceAngularVelocity[MAX_BOX_BOUNDARIES], iceMassCentre[MAX_BOX_BOUNDARIES];
@@ -422,13 +423,45 @@ float3 FloorMirror(float3 p)
     return p;
 }
 
-float2 CalculateDensitiesAtPoint(float3 pos)
+// Mirror fluid neighbours across the nearest planar face of a solid box.
+float4 FindBoxPressurePlane(float3 pos)
+{
+    float4 plane = 0;
+    float closest = smoothingRadius;
+    if (!BoxWallPressure) return plane;
+
+    for (int index = 0; index < iceCount; index++)
+    {
+        float3 local = mul(iceWorldToLocal[index], float4(pos, 1)).xyz;
+        float3 halfSize = iceHalfExtents[index].xyz;
+        float3 outside = abs(local) - halfSize;
+        float3 axis = step(0, outside);
+        if (dot(axis, float3(1, 1, 1)) != 1) continue;
+        float gap = dot(axis, outside);
+        if (gap >= closest) continue;
+
+        float3 localNormal = axis * sign(local);
+        float3 normal = mul((float3x3)iceLocalToWorld[index], localNormal);
+        plane = float4(normal, dot(normal, pos) - gap);
+        closest = gap;
+    }
+    return plane;
+}
+
+float BoxPlaneDistance(float4 plane, float3 position)
+{
+    return dot(plane.xyz, position) - plane.w;
+}
+
+float2 CalculateDensitiesAtPoint(float3 pos, bool includeBoxPressure)
 {
     int3 originCell = GetCell3D(pos, smoothingRadius);
     float sqrRadius = smoothingRadius * smoothingRadius;
     float density = 0;
     float nearDensity = 0;
     bool floorSupport = BeakerFloorPressure > .5 && SupportsFloorMirror(pos) && pos.y - beakerGlassFloorY < smoothingRadius;
+    float4 wallPlane = includeBoxPressure ? FindBoxPressurePlane(pos) : 0;
+    bool boxSupport = any(wallPlane.xyz != 0);
 
     // Neighbour search
     for (int i = 0; i < 27; i++)
@@ -460,6 +493,16 @@ float2 CalculateDensitiesAtPoint(float3 pos)
             float weight = LiquidWeight(neighbourIndex);
             density += weight * DensityKernel(dst, smoothingRadius);
             nearDensity += weight * NearDensityKernel(dst, smoothingRadius);
+            if (boxSupport)
+            {
+                float gap = BoxPlaneDistance(wallPlane, neighbourPos);
+                if (gap >= 0)
+                {
+                    float reflectedDistance = distance(neighbourPos - 2 * gap * wallPlane.xyz, pos);
+                    density += weight * DensityKernel(reflectedDistance, smoothingRadius);
+                    nearDensity += weight * NearDensityKernel(reflectedDistance, smoothingRadius);
+                }
+            }
             if (floorSupport && SupportsFloorMirror(neighbourPos))
             {
                 float reflectedDistance = distance(FloorMirror(neighbourPos), pos);
@@ -479,7 +522,7 @@ void CalculateDensities(uint3 id : SV_DispatchThreadID)
         return;
 
     float3 pos = PredictedPositions[id.x];
-    float2 densities = CalculateDensitiesAtPoint(pos);
+    float2 densities = CalculateDensitiesAtPoint(pos, true);
 
     Densities[id.x] = densities;
 }
@@ -526,6 +569,23 @@ float3 FloorPressureForce(float3 pos, float3 neighbour, float2 neighbourDensity,
         NearDensityDerivative(d, smoothingRadius) * sharedNear / neighbourDensity.y);
 }
 
+float3 BoxPressureForce(float4 plane, float3 pos, float3 neighbour, float2 neighbourDensity,
+    float pressure, float nearPressure, float neighbourPressure)
+{
+    float gap = BoxPlaneDistance(plane, neighbour);
+    if (gap < 0) return 0;
+    float3 offset = neighbour - 2 * gap * plane.xyz - pos;
+    float d2 = dot(offset, offset);
+    if (d2 <= 0 || d2 >= smoothingRadius * smoothingRadius) return 0;
+    float d = sqrt(d2);
+    float ghostPressure = neighbourPressure + neighbourDensity.x * abs(gravity) * 2 * gap * plane.y;
+    float sharedPressure = max(0, .5 * (pressure + ghostPressure));
+    float sharedNear = .5 * (nearPressure + NearPressureFromDensity(neighbourDensity.y));
+    return (offset / d) * (
+        DensityDerivative(d, smoothingRadius) * sharedPressure / neighbourDensity.x +
+        NearDensityDerivative(d, smoothingRadius) * sharedNear / neighbourDensity.y);
+}
+
 float LiquidPressure(float density, uint index)
 {
 #ifdef THERMAL_PRESSURE
@@ -568,6 +628,11 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
     float sqrRadius = smoothingRadius * smoothingRadius;
     int neighbourCount = 0;
     bool floorSupport = BeakerFloorPressure > .5 && SupportsFloorMirror(pos) && pos.y - beakerGlassFloorY < smoothingRadius;
+    float4 wallPlane = FindBoxPressurePlane(pos);
+    bool boxSupport = any(wallPlane.xyz != 0);
+    if (boxSupport)
+        pressureForce += selfWeight * BoxPressureForce(wallPlane, pos, pos,
+            float2(density, densityNear), pressure, nearPressure, pressure);
     if (floorSupport)
         pressureForce += selfWeight * FloorPressureForce(pos, pos, float2(density, densityNear), pressure, nearPressure, pressure);
 
@@ -621,6 +686,9 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
             // Update pressure force
             pressureForce += weight * dirToNeighbour * DensityDerivative(dstToNeighbour, smoothingRadius) * sharedPressure / densityNeighbour;
             pressureForce += weight * dirToNeighbour * NearDensityDerivative(dstToNeighbour, smoothingRadius) * sharedNearPressure / nearDensityNeighbour;
+            if (boxSupport)
+                pressureForce += weight * BoxPressureForce(wallPlane, pos, neighbourPos,
+                    float2(densityNeighbour, nearDensityNeighbour), pressure, nearPressure, neighbourPressure);
             if (floorSupport && SupportsFloorMirror(neighbourPos))
                 pressureForce += weight * FloorPressureForce(pos, neighbourPos,
                     float2(densityNeighbour, nearDensityNeighbour), pressure, nearPressure, neighbourPressure);
@@ -828,7 +896,7 @@ void UpdateDensityTexture(uint3 id : SV_DispatchThreadID)
             return;
         }
     }
-    DensityMap[id] = CalculateDensitiesAtPoint(worldPos)[0];
+    DensityMap[id] = CalculateDensitiesAtPoint(worldPos, false)[0];
 }
 
 [numthreads(ThreadGroupSize, 1, 1)]
