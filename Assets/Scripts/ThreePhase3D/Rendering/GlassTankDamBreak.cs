@@ -21,23 +21,25 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private float VolumeLitres => GetVolumeLitres(ColumnSize);
         private static float GetVolumeLitres(Vector3 size) => size.x * size.y * size.z * 1000f;
         private const float ArrivalPlane = .55f;
-        private static readonly Bounds[] Buildings =
+        private static readonly (Bounds Bounds, Quaternion Rotation)[] Buildings =
         {
-            new Bounds(new Vector3(-.085f, .050f, -.265f), new Vector3(.120f, .100f, .130f)),
-            new Bounds(new Vector3(-.045f, .075f, -.090f), new Vector3(.110f, .150f, .140f)),
-            new Bounds(new Vector3(-.080f, .050f, .090f), new Vector3(.120f, .100f, .130f)),
-            new Bounds(new Vector3(-.050f, .075f, .265f), new Vector3(.100f, .150f, .130f)),
-            new Bounds(new Vector3(.110f, .075f, -.265f), new Vector3(.120f, .150f, .140f)),
-            new Bounds(new Vector3(.145f, .100f, -.090f), new Vector3(.120f, .200f, .130f)),
-            new Bounds(new Vector3(.110f, .075f, .090f), new Vector3(.110f, .150f, .140f)),
-            new Bounds(new Vector3(.150f, .050f, .265f), new Vector3(.120f, .100f, .130f)),
-            new Bounds(new Vector3(.305f, .050f, -.265f), new Vector3(.120f, .100f, .130f)),
-            new Bounds(new Vector3(.340f, .075f, -.090f), new Vector3(.110f, .150f, .140f)),
-            new Bounds(new Vector3(.305f, .100f, .090f), new Vector3(.120f, .200f, .130f)),
-            new Bounds(new Vector3(.340f, .075f, .265f), new Vector3(.120f, .150f, .130f))
+            Building(-.080f, -.285f, .055f, .150f, .140f, -22f),
+            Building(-.045f, -.135f, .065f, .100f, .090f, 12f),
+            Building(.065f, -.295f, .080f, .250f, .085f, 10f),
+            Building(.115f, -.145f, .090f, .350f, .095f, -15f),
+            Building(.225f, -.290f, .130f, .150f, .055f, 24f),
+            Building(.265f, -.115f, .060f, .200f, .070f, -12f),
+            Building(.100f, .135f, .075f, .150f, .120f, 24f),
+            Building(.195f, .285f, .085f, .300f, .085f, -18f),
+            Building(.265f, .105f, .115f, .100f, .080f, -24f),
+            Building(.365f, .245f, .080f, .250f, .115f, 18f),
+            Building(.420f, .095f, .080f, .150f, .065f, 14f),
+            Building(.470f, .345f, .105f, .200f, .035f, -10f)
         };
-        private Mesh cityBuildingMesh;
-        private Texture2D cityFacade;
+
+        private static (Bounds, Quaternion) Building(float x, float z, float width, float height, float depth, float yaw) =>
+            (new Bounds(new Vector3(x, height * .5f, z), new Vector3(width, height, depth)),
+                Quaternion.Euler(0, yaw, 0));
 
         [SerializeField] private ComputeShader fluidCompute;
         [SerializeField] private ComputeShader surfaceArguments;
@@ -99,80 +101,31 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             return material;
         }
 
-        private MeshFilter Box(string label, Vector3 position, Vector3 size, Material material)
+        private void Box(string label, Vector3 position, Vector3 size, Material material, Quaternion? rotation = null)
         {
             var panel = GameObject.CreatePrimitive(PrimitiveType.Cube);
             panel.name = label;
             panel.transform.SetParent(transform);
-            panel.transform.position = position;
+            panel.transform.SetPositionAndRotation(position, rotation ?? Quaternion.identity);
             panel.transform.localScale = size;
             var renderer = panel.GetComponent<MeshRenderer>();
             renderer.sharedMaterial = material;
             if (material.renderQueue == (int)RenderQueue.Transparent)
                 renderer.shadowCastingMode = ShadowCastingMode.Off;
             Destroy(panel.GetComponent<Collider>());
-            return panel.GetComponent<MeshFilter>();
         }
 
         private void BuildCity()
         {
-            const int tile = 12;
-            const int columns = 4;
-            const int floors = 6;
-            int width = tile * columns;
-            int wallHeight = tile * floors;
-            int height = wallHeight + tile;
-            var pixels = new Color32[width * height];
-            var wall = new Color32(204, 200, 190, 255);
-            var roof = new Color32(133, 131, 126, 255);
-            var frame = new Color32(78, 83, 86, 255);
-            var window = new Color32(47, 70, 84, 255);
-            for (int y = 0; y < height; y++)
-            for (int x = 0; x < width; x++)
-            {
-                int paneX = x % tile;
-                int paneY = y % tile;
-                bool inFrame = paneX >= 2 && paneX <= 9 && paneY >= 2 && paneY <= 9;
-                bool inGlass = paneX >= 3 && paneX <= 8 && paneY >= 3 && paneY <= 8;
-                pixels[x + width * y] = y >= wallHeight ? roof : inGlass ? window : inFrame ? frame : wall;
-            }
-            cityFacade = new Texture2D(width, height, TextureFormat.RGBA32, true)
-            {
-                name = "City facade and roof",
-                wrapMode = TextureWrapMode.Clamp,
-                filterMode = FilterMode.Trilinear
-            };
-            cityFacade.SetPixels32(pixels);
-            cityFacade.Apply(true, true);
-
-            var concrete = MakeMaterial(new Color(.92f, .89f, .83f));
-            var brick = MakeMaterial(new Color(.76f, .58f, .47f));
-            var slate = MakeMaterial(new Color(.67f, .76f, .83f));
-            var palette = new[] { brick, slate, concrete };
+            var concrete = MakeMaterial(new Color(.51f, .54f, .53f));
+            var slate = MakeMaterial(new Color(.27f, .39f, .42f));
+            var stone = MakeMaterial(new Color(.39f, .46f, .45f));
+            var palette = new[] { slate, stone, concrete };
             for (int i = 0; i < Buildings.Length; i++)
             {
-                Bounds building = Buildings[i];
-                Material material = palette[(i + i / 4) % palette.Length];
-                material.mainTexture = cityFacade;
-                MeshFilter mesh = Box($"City building {i + 1}", building.center, building.size, material);
-                if (cityBuildingMesh == null)
-                {
-                    cityBuildingMesh = Instantiate(mesh.sharedMesh);
-                    cityBuildingMesh.name = "City building";
-                    var uv = cityBuildingMesh.uv;
-                    var normals = cityBuildingMesh.normals;
-                    var vertices = cityBuildingMesh.vertices;
-                    for (int vertex = 0; vertex < uv.Length; vertex++)
-                    {
-                        Vector3 point = vertices[vertex];
-                        float across = Mathf.Abs(normals[vertex].x) > .5f ? point.z : point.x;
-                        uv[vertex] = Mathf.Abs(normals[vertex].y) > .5f
-                            ? new Vector2(.5f, (wallHeight + tile * .5f) / height)
-                            : new Vector2(across + .5f, (point.y + .5f) * wallHeight / height);
-                    }
-                    cityBuildingMesh.uv = uv;
-                }
-                mesh.sharedMesh = cityBuildingMesh;
+                var (bounds, rotation) = Buildings[i];
+                Material material = palette[i % palette.Length];
+                Box($"City building {i + 1}", bounds.center, bounds.size, material, rotation);
             }
         }
 
@@ -214,7 +167,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.manualControl = true;
             fluid.gravity = -9.81f;
             for (int i = 0; i < Buildings.Length; i++)
-                fluid.SetStaticBoxBoundary(i, Buildings[i].center, Buildings[i].size);
+            {
+                var (bounds, rotation) = Buildings[i];
+                fluid.SetStaticBoxBoundary(i, bounds.center, bounds.size, rotation);
+            }
             fluid.IceCount = Buildings.Length;
             fluid.smoothingRadius = radius;
             fluid.targetDensity = InteriorDensity(spacing, radius);
@@ -366,12 +322,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 float worldX = (x + .5f) * spacing - TankSize.x * .5f;
                 float worldZ = (z + .5f) * spacing - TankSize.z * .5f;
-                foreach (Bounds building in Buildings)
+                foreach (var (bounds, rotation) in Buildings)
                 {
-                    if (Mathf.Abs(worldX - building.center.x) < building.extents.x &&
-                        Mathf.Abs(worldZ - building.center.z) < building.extents.z)
+                    Vector3 offset = new Vector3(worldX - bounds.center.x, 0, worldZ - bounds.center.z);
+                    Vector3 local = Quaternion.Inverse(rotation) * offset;
+                    if (Mathf.Abs(local.x) < bounds.extents.x && Mathf.Abs(local.z) < bounds.extents.z)
                         floor[x + width * z] = Mathf.Max(floor[x + width * z],
-                            Mathf.RoundToInt(building.size.y / spacing));
+                            Mathf.RoundToInt(bounds.size.y / spacing));
                 }
             }
             return floor;
@@ -513,8 +470,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void OnDestroy()
         {
             if (solverCompute != null) Destroy(solverCompute);
-            if (cityBuildingMesh != null) Destroy(cityBuildingMesh);
-            if (cityFacade != null) Destroy(cityFacade);
             foreach (var material in materials) Destroy(material);
         }
     }
