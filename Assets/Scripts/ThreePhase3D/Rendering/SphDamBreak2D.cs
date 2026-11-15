@@ -7,8 +7,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
     {
         internal const float Width = 600f;
         internal const float Height = 360f;
-        internal const float FineCellWidth = 15f;
-        internal const float CoarseCellWidth = 30f;
+        private static readonly float[] CellWidths = { 40f, 30f, 20f, 10f };
+        private const int FineGridLevel = 3;
         internal const float StepSeconds = .0005f;
 
         private const float FineSpacing = 5f;
@@ -42,8 +42,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly float[] densities;
         private readonly float[] pressures;
         private readonly List<int>[] neighbours;
-        private readonly ParticleGrid fineGrid;
-        private readonly ParticleGrid coarseGrid;
+        private readonly ParticleGrid[] grids;
+        private readonly int[] levels;
+        private readonly int[] particlesPerLevel;
         private readonly bool[] refined;
         private readonly bool[] surfaceFamilies;
         private readonly List<int> activeParticles;
@@ -54,10 +55,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         internal bool IsFine(int index) => refined[index / ChildrenPerCoarseParticle];
         internal int StepCount { get; private set; }
         internal Vector2 Position(int index) => positions[index];
-        internal IReadOnlyList<int> FineOccupiedCells => fineGrid.OccupiedCells;
-        internal IReadOnlyList<int> CoarseOccupiedCells => coarseGrid.OccupiedCells;
-        internal int FineCellsAcross => fineGrid.Columns;
-        internal int CoarseCellsAcross => coarseGrid.Columns;
+        internal int GridLevelCount => grids.Length;
+        internal int GridLevel(int index) => levels[index];
+        internal int ParticlesAtLevel(int level) => particlesPerLevel[level];
+        internal float CellWidthAtLevel(int level) => CellWidths[level];
+        internal IReadOnlyList<int> OccupiedCellsAtLevel(int level) => grids[level].OccupiedCells;
+        internal int CellsAcrossAtLevel(int level) => grids[level].Columns;
 
         internal SphDamBreak2D()
         {
@@ -74,8 +77,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             neighbours = new List<int>[capacity];
             for (int i = 0; i < capacity; i++) neighbours[i] = new List<int>(24);
 
-            fineGrid = new ParticleGrid(FineCellWidth, capacity);
-            coarseGrid = new ParticleGrid(CoarseCellWidth, capacity);
+            levels = new int[capacity];
+            particlesPerLevel = new int[CellWidths.Length];
+            grids = new ParticleGrid[CellWidths.Length];
+            for (int level = 0; level < grids.Length; level++)
+                grids[level] = new ParticleGrid(CellWidths[level], capacity);
             Reset();
         }
 
@@ -111,10 +117,22 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void RebuildGrids()
         {
-            fineGrid.Clear();
-            coarseGrid.Clear();
+            foreach (ParticleGrid grid in grids) grid.Clear();
+            System.Array.Clear(particlesPerLevel, 0, particlesPerLevel.Length);
             foreach (int index in activeParticles)
-                (IsFine(index) ? fineGrid : coarseGrid).Insert(index, positions[index]);
+            {
+                int level = 0;
+                if (IsFine(index)) level = FineGridLevel;
+                else if (StepCount > 0)
+                {
+                    float speedSquared = velocities[index].sqrMagnitude;
+                    if (speedSquared < SplitSpeed * SplitSpeed) level = 2;
+                    else if (speedSquared < MergeSpeed * MergeSpeed) level = 1;
+                }
+                levels[index] = level;
+                particlesPerLevel[level]++;
+                grids[level].Insert(index, positions[index]);
+            }
         }
 
         private bool AdaptParticleSizes()
@@ -162,13 +180,19 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 Vector2 probe = position + SurfaceDirections[i] * SurfaceProbeDistance;
                 // A probe outside the tank hits a solid boundary.
                 bool open = probe.x > 0 && probe.x < Width && probe.y > 0 && probe.y < Height &&
-                    !fineGrid.HasParticleNear(probe, SurfaceProbeRadius, positions) &&
-                    !coarseGrid.HasParticleNear(probe, SurfaceProbeRadius, positions);
+                    !HasParticleNear(probe);
                 if (open && previousOpen) return true;
                 if (i == 0) firstOpen = open;
                 previousOpen = open;
             }
             return firstOpen && previousOpen;
+        }
+
+        private bool HasParticleNear(Vector2 position)
+        {
+            foreach (ParticleGrid grid in grids)
+                if (grid.HasParticleNear(position, SurfaceProbeRadius, positions)) return true;
+            return false;
         }
 
         private void Split(int first)
@@ -234,8 +258,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 Vector2 position = positions[i];
                 List<int> list = neighbours[i];
                 list.Clear();
-                fineGrid.Gather(i, position, support, positions, list);
-                coarseGrid.Gather(i, position, CoarseSupport, positions, list);
+                for (int level = 0; level < grids.Length; level++)
+                    grids[level].Gather(i, position, level == FineGridLevel ? support : CoarseSupport, positions, list);
 
                 float density = mass * DensityKernel(0, support);
                 foreach (int j in list)
