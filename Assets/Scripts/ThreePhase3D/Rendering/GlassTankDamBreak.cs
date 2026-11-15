@@ -4,6 +4,7 @@ using Seb.Fluid.Rendering;
 using Seb.Fluid.Simulation;
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.Profiling;
 #if UNITY_EDITOR
 using System.Collections;
 using System.IO;
@@ -82,6 +83,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             (new Bounds(new Vector3(x, height * .5f, z), new Vector3(width, height, depth)),
                 Quaternion.Euler(0, yaw, 0));
 
+        [SerializeField] private bool solverPerformanceScene;
+        private const int ProfileWarmupSteps = 8;
+        private const int ProfileMeasuredSteps = 64;
+        private const int ProfileBatchSteps = 4;
+        private bool profileRunning, profileWallPressure, profileAtImpact;
+        private int profileSpacing, profileWarmup, profileWarmupTarget, profileSubmitted, profileDrainFrames;
+        private Recorder[] profileRecorders;
+        private long[] profileCpuNanoseconds, profileGpuNanoseconds;
+        private int[] profileCpuSamples, profileGpuSamples;
+        private string[] profileResults;
+
         [SerializeField] private ComputeShader fluidCompute;
         [SerializeField] private ComputeShader surfaceArguments;
         [SerializeField] private Shader waterShader;
@@ -105,6 +117,14 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void Start()
         {
+            if (solverPerformanceScene)
+            {
+                benchmark = true;
+                benchmarkMeasurementsOnly = true;
+                benchmarkSpacingIndex = profileSpacing = BenchmarkSpacings.Length - 1;
+                return;
+            }
+
             var sunlight = new GameObject("Tank daylight").AddComponent<Light>();
             sunlight.transform.SetParent(transform);
             sunlight.transform.rotation = Quaternion.Euler(48, -30, 0);
@@ -324,6 +344,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void Update()
         {
+            if (solverPerformanceScene)
+            {
+                UpdatePerformanceRun();
+                return;
+            }
 #if UNITY_EDITOR
             if (offlineQueued && benchmarkReadsPending == 0)
             {
@@ -404,6 +429,116 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 ApplyAdaptivePressure();
             if (!sampling && SystemInfo.supportsAsyncGPUReadback && fluid.SimulatedSeconds >= nextSample)
                 SampleWater();
+        }
+
+        private void StartPerformanceRun()
+        {
+            benchmarkSpacingIndex = profileSpacing;
+            benchmarkWallPressure = profileWallPressure;
+            PrepareColumn();
+            profileWarmup = profileSubmitted = profileDrainFrames = 0;
+            profileWarmupTarget = profileAtImpact ? Mathf.RoundToInt(560000f / BenchmarkStepMicroseconds) : ProfileWarmupSteps;
+            profileResults = null;
+            profileRunning = true;
+        }
+
+        private void UpdatePerformanceRun()
+        {
+            if (!profileRunning || fluid.positionBuffer == null) return;
+            float stepSeconds = BenchmarkStepMicroseconds / 1000000f;
+
+            if (profileWarmup < profileWarmupTarget)
+            {
+                int steps = Mathf.Min(24, profileWarmupTarget - profileWarmup);
+                fluid.AdvanceManually(stepSeconds, steps, updateSurface: false);
+                profileWarmup += steps;
+                return;
+            }
+
+            if (profileRecorders == null)
+            {
+                profileRecorders = fluid.StartStageProfiling();
+                int count = profileRecorders.Length;
+                profileCpuNanoseconds = new long[count];
+                profileGpuNanoseconds = new long[count];
+                profileCpuSamples = new int[count];
+                profileGpuSamples = new int[count];
+            }
+
+            for (int i = 0; i < profileRecorders.Length; i++)
+            {
+                Recorder recorder = profileRecorders[i];
+                profileCpuNanoseconds[i] += recorder.elapsedNanoseconds;
+                profileGpuNanoseconds[i] += recorder.gpuElapsedNanoseconds;
+                profileCpuSamples[i] += recorder.sampleBlockCount;
+                profileGpuSamples[i] += recorder.gpuSampleBlockCount;
+            }
+
+            if (profileSubmitted < ProfileMeasuredSteps)
+            {
+                fluid.AdvanceManually(stepSeconds, ProfileBatchSteps, updateSurface: false);
+                profileSubmitted += ProfileBatchSteps;
+                return;
+            }
+
+            // The Unity GPU recorder delivers results several frames after submission.
+            if (++profileDrainFrames < 60 &&
+                (System.Array.Exists(profileGpuSamples, count => count < ProfileMeasuredSteps) ||
+                 System.Array.Exists(profileCpuSamples, count => count < ProfileMeasuredSteps)))
+                return;
+
+            profileResults = new string[profileRecorders.Length];
+            for (int i = 0; i < profileResults.Length; i++)
+            {
+                string cpu = FormatStageTime(profileCpuNanoseconds[i], profileCpuSamples[i]);
+                string gpu = FormatStageTime(profileGpuNanoseconds[i], profileGpuSamples[i]);
+                profileResults[i] = $"{FluidSim.StageProfileLabels[i]} · GPU {gpu} · CPU {cpu}";
+            }
+            Debug.Log($"MARIN solver performance · {SystemInfo.graphicsDeviceName} · {SystemInfo.graphicsDeviceType} · " +
+                $"{fluid.positionBuffer.count:N0} particles · {BenchmarkSpacing * 1000:0.#} mm · " +
+                $"{BenchmarkStepMicroseconds / 1000f:0.###} ms step · sampled from {profileWarmup * stepSeconds:F4} s · box wall pressure {(benchmarkWallPressure ? "ON" : "OFF")}\n" +
+                string.Join("\n", profileResults), this);
+            StopPerformanceRecorders();
+            profileRunning = false;
+        }
+
+        private static string FormatStageTime(long nanoseconds, int samples)
+        {
+            if (samples == 0 || nanoseconds <= 0) return "unavailable";
+            return $"{nanoseconds / (samples * 1000000d):F3} ms/step ({samples}/{ProfileMeasuredSteps})";
+        }
+
+        private void StopPerformanceRecorders()
+        {
+            if (profileRecorders == null) return;
+            foreach (Recorder recorder in profileRecorders) recorder.enabled = false;
+            profileRecorders = null;
+            if (fluid != null) fluid.StopStageProfiling();
+        }
+
+        private void DrawPerformanceControls()
+        {
+            GUILayout.BeginArea(new Rect(16, 16, 570, 410), GUI.skin.box);
+            GUILayout.Label("MARIN Solver Performance");
+            GUILayout.Label($"{SystemInfo.graphicsDeviceName} · {SystemInfo.graphicsDeviceType}");
+            GUILayout.Label("64 measured solver steps · GPU and CPU timing");
+            bool enabled = GUI.enabled;
+            GUI.enabled = enabled && !profileRunning;
+            GUILayout.Label("Particle spacing (mm)");
+            profileSpacing = GUILayout.Toolbar(profileSpacing, BenchmarkSpacingLabels);
+            profileWallPressure = GUILayout.Toggle(profileWallPressure, "Box wall pressure");
+            profileAtImpact = GUILayout.Toggle(profileAtImpact, "Profile near impact (advance to 0.56 s first)");
+            if (!SystemInfo.supportsComputeShaders || fluidCompute == null)
+                GUILayout.Label("GPU compute unavailable.");
+            else if (GUILayout.Button("Measure solver stages"))
+                StartPerformanceRun();
+            GUI.enabled = enabled;
+
+            if (profileRunning)
+                GUILayout.Label($"Warmup {profileWarmup}/{profileWarmupTarget} · measured steps submitted {profileSubmitted}/{ProfileMeasuredSteps}");
+            if (profileResults != null)
+                foreach (string result in profileResults) GUILayout.Label(result);
+            GUILayout.EndArea();
         }
 
         private void ApplyAdaptivePressure()
@@ -712,6 +847,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnGUI()
         {
+            if (solverPerformanceScene)
+            {
+                DrawPerformanceControls();
+                return;
+            }
 #if UNITY_EDITOR
             if (offlineFramePending) return;
             if (offlineCapture)
@@ -861,6 +1001,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnDestroy()
         {
+            StopPerformanceRecorders();
 #if UNITY_EDITOR
             if (offlineCapture) FinishOfflineCapture(false);
 #endif
