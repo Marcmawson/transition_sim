@@ -453,9 +453,21 @@ float BoxPlaneDistance(float4 plane, float3 position)
     return dot(plane.xyz, position) - plane.w;
 }
 
+// Reject cells whose closest point lies outside the particle's support sphere.
+bool IntersectsSupportCell(float3 gridPosition, int3 cell, float3 padding)
+{
+    float3 minimum = (float3)cell;
+    float3 gap = max(minimum - gridPosition, gridPosition - (minimum + 1));
+    gap = max(0, gap - padding);
+    return dot(gap, gap) <= 1;
+}
+
 float2 CalculateDensitiesAtPoint(float3 pos, bool includeBoxPressure)
 {
-    int3 originCell = GetCell3D(pos, smoothingRadius);
+    float3 gridPosition = pos / smoothingRadius;
+    int3 originCell = (int3)floor(gridPosition);
+    // Keep borderline cells despite floating-point rounding near grid boundaries.
+    float3 cellPadding = 1e-6 * max(abs(gridPosition), 1);
     float sqrRadius = smoothingRadius * smoothingRadius;
     float density = 0;
     float nearDensity = 0;
@@ -466,7 +478,9 @@ float2 CalculateDensitiesAtPoint(float3 pos, bool includeBoxPressure)
     // Neighbour search
     for (int i = 0; i < 27; i++)
     {
-        uint hash = HashCell3D(originCell + offsets3D[i]);
+        int3 cell = originCell + offsets3D[i];
+        if (!IntersectsSupportCell(gridPosition, cell, cellPadding)) continue;
+        uint hash = HashCell3D(cell);
         uint key = KeyFromHash(hash, numParticles);
         uint currIndex = SpatialOffsets[key];
 
@@ -487,6 +501,8 @@ float2 CalculateDensitiesAtPoint(float3 pos, bool includeBoxPressure)
             // Skip if not within radius
             if (sqrDstToNeighbour > sqrRadius)
                 continue;
+            // A hash bucket can contain particles from multiple cells.
+            if (any(GetCell3D(neighbourPos, smoothingRadius) != cell)) continue;
 
             // Calculate density and near density
             float dst = sqrt(sqrDstToNeighbour);
@@ -624,7 +640,10 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
     float3 velocity = Velocities[id.x];
 
     float3 pos = PredictedPositions[id.x];
-    int3 originCell = GetCell3D(pos, smoothingRadius);
+    float3 gridPosition = pos / smoothingRadius;
+    int3 originCell = (int3)floor(gridPosition);
+    // Keep borderline cells despite floating-point rounding near grid boundaries.
+    float3 cellPadding = 1e-6 * max(abs(gridPosition), 1);
     float sqrRadius = smoothingRadius * smoothingRadius;
     int neighbourCount = 0;
     bool floorSupport = BeakerFloorPressure > .5 && SupportsFloorMirror(pos) && pos.y - beakerGlassFloorY < smoothingRadius;
@@ -644,7 +663,9 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
     // Neighbour search
     for (int i = 0; i < 27; i++)
     {
-        uint hash = HashCell3D(originCell + offsets3D[i]);
+        int3 cell = originCell + offsets3D[i];
+        if (!IntersectsSupportCell(gridPosition, cell, cellPadding)) continue;
+        uint hash = HashCell3D(cell);
         uint key = KeyFromHash(hash, numParticles);
         uint currIndex = SpatialOffsets[key];
 
@@ -666,6 +687,8 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
 
             // Skip if not within radius
             if (sqrDstToNeighbour > sqrRadius) continue;
+            // A hash bucket can contain particles from multiple cells.
+            if (any(GetCell3D(neighbourPos, smoothingRadius) != cell)) continue;
 
             float weight = LiquidWeight(neighbourIndex);
             if (weight <= 0) continue;
@@ -794,7 +817,10 @@ void CalculateViscosity(uint3 id : SV_DispatchThreadID)
         return;
 
     float3 pos = PredictedPositions[id.x];
-    int3 originCell = GetCell3D(pos, smoothingRadius);
+    float3 gridPosition = pos / smoothingRadius;
+    int3 originCell = (int3)floor(gridPosition);
+    // Keep borderline cells despite floating-point rounding near grid boundaries.
+    float3 cellPadding = 1e-6 * max(abs(gridPosition), 1);
     float sqrRadius = smoothingRadius * smoothingRadius;
 
     float3 viscosityForce = 0;
@@ -804,7 +830,9 @@ void CalculateViscosity(uint3 id : SV_DispatchThreadID)
     // Neighbour search
     for (int i = 0; i < 27; i++)
     {
-        uint hash = HashCell3D(originCell + offsets3D[i]);
+        int3 cell = originCell + offsets3D[i];
+        if (!IntersectsSupportCell(gridPosition, cell, cellPadding)) continue;
+        uint hash = HashCell3D(cell);
         uint key = KeyFromHash(hash, numParticles);
         uint currIndex = SpatialOffsets[key];
 
@@ -830,6 +858,8 @@ void CalculateViscosity(uint3 id : SV_DispatchThreadID)
             // Skip if not within radius
             if (sqrDstToNeighbour > sqrRadius)
                 continue;
+            // A hash bucket can contain particles from multiple cells.
+            if (any(GetCell3D(neighbourPos, smoothingRadius) != cell)) continue;
 
             // Calculate viscosity
             float dst = sqrt(sqrDstToNeighbour);
