@@ -138,6 +138,9 @@ namespace Seb.Fluid.Simulation
 		[HideInInspector] public bool trackLiquidMass;
 		public ComputeBuffer LiquidFraction { get; private set; }
 		float[] initialLiquidFraction;
+		internal int MixedCoarseParticleCount { get; set; }
+		internal float MixedCoarseMass { get; set; }
+		private bool MixedResolution => MixedCoarseParticleCount > 0;
 		int sortLiquidMassKernel, copyLiquidMassKernel;
 		[HideInInspector] public float liquidThermalDiffusivity;
 		int sumThermalKernel, diffuseHeatKernel, commitHeatKernel;
@@ -228,15 +231,15 @@ namespace Seb.Fluid.Simulation
 		void Initialize(Spawner3D.SpawnData? release = null, int existingCount = 0)
 		{
 			externalForcesKernel = compute.FindKernel("ExternalForces");
-			spatialHashKernel = compute.FindKernel("UpdateSpatialHash");
+			spatialHashKernel = compute.FindKernel(MixedResolution ? "UpdateMixedSpatialHash" : "UpdateSpatialHash");
 			reorderKernel = compute.FindKernel("Reorder");
 			reorderCopybackKernel = compute.FindKernel("ReorderCopyBack");
-			densityKernel = compute.FindKernel("CalculateDensities");
-			pressureKernel = compute.FindKernel("CalculatePressureForce");
-			viscosityKernel = compute.FindKernel("CalculateViscosity");
+			densityKernel = compute.FindKernel(MixedResolution ? "CalculateMixedDensities" : "CalculateDensities");
+			pressureKernel = compute.FindKernel(MixedResolution ? "CalculateMixedPressureForce" : "CalculatePressureForce");
+			viscosityKernel = compute.FindKernel(MixedResolution ? "CalculateMixedViscosity" : "CalculateViscosity");
 			commitDampedVelocitiesKernel = compute.FindKernel("CommitDampedVelocities");
 			updatePositionsKernel = compute.FindKernel("UpdatePositions");
-			renderKernel = compute.FindKernel("UpdateDensityTexture");
+			renderKernel = compute.FindKernel(MixedResolution ? "UpdateMixedDensityTexture" : "UpdateDensityTexture");
 			foamUpdateKernel = compute.FindKernel("UpdateWhiteParticles");
 			foamReorderCopyBackKernel = compute.FindKernel("WhiteParticlePrepareNextFrame");
 			activeReorderKernel = reorderKernel;
@@ -307,15 +310,17 @@ namespace Seb.Fluid.Simulation
 			}
 
 			compute.SetInt("TrackLiquidMass", trackLiquidMass ? 1 : 0);
-			LiquidFraction = CreateStructuredBuffer<float>(trackLiquidMass ? numParticles : 1);
-			var sortedFraction = CreateStructuredBuffer<float>(trackLiquidMass ? numParticles : 1);
+			bool sortParticleWeights = trackLiquidMass || MixedResolution;
+			LiquidFraction = CreateStructuredBuffer<float>(sortParticleWeights ? numParticles : 1);
+			var sortedFraction = CreateStructuredBuffer<float>(sortParticleWeights ? numParticles : 1);
 			bufferNameLookup.Add(LiquidFraction, "LiquidFraction");
 			bufferNameLookup.Add(sortedFraction, "SortedLiquidFraction");
 			initialLiquidFraction = new float[LiquidFraction.count];
-			for (int i = 0; i < initialLiquidFraction.Length; i++) initialLiquidFraction[i] = 1;
+			for (int i = 0; i < initialLiquidFraction.Length; i++) initialLiquidFraction[i] = i < MixedCoarseParticleCount ? MixedCoarseMass : 1;
 			foreach (int kernel in new[] { densityKernel, activePressureKernel, viscosityKernel, renderKernel })
 				compute.SetBuffer(kernel, "LiquidFraction", LiquidFraction);
-			if (trackLiquidMass)
+			if (MixedResolution) compute.SetBuffer(spatialHashKernel, "LiquidFraction", LiquidFraction);
+			if (sortParticleWeights)
 			{
 				sortLiquidMassKernel = compute.FindKernel("SortLiquidMass");
 				copyLiquidMassKernel = compute.FindKernel("CopyLiquidMass");
@@ -575,7 +580,7 @@ namespace Seb.Fluid.Simulation
 			spatialHash.Run();
 			stageStart = CompleteStage(1, spatialHash.SpatialIndices, stageStart);
 			
-			if (trackLiquidMass)
+			if (trackLiquidMass || MixedResolution)
 			{
 				Dispatch(compute, positionBuffer.count, kernelIndex: sortLiquidMassKernel);
 				Dispatch(compute, positionBuffer.count, kernelIndex: copyLiquidMassKernel);
@@ -597,7 +602,7 @@ namespace Seb.Fluid.Simulation
 			if (viscosityStrength != 0 || approachOnlyDamping)
 			{
 				Dispatch(compute, positionBuffer.count, kernelIndex: viscosityKernel);
-				if (approachOnlyDamping)
+				if (approachOnlyDamping || MixedResolution)
 					Dispatch(compute, positionBuffer.count, kernelIndex: commitDampedVelocitiesKernel);
 			}
 			stageStart = CompleteStage(5, velocityBuffer, stageStart);
