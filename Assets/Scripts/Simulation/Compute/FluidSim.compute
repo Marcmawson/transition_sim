@@ -2,13 +2,18 @@
 #pragma kernel CommitDampedVelocities
 #pragma kernel ExternalForces
 #pragma kernel UpdateSpatialHash
+#pragma kernel UpdateMixedSpatialHash MIXED_RESOLUTION
 #pragma kernel Reorder
 #pragma kernel ReorderCopyBack;
 #pragma kernel CalculateDensities
+#pragma kernel CalculateMixedDensities MIXED_RESOLUTION
 #pragma kernel CalculatePressureForce
+#pragma kernel CalculateMixedPressureForce MIXED_RESOLUTION
 #pragma kernel CalculateViscosity
+#pragma kernel CalculateMixedViscosity MIXED_RESOLUTION
 #pragma kernel UpdatePositions
 #pragma kernel UpdateDensityTexture
+#pragma kernel UpdateMixedDensityTexture MIXED_RESOLUTION
 #pragma kernel UpdateWhiteParticles
 #pragma kernel WhiteParticlePrepareNextFrame;
 
@@ -279,18 +284,37 @@ void ExternalForces(uint3 id : SV_DispatchThreadID) { ApplyExternalForces(id); }
 [numthreads(ThreadGroupSize, 1, 1)]
 void ExternalForcesWithHeat(uint3 id : SV_DispatchThreadID) { ApplyExternalForces(id); }
 
+RWStructuredBuffer<float> LiquidFraction;
+
+uint MixedLevel(uint index)
+{
+    return LiquidFraction[index] > 2 ? 1 : 0;
+}
+
+uint MixedCellKey(int3 cell, uint level)
+{
+    return KeyFromHash(2 * HashCell3D(cell) + level, numParticles);
+}
+
 [numthreads(ThreadGroupSize, 1, 1)]
+#ifdef MIXED_RESOLUTION
+void UpdateMixedSpatialHash(uint3 id : SV_DispatchThreadID)
+#else
 void UpdateSpatialHash(uint3 id : SV_DispatchThreadID)
+#endif
 {
     if (id.x >= numParticles)
         return;
 
     uint index = id.x;
+#ifdef MIXED_RESOLUTION
+    uint level = MixedLevel(index);
+    int3 cell = GetCell3D(PredictedPositions[index], smoothingRadius * (level + 1));
+    SpatialKeys[index] = MixedCellKey(cell, level);
+#else
     int3 cell = GetCell3D(PredictedPositions[index], smoothingRadius);
-    uint hash = HashCell3D(cell);
-    uint key = KeyFromHash(hash, numParticles);
-
-    SpatialKeys[id.x] = key;
+    SpatialKeys[index] = KeyFromHash(HashCell3D(cell), numParticles);
+#endif
 }
 
 
@@ -298,7 +322,6 @@ RWStructuredBuffer<float3> SortTarget_Positions;
 RWStructuredBuffer<float3> SortTarget_PredictedPositions;
 RWStructuredBuffer<float3> SortTarget_Velocities;
 RWStructuredBuffer<float> SortedTemperatureRise;
-RWStructuredBuffer<float> LiquidFraction;
 RWStructuredBuffer<float> SortedLiquidFraction;
 int TrackLiquidMass;
 
@@ -531,14 +554,189 @@ float2 CalculateDensitiesAtPoint(float3 pos, bool includeBoxPressure)
     return float2(density, nearDensity);
 }
 
+// The two levels share a sparse hash table. Their cell widths are h and 2h.
+struct MixedNeighbourQuery
+{
+    float3 position;
+    uint selfLevel;
+    uint level;
+    float cellWidth;
+    float reachSquared;
+    int3 firstCell;
+    int3 lastCell;
+    int3 cell;
+    uint key;
+    uint cursor;
+};
+
+void SetMixedQueryLevel(inout MixedNeighbourQuery query, uint level)
+{
+    query.level = level;
+    query.cellWidth = smoothingRadius * (level + 1);
+    float support = smoothingRadius * (max(query.selfLevel, level) + 1);
+    query.reachSquared = support * support;
+    query.firstCell = GetCell3D(query.position - support, query.cellWidth);
+    query.lastCell = GetCell3D(query.position + support, query.cellWidth);
+    query.cell = query.firstCell;
+    query.cell.x--;
+    query.key = 0;
+    query.cursor = numParticles;
+}
+
+MixedNeighbourQuery MakeMixedQuery(float3 position, uint selfLevel)
+{
+    MixedNeighbourQuery query;
+    query.position = position;
+    query.selfLevel = selfLevel;
+    SetMixedQueryLevel(query, 0);
+    return query;
+}
+
+bool NextMixedNeighbour(inout MixedNeighbourQuery query, out uint index, out float3 offset, out float distanceSquared)
+{
+    index = 0;
+    offset = 0;
+    distanceSquared = 0;
+    while (true)
+    {
+        if (query.cursor < numParticles && SpatialKeys[query.cursor] == query.key)
+        {
+            uint candidate = query.cursor++;
+            float3 position = PredictedPositions[candidate];
+            float3 delta = position - query.position;
+            float squaredDistance = dot(delta, delta);
+            if (squaredDistance > query.reachSquared || MixedLevel(candidate) != query.level ||
+                any(GetCell3D(position, query.cellWidth) != query.cell)) continue;
+            index = candidate;
+            offset = delta;
+            distanceSquared = squaredDistance;
+            return true;
+        }
+
+        query.cell.x++;
+        if (query.cell.x > query.lastCell.x)
+        {
+            query.cell.x = query.firstCell.x;
+            query.cell.y++;
+            if (query.cell.y > query.lastCell.y)
+            {
+                query.cell.y = query.firstCell.y;
+                query.cell.z++;
+                if (query.cell.z > query.lastCell.z)
+                {
+                    if (query.level == 1) return false;
+                    SetMixedQueryLevel(query, 1);
+                    continue;
+                }
+            }
+        }
+        query.key = MixedCellKey(query.cell, query.level);
+        query.cursor = SpatialOffsets[query.key];
+    }
+    return false;
+}
+
+float2 MixedDensityKernel(float d, uint level)
+{
+    float width = smoothingRadius * (level + 1);
+    // Evaluate with the fine-level normalization, then scale by h^-3.
+    float scale = level == 0 ? 1 : .125;
+    float fineDistance = d * smoothingRadius / width;
+    return scale * float2(DensityKernel(fineDistance, smoothingRadius), NearDensityKernel(fineDistance, smoothingRadius));
+}
+
+float2 MixedGradient(float d, uint level)
+{
+    float scale = level == 0 ? 1 : .0625;
+    float fineDistance = d / (level + 1);
+    return scale * float2(DensityDerivative(fineDistance, smoothingRadius), NearDensityDerivative(fineDistance, smoothingRadius));
+}
+
+float2 MixedDensityAt(float3 position, uint level, bool sampleSurface)
+{
+    MixedNeighbourQuery query = MakeMixedQuery(position, level);
+    uint j;
+    float3 offset;
+    float distanceSquared;
+    float2 density = 0;
+    while (NextMixedNeighbour(query, j, offset, distanceSquared))
+    {
+        float d = sqrt(distanceSquared);
+        float2 weight = MixedDensityKernel(d, query.level);
+        if (!sampleSurface && query.level != level)
+            weight = .5 * (weight + MixedDensityKernel(d, level));
+        density += LiquidFraction[j] * weight;
+    }
+    return density;
+}
+
+void ApplyMixedPressure(uint index)
+{
+    uint level = MixedLevel(index);
+    float2 density = max(Densities[index], 1e-6);
+    float pressure = PressureFromDensity(density.x);
+    float nearPressure = NearPressureFromDensity(density.y);
+    MixedNeighbourQuery query = MakeMixedQuery(PredictedPositions[index], level);
+    uint j;
+    float3 offset;
+    float distanceSquared;
+    float3 acceleration = 0;
+    while (NextMixedNeighbour(query, j, offset, distanceSquared))
+    {
+        if (j == index || distanceSquared == 0) continue;
+        float d = sqrt(distanceSquared);
+        float2 neighbourDensity = max(Densities[j], 1e-6);
+        float2 gradient = MixedGradient(d, query.level);
+        if (query.level != level)
+            gradient = .5 * (gradient + MixedGradient(d, level));
+        float pressureFactor = .5 * (pressure + PressureFromDensity(neighbourDensity.x)) /
+            (density.x * neighbourDensity.x);
+        float nearFactor = .25 * (nearPressure + NearPressureFromDensity(neighbourDensity.y)) *
+            (1 / (density.x * neighbourDensity.y) + 1 / (neighbourDensity.x * density.y));
+        acceleration += LiquidFraction[j] * (offset / d) * dot(gradient, float2(pressureFactor, nearFactor));
+    }
+    Velocities[index] += acceleration * deltaTime;
+}
+
+void ApplyMixedViscosity(uint index)
+{
+    uint level = MixedLevel(index);
+    float3 velocity = Velocities[index];
+    MixedNeighbourQuery query = MakeMixedQuery(PredictedPositions[index], level);
+    uint j;
+    float3 offset;
+    float distanceSquared;
+    float3 acceleration = 0;
+    while (NextMixedNeighbour(query, j, offset, distanceSquared))
+    {
+        if (j == index) continue;
+        float d = sqrt(distanceSquared);
+        float weight = SmoothingKernelPoly6(d / (query.level + 1), smoothingRadius) *
+            (query.level == 0 ? 1 : .125);
+        if (query.level != level)
+            weight = .5 * (weight + SmoothingKernelPoly6(d / (level + 1), smoothingRadius) *
+                (level == 0 ? 1 : .125));
+        acceleration += LiquidFraction[j] * weight * (Velocities[j] - velocity);
+    }
+    SortTarget_Velocities[index] = velocity + acceleration * viscosityStrength * deltaTime;
+}
+
 [numthreads(ThreadGroupSize, 1, 1)]
+#ifdef MIXED_RESOLUTION
+void CalculateMixedDensities(uint3 id : SV_DispatchThreadID)
+#else
 void CalculateDensities(uint3 id : SV_DispatchThreadID)
+#endif
 {
     if (id.x >= numParticles)
         return;
 
     float3 pos = PredictedPositions[id.x];
+#ifdef MIXED_RESOLUTION
+    float2 densities = MixedDensityAt(pos, MixedLevel(id.x), false);
+#else
     float2 densities = CalculateDensitiesAtPoint(pos, true);
+#endif
 
     Densities[id.x] = densities;
 }
@@ -621,6 +819,8 @@ float LiquidPressure(float density, uint index)
 [numthreads(ThreadGroupSize, 1, 1)]
 #ifdef THERMAL_PRESSURE
 void CalculateThermalPressureForce(uint3 id : SV_DispatchThreadID)
+#elif defined(MIXED_RESOLUTION)
+void CalculateMixedPressureForce(uint3 id : SV_DispatchThreadID)
 #else
 void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
 #endif
@@ -628,6 +828,9 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
     if (id.x >= numParticles)
         return;
 
+#ifdef MIXED_RESOLUTION
+    ApplyMixedPressure(id.x);
+#else
     float selfWeight = LiquidWeight(id.x);
     if (selfWeight <= 0) return;
 
@@ -808,14 +1011,22 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
             WhiteParticles[particleIndex + spawnIndex] = whiteParticle;
         }
     }
+#endif
 }
 
 [numthreads(ThreadGroupSize, 1, 1)]
+#ifdef MIXED_RESOLUTION
+void CalculateMixedViscosity(uint3 id : SV_DispatchThreadID)
+#else
 void CalculateViscosity(uint3 id : SV_DispatchThreadID)
+#endif
 {
     if (id.x >= numParticles)
         return;
 
+#ifdef MIXED_RESOLUTION
+    ApplyMixedViscosity(id.x);
+#else
     float3 pos = PredictedPositions[id.x];
     float3 gridPosition = pos / smoothingRadius;
     int3 originCell = (int3)floor(gridPosition);
@@ -892,6 +1103,7 @@ void CalculateViscosity(uint3 id : SV_DispatchThreadID)
     float3 damped = velocity + viscosityForce * viscosityStrength * deltaTime;
     if (approachOnlyDamping) SortTarget_Velocities[id.x] = velocity + contactCorrection;
     else Velocities[id.x] = damped;
+#endif
 }
 
 [numthreads(ThreadGroupSize, 1, 1)]
@@ -914,7 +1126,11 @@ void UpdatePositions(uint3 id : SV_DispatchThreadID)
 }
 
 [numthreads(8, 8, 8)]
+#ifdef MIXED_RESOLUTION
+void UpdateMixedDensityTexture(uint3 id : SV_DispatchThreadID)
+#else
 void UpdateDensityTexture(uint3 id : SV_DispatchThreadID)
+#endif
 {
     if (id.x >= densityMapSize.x || id.y >= densityMapSize.y || id.z >= densityMapSize.z)
         return;
@@ -930,7 +1146,11 @@ void UpdateDensityTexture(uint3 id : SV_DispatchThreadID)
             return;
         }
     }
+#ifdef MIXED_RESOLUTION
+    DensityMap[id] = MixedDensityAt(worldPos, 0, true).x;
+#else
     DensityMap[id] = CalculateDensitiesAtPoint(worldPos, false)[0];
+#endif
 }
 
 [numthreads(ThreadGroupSize, 1, 1)]
