@@ -21,9 +21,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private float VolumeLitres => GetVolumeLitres(ColumnSize);
         private static float GetVolumeLitres(Vector3 size) => size.x * size.y * size.z * 1000f;
         private const float ArrivalPlane = .55f;
-        private const float BlockSide = .15f;
-        private static readonly Vector3 BlockCentre = new Vector3(.325f, BlockSide * .5f, .025f);
-        private Texture2D checkerTexture;
+        private static readonly Vector3 BaffleSize = new Vector3(.05f, .25f, .55f);
+        private static readonly Vector3[] BaffleCentres =
+        {
+            new Vector3(-.125f, BaffleSize.y * .5f, -.125f),
+            new Vector3(.125f, BaffleSize.y * .5f, .125f),
+            new Vector3(.375f, BaffleSize.y * .5f, -.125f)
+        };
 
         [SerializeField] private ComputeShader fluidCompute;
         [SerializeField] private ComputeShader surfaceArguments;
@@ -65,7 +69,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             glass.renderQueue = (int)RenderQueue.Transparent;
             Box("Tank base", new Vector3(0, -.025f, 0), new Vector3(1.25f, .05f, TankSize.z + .05f), stone);
             Box("Bench", new Vector3(0, -.09f, 0), new Vector3(2.5f, .08f, 1.3f), stone);
-            BuildTestBlock();
+            var baffle = MakeMaterial(new Color(.24f, .36f, .39f));
+            for (int i = 0; i < BaffleCentres.Length; i++)
+                Box($"Channel baffle {i + 1}", BaffleCentres[i], BaffleSize, baffle);
             for (int sign = -1; sign <= 1; sign += 2)
             {
                 Box("Long glass wall", new Vector3(0, .25f, sign * (TankSize.z * .5f + .004f)),
@@ -97,25 +103,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (material.renderQueue == (int)RenderQueue.Transparent)
                 renderer.shadowCastingMode = ShadowCastingMode.Off;
             Destroy(panel.GetComponent<Collider>());
-        }
-
-        private void BuildTestBlock()
-        {
-            const int squares = 8;
-            checkerTexture = new Texture2D(squares, squares, TextureFormat.RGBA32, false)
-            {
-                name = "Obstacle checkerboard",
-                filterMode = FilterMode.Point,
-                wrapMode = TextureWrapMode.Clamp
-            };
-            for (int y = 0; y < squares; y++)
-            for (int x = 0; x < squares; x++)
-                checkerTexture.SetPixel(x, y, (x + y) % 2 == 0
-                    ? new Color(.92f, .92f, .88f) : new Color(.12f, .14f, .18f));
-            checkerTexture.Apply(false, true);
-            var material = MakeMaterial(Color.white);
-            material.mainTexture = checkerTexture;
-            Box("Checkerboard flow obstacle", BlockCentre, Vector3.one * BlockSide, material);
         }
 
         private void PrepareColumn()
@@ -155,8 +142,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.spawner = spawner;
             fluid.manualControl = true;
             fluid.gravity = -9.81f;
-            fluid.SetStaticBoxBoundary(0, BlockCentre, Vector3.one * BlockSide);
-            fluid.IceCount = 1;
+            for (int i = 0; i < BaffleCentres.Length; i++)
+                fluid.SetStaticBoxBoundary(i, BaffleCentres[i], BaffleSize);
+            fluid.IceCount = BaffleCentres.Length;
             fluid.smoothingRadius = radius;
             fluid.targetDensity = InteriorDensity(spacing, radius);
             fluid.pressureMultiplier = 100f;
@@ -307,9 +295,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 float worldX = (x + .5f) * spacing - TankSize.x * .5f;
                 float worldZ = (z + .5f) * spacing - TankSize.z * .5f;
-                if (Mathf.Abs(worldX - BlockCentre.x) < BlockSide * .5f &&
-                    Mathf.Abs(worldZ - BlockCentre.z) < BlockSide * .5f)
-                    floor[x + width * z] = Mathf.RoundToInt(BlockSide / spacing);
+                foreach (Vector3 centre in BaffleCentres)
+                {
+                    if (Mathf.Abs(worldX - centre.x) < BaffleSize.x * .5f &&
+                        Mathf.Abs(worldZ - centre.z) < BaffleSize.z * .5f)
+                        floor[x + width * z] = Mathf.RoundToInt(BaffleSize.y / spacing);
+                }
             }
             return floor;
         }
@@ -450,7 +441,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void OnDestroy()
         {
             if (solverCompute != null) Destroy(solverCompute);
-            if (checkerTexture != null) Destroy(checkerTexture);
             foreach (var material in materials) Destroy(material);
         }
     }
