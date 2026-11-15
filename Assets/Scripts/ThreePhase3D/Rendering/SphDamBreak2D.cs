@@ -8,22 +8,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         internal const float Width = 600f;
         internal const float Height = 360f;
         private static readonly float[] CellWidths = { 40f, 30f, 20f, 10f };
-        private const int FineGridLevel = 3;
-        internal const float StepSeconds = .0005f;
+        private const int ChildrenPerSplit = 4;
+        private const int NodesPerRoot = 85; // 1 + 4 + 16 + 64
+        private const int RefinementTicks = 320;
+        private const float TickSeconds = .000125f;
+        private static readonly float[] ParticleSpacings = { 10f, 5f, 2.5f, 1.25f };
+        private static readonly float[] SplitSpeeds = { 650f, 400f, 200f };
+        private static readonly float[] MergeSpeeds = { 800f, 550f, 300f };
 
-        private const float FineSpacing = 5f;
         private const float CoarseSpacing = 10f;
-        private const float FineSupport = 2 * FineSpacing;
-        private const float CoarseSupport = 2 * CoarseSpacing;
         private const float InitialWidth = 240f;
         private const float InitialDepth = 240f;
-        private const int ChildrenPerCoarseParticle = 4;
-        private const int RefinementIntervalSteps = 80;
-        private const float SplitSpeed = 400f;
-        private const float MergeSpeed = 650f;
-        private const float MergeRadius = 7.5f;
-        private const float SurfaceProbeDistance = 1.5f * CoarseSpacing;
-        private const float SurfaceProbeRadius = .8f * CoarseSpacing;
         private const float Diagonal = .70710678f;
         private static readonly Vector2[] SurfaceDirections =
         {
@@ -45,14 +40,18 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly ParticleGrid[] grids;
         private readonly int[] levels;
         private readonly int[] particlesPerLevel;
-        private readonly bool[] refined;
-        private readonly bool[] surfaceFamilies;
+        private readonly bool[] split;
+        private readonly bool[] exposed;
+        private int simulatedTicks;
+        private int finestLevel;
         private readonly List<int> activeParticles;
 
-        internal int FineCount { get; private set; }
         internal int Count => activeParticles.Count;
         internal IReadOnlyList<int> ActiveParticles => activeParticles;
-        internal bool IsFine(int index) => refined[index / ChildrenPerCoarseParticle];
+        internal float SimulatedSeconds => simulatedTicks * TickSeconds;
+        private int TicksPerStep => 4 >> Mathf.Min(finestLevel, 2);
+        internal float StepSeconds => TicksPerStep * TickSeconds;
+        internal float ParticleSpacing(int index) => ParticleSpacings[levels[index]];
         internal int StepCount { get; private set; }
         internal Vector2 Position(int index) => positions[index];
         internal int GridLevelCount => grids.Length;
@@ -65,9 +64,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         internal SphDamBreak2D()
         {
             int coarseCount = (int)(InitialWidth / CoarseSpacing) * (int)(InitialDepth / CoarseSpacing);
-            int capacity = coarseCount * ChildrenPerCoarseParticle;
-            refined = new bool[coarseCount];
-            surfaceFamilies = new bool[coarseCount];
+            int capacity = coarseCount * NodesPerRoot;
+            split = new bool[capacity];
+            exposed = new bool[capacity];
             activeParticles = new List<int>(capacity);
             positions = new Vector2[capacity];
             velocities = new Vector2[capacity];
@@ -75,7 +74,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             densities = new float[capacity];
             pressures = new float[capacity];
             neighbours = new List<int>[capacity];
-            for (int i = 0; i < capacity; i++) neighbours[i] = new List<int>(24);
 
             levels = new int[capacity];
             particlesPerLevel = new int[CellWidths.Length];
@@ -87,17 +85,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         internal void Reset()
         {
-            System.Array.Clear(refined, 0, refined.Length);
+            System.Array.Clear(split, 0, split.Length);
             System.Array.Clear(velocities, 0, velocities.Length);
             int index = 0;
             for (float y = CoarseSpacing * .5f; y < InitialDepth; y += CoarseSpacing)
             for (float x = CoarseSpacing * .5f; x < InitialWidth; x += CoarseSpacing)
             {
                 positions[index] = new Vector2(x, y);
-                index += ChildrenPerCoarseParticle;
+                index += NodesPerRoot;
             }
 
-            StepCount = 0;
+            StepCount = simulatedTicks = 0;
             RebuildActiveParticles();
             RebuildGrids();
         }
@@ -105,14 +103,29 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void RebuildActiveParticles()
         {
             activeParticles.Clear();
-            FineCount = 0;
-            for (int family = 0; family < refined.Length; family++)
+            finestLevel = 0;
+            for (int root = 0; root < positions.Length; root += NodesPerRoot)
+                AddLeaves(root, 0);
+        }
+
+        private void AddLeaves(int index, int level)
+        {
+            if (!split[index])
             {
-                int first = family * ChildrenPerCoarseParticle;
-                int count = refined[family] ? ChildrenPerCoarseParticle : 1;
-                for (int i = 0; i < count; i++) activeParticles.Add(first + i);
-                if (refined[family]) FineCount += count;
+                activeParticles.Add(index);
+                finestLevel = Mathf.Max(finestLevel, level);
+                return;
             }
+
+            int first = FirstChild(index);
+            for (int i = 0; i < ChildrenPerSplit; i++)
+                AddLeaves(first + i, level + 1);
+        }
+
+        private static int FirstChild(int index)
+        {
+            int local = index % NodesPerRoot;
+            return index - local + ChildrenPerSplit * local + 1;
         }
 
         private void RebuildGrids()
@@ -121,15 +134,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             System.Array.Clear(particlesPerLevel, 0, particlesPerLevel.Length);
             foreach (int index in activeParticles)
             {
-                int level = 0;
-                if (IsFine(index)) level = FineGridLevel;
-                else if (StepCount > 0)
-                {
-                    float speedSquared = velocities[index].sqrMagnitude;
-                    if (speedSquared < SplitSpeed * SplitSpeed) level = 2;
-                    else if (speedSquared < MergeSpeed * MergeSpeed) level = 1;
-                }
-                levels[index] = level;
+                int level = levels[index];
                 particlesPerLevel[level]++;
                 grids[level].Insert(index, positions[index]);
             }
@@ -137,34 +142,30 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private bool AdaptParticleSizes()
         {
-            // Classify against one complete snapshot before splitting or merging changes the grid.
-            for (int family = 0; family < refined.Length; family++)
-            {
-                int first = family * ChildrenPerCoarseParticle;
-                surfaceFamilies[family] = false;
-                int count = refined[family] ? ChildrenPerCoarseParticle : 1;
-                for (int i = 0; i < count; i++)
-                {
-                    if (!IsExposed(positions[first + i])) continue;
-                    surfaceFamilies[family] = true;
-                    break;
-                }
-            }
+            foreach (int index in activeParticles) exposed[index] = IsExposed(index);
 
             bool changed = false;
-            for (int family = 0; family < refined.Length; family++)
+            foreach (int index in activeParticles)
             {
-                int first = family * ChildrenPerCoarseParticle;
-                if (refined[family])
+                int level = levels[index];
+                if (level > 0)
                 {
-                    if (!TryMerge(first, surfaceFamilies[family])) continue;
-                    refined[family] = false;
-                    changed = true;
+                    int local = index % NodesPerRoot;
+                    int parent = index - local + (local - 1) / ChildrenPerSplit;
+                    if (!split[parent]) continue;
+                    int first = FirstChild(parent);
+                    if (index == first && TryMerge(parent, first, level - 1))
+                    {
+                        split[parent] = false;
+                        changed = true;
+                        continue;
+                    }
                 }
-                else if (surfaceFamilies[family] && velocities[first].sqrMagnitude < SplitSpeed * SplitSpeed)
+
+                if (level < SplitSpeeds.Length && exposed[index] &&
+                    velocities[index].sqrMagnitude < SplitSpeeds[level] * SplitSpeeds[level])
                 {
-                    Split(first);
-                    refined[family] = true;
+                    Split(index, level + 1);
                     changed = true;
                 }
             }
@@ -172,15 +173,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             return changed;
         }
 
-        private bool IsExposed(Vector2 position)
+        private bool IsExposed(int index)
         {
+            Vector2 position = positions[index];
+            float spacing = ParticleSpacing(index);
             bool firstOpen = false, previousOpen = false;
             for (int i = 0; i < SurfaceDirections.Length; i++)
             {
-                Vector2 probe = position + SurfaceDirections[i] * SurfaceProbeDistance;
-                // A probe outside the tank hits a solid boundary.
+                Vector2 probe = position + SurfaceDirections[i] * (1.5f * spacing);
+                // Probes outside the tank touch solid, and occupied probes represent water.
                 bool open = probe.x > 0 && probe.x < Width && probe.y > 0 && probe.y < Height &&
-                    !HasParticleNear(probe);
+                    !HasParticleNear(probe, spacing);
                 if (open && previousOpen) return true;
                 if (i == 0) firstOpen = open;
                 previousOpen = open;
@@ -188,84 +191,94 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             return firstOpen && previousOpen;
         }
 
-        private bool HasParticleNear(Vector2 position)
+        private bool HasParticleNear(Vector2 position, float spacing)
         {
-            foreach (ParticleGrid grid in grids)
-                if (grid.HasParticleNear(position, SurfaceProbeRadius, positions)) return true;
+            for (int level = 0; level < grids.Length; level++)
+            {
+                float radius = .8f * Mathf.Max(spacing, ParticleSpacings[level]);
+                if (grids[level].HasParticleNear(position, radius, positions)) return true;
+            }
             return false;
         }
 
-        private void Split(int first)
+        private void Split(int index, int childLevel)
         {
-            Vector2 centre = positions[first];
-            Vector2 velocity = velocities[first];
-            for (int i = 0; i < ChildrenPerCoarseParticle; i++)
+            int first = FirstChild(index);
+            float offset = ParticleSpacings[childLevel] * .5f;
+            for (int i = 0; i < ChildrenPerSplit; i++)
             {
-                float x = (i % 2 == 0 ? -.5f : .5f) * FineSpacing;
-                float y = (i / 2 == 0 ? -.5f : .5f) * FineSpacing;
-                positions[first + i] = centre + new Vector2(x, y);
-                velocities[first + i] = velocity;
+                float x = i % 2 == 0 ? -offset : offset;
+                float y = i / 2 == 0 ? -offset : offset;
+                positions[first + i] = positions[index] + new Vector2(x, y);
+                velocities[first + i] = velocities[index];
+                levels[first + i] = childLevel;
             }
+            split[index] = true;
         }
 
-        private bool TryMerge(int first, bool requireFast)
+        private bool TryMerge(int parent, int first, int parentLevel)
         {
             Vector2 centre = Vector2.zero;
             Vector2 velocity = Vector2.zero;
-            for (int i = first; i < first + ChildrenPerCoarseParticle; i++)
+            bool anyExposed = false, allFast = true;
+            float speedSquared = MergeSpeeds[parentLevel] * MergeSpeeds[parentLevel];
+            for (int i = first; i < first + ChildrenPerSplit; i++)
             {
-                if (requireFast && velocities[i].sqrMagnitude < MergeSpeed * MergeSpeed) return false;
+                if (split[i]) return false;
+                anyExposed |= exposed[i];
+                allFast &= velocities[i].sqrMagnitude >= speedSquared;
                 centre += positions[i];
                 velocity += velocities[i];
             }
-            centre /= ChildrenPerCoarseParticle;
-            velocity /= ChildrenPerCoarseParticle;
-            if (requireFast && velocity.sqrMagnitude < MergeSpeed * MergeSpeed) return false;
+            centre /= ChildrenPerSplit;
+            velocity /= ChildrenPerSplit;
+            if (anyExposed && (!allFast || velocity.sqrMagnitude < speedSquared)) return false;
 
-            float margin = CoarseSpacing * .5f;
+            float spacing = ParticleSpacings[parentLevel];
+            float margin = spacing * .5f;
             if (centre.x < margin || centre.x > Width - margin ||
                 centre.y < margin || centre.y > Height - margin) return false;
 
-            for (int i = first; i < first + ChildrenPerCoarseParticle; i++)
-                if ((positions[i] - centre).sqrMagnitude > MergeRadius * MergeRadius) return false;
+            float mergeRadius = .75f * spacing;
+            for (int i = first; i < first + ChildrenPerSplit; i++)
+                if ((positions[i] - centre).sqrMagnitude > mergeRadius * mergeRadius) return false;
 
-            positions[first] = centre;
-            velocities[first] = velocity;
+            positions[parent] = centre;
+            velocities[parent] = velocity;
             return true;
         }
 
-        internal void Advance(int steps)
+        internal void Advance()
         {
-            for (int step = 0; step < steps; step++)
-            {
-                FindNeighboursAndDensities();
-                CalculateForces();
-                Integrate();
-                StepCount++;
-                RebuildGrids();
-                if (StepCount % RefinementIntervalSteps == 0 && AdaptParticleSizes())
-                    RebuildGrids();
-            }
+            int ticks = TicksPerStep;
+            FindNeighboursAndDensities();
+            CalculateForces();
+            Integrate(ticks * TickSeconds);
+            StepCount++;
+            simulatedTicks += ticks;
+            RebuildGrids();
+            if (simulatedTicks % RefinementTicks == 0 && AdaptParticleSizes()) RebuildGrids();
         }
 
         private void FindNeighboursAndDensities()
         {
             foreach (int i in activeParticles)
             {
-                bool fine = IsFine(i);
-                float support = fine ? FineSupport : CoarseSupport;
-                float mass = fine ? FineSpacing * FineSpacing : CoarseSpacing * CoarseSpacing;
+                float spacing = ParticleSpacing(i);
+                float support = 2 * spacing;
+                float mass = spacing * spacing;
                 Vector2 position = positions[i];
-                List<int> list = neighbours[i];
+                List<int> list = neighbours[i] ??= new List<int>(24);
                 list.Clear();
                 for (int level = 0; level < grids.Length; level++)
-                    grids[level].Gather(i, position, level == FineGridLevel ? support : CoarseSupport, positions, list);
+                    grids[level].Gather(i, position, Mathf.Max(support, 2 * ParticleSpacings[level]), positions, list);
 
                 float density = mass * DensityKernel(0, support);
                 foreach (int j in list)
                 {
-                    float otherSupport = IsFine(j) ? FineSupport : CoarseSupport;
-                    float otherMass = IsFine(j) ? FineSpacing * FineSpacing : CoarseSpacing * CoarseSpacing;
+                    float otherSpacing = ParticleSpacing(j);
+                    float otherSupport = 2 * otherSpacing;
+                    float otherMass = otherSpacing * otherSpacing;
                     float distanceSquared = (positions[j] - position).sqrMagnitude;
                     float kernel = DensityKernel(distanceSquared, support);
                     if (support != otherSupport)
@@ -281,7 +294,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             foreach (int i in activeParticles)
             {
-                float support = IsFine(i) ? FineSupport : CoarseSupport;
+                float support = 2 * ParticleSpacing(i);
                 float density = densities[i];
                 float ownPressureTerm = pressures[i] / (density * density);
                 Vector2 acceleration = new Vector2(0, -Gravity);
@@ -290,8 +303,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     Vector2 separation = positions[j] - positions[i];
                     float distanceSquared = separation.sqrMagnitude;
                     float distance = Mathf.Sqrt(distanceSquared);
-                    float otherSupport = IsFine(j) ? FineSupport : CoarseSupport;
-                    float otherMass = IsFine(j) ? FineSpacing * FineSpacing : CoarseSpacing * CoarseSpacing;
+                    float otherSpacing = ParticleSpacing(j);
+                    float otherSupport = 2 * otherSpacing;
+                    float otherMass = otherSpacing * otherSpacing;
                     float otherDensity = densities[j];
                     float derivative = PressureDerivative(distance, support);
                     float kernel = DensityKernel(distanceSquared, support);
@@ -311,13 +325,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
         }
 
-        private void Integrate()
+        private void Integrate(float stepSeconds)
         {
             foreach (int i in activeParticles)
             {
-                Vector2 velocity = velocities[i] + accelerations[i] * StepSeconds;
-                Vector2 position = positions[i] + velocity * StepSeconds;
-                float margin = (IsFine(i) ? FineSpacing : CoarseSpacing) * .5f;
+                Vector2 velocity = velocities[i] + accelerations[i] * stepSeconds;
+                Vector2 position = positions[i] + velocity * stepSeconds;
+                float margin = ParticleSpacing(i) * .5f;
                 Constrain(ref position.x, ref velocity.x, margin, Width - margin);
                 Constrain(ref position.y, ref velocity.y, margin, Height - margin);
                 velocities[i] = velocity;
@@ -357,7 +371,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             float sum = 0;
             for (int y = -2; y <= 2; y++)
             for (int x = -2; x <= 2; x++)
-                sum += FineSpacing * FineSpacing * DensityKernel((x * x + y * y) * FineSpacing * FineSpacing, FineSupport);
+                sum += CoarseSpacing * CoarseSpacing * DensityKernel((x * x + y * y) * CoarseSpacing * CoarseSpacing, 2 * CoarseSpacing);
             return sum;
         }
 
