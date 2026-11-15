@@ -9,13 +9,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 {
     public sealed class GlassTankDamBreak : MonoBehaviour
     {
-        private static readonly Vector3 TankSize = new Vector3(1.2f, .5f, .4f);
-        private Vector3 ColumnSize => new Vector3(doubleVolume ? .4f : .2f, .3f, TankSize.z);
+        private static readonly Vector3 TankSize = new Vector3(1.2f, .5f, .8f);
+        private const float PressureCellSize = .05f;
+        private const int FineParticleDensity = 3375000;
+        private Vector3 ColumnSize => GetColumnSize(doubleVolume);
+        private static Vector3 GetColumnSize(bool doubled) => new Vector3(doubled ? .4f : .2f, .3f, TankSize.z);
         private static readonly int[] ParticleStepMicroseconds = { 400, 800, 1000 };
         private static readonly string[] ParticleStepLabels = { "0.4 ms", "0.8 ms", "1.0 ms" };
         private int particleStepIndex;
         private long elapsedMicroseconds;
-        private float VolumeLitres => doubleVolume ? 48f : 24f;
+        private float VolumeLitres => GetVolumeLitres(ColumnSize);
+        private static float GetVolumeLitres(Vector3 size) => size.x * size.y * size.z * 1000f;
         private const float ArrivalPlane = .55f;
         private const float BlockSide = .15f;
         private static readonly Vector3 BlockCentre = new Vector3(.325f, BlockSide * .5f, .025f);
@@ -59,15 +63,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             glass.SetInt("_ZWrite", 0);
             glass.EnableKeyword("_ALPHABLEND_ON");
             glass.renderQueue = (int)RenderQueue.Transparent;
-            Box("Tank base", new Vector3(0, -.025f, 0), new Vector3(1.25f, .05f, .45f), stone);
+            Box("Tank base", new Vector3(0, -.025f, 0), new Vector3(1.25f, .05f, TankSize.z + .05f), stone);
             Box("Bench", new Vector3(0, -.09f, 0), new Vector3(2.5f, .08f, 1.3f), stone);
             BuildTestBlock();
             for (int sign = -1; sign <= 1; sign += 2)
             {
-                Box("Long glass wall", new Vector3(0, .25f, sign * .204f),
+                Box("Long glass wall", new Vector3(0, .25f, sign * (TankSize.z * .5f + .004f)),
                     new Vector3(1.216f, .5f, .008f), glass);
                 Box("End glass wall", new Vector3(sign * .604f, .25f, 0),
-                    new Vector3(.008f, .5f, .4f), glass);
+                    new Vector3(.008f, .5f, TankSize.z), glass);
             }
             if (SystemInfo.supportsComputeShaders && fluidCompute != null && surfaceArguments != null &&
                 waterShader != null && waterShader.isSupported)
@@ -136,7 +140,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             solverObject.transform.position = Vector3.up * (TankSize.y * .5f);
             solverObject.transform.localScale = TankSize;
             var spawner = solverObject.AddComponent<Spawner3D>();
-            spawner.particleSpawnDensity = fine ? 3375000 : 1000000;
+            spawner.particleSpawnDensity = fine ? FineParticleDensity : 1000000;
             Vector3 column = ColumnSize;
             spawner.spawnRegions = new[] { new Spawner3D.SpawnRegion
             {
@@ -229,8 +233,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void ApplyAdaptivePressure()
         {
-            const int width = 24, height = 10, depth = 8;
-            const float cell = .05f;
+            const int width = 24, height = 10;
+            const float cell = PressureCellSize;
+            int depth = Mathf.RoundToInt(TankSize.z / cell);
             var points = new Vector3[fluid.positionBuffer.count];
             var velocities = new Vector3[points.Length];
             fluid.positionBuffer.GetData(points);
@@ -325,7 +330,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 int inside = 0, atEnd = 0;
                 foreach (Vector3 point in points)
                 {
-                    if (!(Mathf.Abs(point.x) <= .601f && Mathf.Abs(point.z) <= .201f &&
+                    if (!(Mathf.Abs(point.x) <= .601f && Mathf.Abs(point.z) <= TankSize.z * .5f + .001f &&
                         point.y >= -.001f && point.y <= .501f)) continue;
                     inside++;
                     if (point.x >= ArrivalPlane && point.y <= .05f) atEnd++;
@@ -386,8 +391,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     }
                 }
                 adaptivePressure = GUILayout.Toggle(adaptivePressure, "Adaptive pressure (experimental CPU/GPU)");
-                bool selectedDouble = GUILayout.Toggle(doubleVolume, "Double water volume (48 L)");
-                int fineCount = selectedDouble ? 162000 : 81000;
+                bool selectedDouble = GUILayout.Toggle(doubleVolume,
+                    $"Double water volume ({GetVolumeLitres(GetColumnSize(true)):F0} L)");
+                var fineRegion = new Spawner3D.SpawnRegion { boxSize = GetColumnSize(selectedDouble) };
+                Vector3Int fineDimensions = fineRegion.BoxParticleCount(FineParticleDensity);
+                int fineCount = fineDimensions.x * fineDimensions.y * fineDimensions.z;
                 bool selectedFine = GUILayout.Toggle(fine, $"Fine resolution ({fineCount:N0} particles)");
                 if (reset || selectedStep != particleStepIndex || selectedDouble != doubleVolume || selectedFine != fine)
                 {
@@ -411,7 +419,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void ComparePressureProjections()
         {
             const double spacing = .05;
-            const int width = 24, height = 10, depth = 8;
+            const int width = 24, height = 10;
+            int depth = Mathf.RoundToInt(TankSize.z / PressureCellSize);
             var heights = new int[width * depth];
             int[] raisedFloor = BuildPressureFloor(width, depth, (float)spacing);
             System.Array.Copy(raisedFloor, heights, heights.Length);
