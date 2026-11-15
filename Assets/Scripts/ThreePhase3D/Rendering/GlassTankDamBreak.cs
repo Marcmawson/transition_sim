@@ -28,6 +28,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private int selectedBenchmarkSpacing = 2;
         private (bool WallPressure, int SpacingIndex)? pendingBenchmarkRun;
         private float BenchmarkSpacing => BenchmarkSpacings[benchmarkSpacingIndex];
+        private int BenchmarkStepMicroseconds => Mathf.RoundToInt(400 * BenchmarkSpacing / BenchmarkSpacings[0]);
         private int benchmarkReadsPending;
         private float benchmarkH2, benchmarkSheet, benchmarkPeak, benchmarkJet, benchmarkJetPeak;
         private Transform tankGeometry;
@@ -311,21 +312,24 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 pendingBenchmarkRun = null;
                 PrepareColumn();
                 running = true;
-                Debug.Log($"MARIN run started · {BenchmarkSpacing * 1000:0.#} mm particle spacing · GPU wall pressure {(benchmarkWallPressure ? "ON (1)" : "OFF (0)")}", this);
+                Debug.Log($"MARIN run started · {BenchmarkSpacing * 1000:0.#} mm particle spacing · {BenchmarkStepMicroseconds / 1000f:0.###} ms max step · GPU wall pressure {(benchmarkWallPressure ? "ON (1)" : "OFF (0)")}", this);
                 return;
             }
 
             if (!running || fluid.positionBuffer == null) return;
             pendingSeconds = Mathf.Min(pendingSeconds + Time.unscaledDeltaTime * .25f, .008f);
-            int stepMicroseconds = benchmark ? 400 : ParticleStepMicroseconds[particleStepIndex];
-            float stepSeconds = stepMicroseconds / 1000000f;
-            int steps = Mathf.Min(12, Mathf.FloorToInt(pendingSeconds / stepSeconds));
+            int stepMicroseconds = benchmark ? BenchmarkStepMicroseconds : ParticleStepMicroseconds[particleStepIndex];
+            int maxSteps = 12;
             if (benchmark)
             {
-                long remaining = BenchmarkSampleInterval - elapsedMicroseconds % BenchmarkSampleInterval;
-                steps = Mathf.Min(steps, (int)(remaining / stepMicroseconds));
+                int remaining = BenchmarkSampleInterval - (int)(elapsedMicroseconds % BenchmarkSampleInterval);
+                // Take a shorter last step when needed to land exactly on the sample time.
+                stepMicroseconds = Mathf.Min(stepMicroseconds, remaining);
+                maxSteps = Mathf.Min(maxSteps, remaining / stepMicroseconds);
             }
-            else if (adaptivePressure)
+            float stepSeconds = stepMicroseconds / 1000000f;
+            int steps = Mathf.Min(maxSteps, Mathf.FloorToInt(pendingSeconds / stepSeconds));
+            if (!benchmark && adaptivePressure)
             {
                 long untilProjection = ProjectionIntervalMicroseconds - elapsedMicroseconds % ProjectionIntervalMicroseconds;
                 steps = Mathf.Min(steps, (int)(untilProjection / stepMicroseconds));
@@ -444,6 +448,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             float seconds = elapsedMicroseconds / 1000000f;
             int wallPressure = benchmarkWallPressure ? 1 : 0;
             float spacingMillimetres = BenchmarkSpacing * 1000;
+            float maxStepMilliseconds = BenchmarkStepMicroseconds / 1000f;
             benchmarkReadsPending++;
             AsyncGPUReadback.Request(fluid.positionBuffer, request =>
             {
@@ -476,7 +481,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 benchmarkJet = SupportedJetHeight(jet);
                 benchmarkJetPeak = Mathf.Max(benchmarkJetPeak, benchmarkJet);
                 Debug.Log(System.FormattableString.Invariant(
-                    $"MARIN,t_s,H2_p95_m,box_zone_p95_m,jet_max_m,jet_supported_m,jet_count,spacing_mm,wall_pressure: {seconds:F3},{benchmarkH2:F3},{benchmarkSheet:F3},{jetMax:F3},{benchmarkJet:F3},{jet.Count},{spacingMillimetres:0.#},{wallPressure}"), this);
+                    $"MARIN,t_s,H2_p95_m,box_zone_p95_m,jet_max_m,jet_supported_m,jet_count,max_step_ms,spacing_mm,wall_pressure: {seconds:F3},{benchmarkH2:F3},{benchmarkSheet:F3},{jetMax:F3},{benchmarkJet:F3},{jet.Count},{maxStepMilliseconds:0.###},{spacingMillimetres:0.#},{wallPressure}"), this);
             });
         }
 
@@ -560,7 +565,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
             if (benchmark)
             {
-                GUILayout.Label("MARIN single-box benchmark · GPU liquid · step 0.4 ms");
+                GUILayout.Label($"MARIN single-box benchmark · GPU · max step {BenchmarkStepMicroseconds / 1000f:0.###} ms");
                 GUILayout.Label("Bulk-water sheet only · 20 ms samples in Console");
                 GUILayout.Label($"Time {elapsedMicroseconds / 1000000f:F3} s / 1.800 s");
                 GUILayout.Label($"H2 {benchmarkH2:F3} m · box zone {benchmarkSheet:F3} m · peak {benchmarkPeak:F3} m (p95)");
