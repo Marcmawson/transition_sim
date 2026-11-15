@@ -125,11 +125,11 @@ float Remap01(float val, float minVal, float maxVal)
 }
 
 // Match FluidSim.MaxIceBodies and the host uniform arrays.
-#define MAX_ICE_BODIES 4
+#define MAX_BOX_BOUNDARIES 6
 int iceCount;
-float4 iceHalfExtents[MAX_ICE_BODIES];
-float4x4 iceWorldToLocal[MAX_ICE_BODIES], iceLocalToWorld[MAX_ICE_BODIES];
-float4 iceVelocity[MAX_ICE_BODIES], iceAngularVelocity[MAX_ICE_BODIES], iceMassCentre[MAX_ICE_BODIES];
+float4 iceHalfExtents[MAX_BOX_BOUNDARIES];
+float4x4 iceWorldToLocal[MAX_BOX_BOUNDARIES], iceLocalToWorld[MAX_BOX_BOUNDARIES];
+float4 iceVelocity[MAX_BOX_BOUNDARIES], iceAngularVelocity[MAX_BOX_BOUNDARIES], iceMassCentre[MAX_BOX_BOUNDARIES];
 
 void ResolveIceBody(int index, float3 previous, inout float3 position, inout float3 velocity)
 {
