@@ -101,7 +101,12 @@ namespace Seb.Fluid.Simulation
 
 		public void SetStaticBoxBoundary(int index, Vector3 centre, Vector3 size)
 		{
-			SetBoxBoundary(index, centre, Quaternion.identity, size, Vector3.zero, Vector3.zero, centre);
+			SetStaticBoxBoundary(index, centre, size, Quaternion.identity);
+		}
+
+		public void SetStaticBoxBoundary(int index, Vector3 centre, Vector3 size, Quaternion rotation)
+		{
+			SetBoxBoundary(index, centre, rotation, size, Vector3.zero, Vector3.zero, centre);
 		}
 
 		private void SetBoxBoundary(int index, Vector3 centre, Quaternion rotation, Vector3 size,
