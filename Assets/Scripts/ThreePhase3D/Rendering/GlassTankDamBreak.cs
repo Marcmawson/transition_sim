@@ -21,8 +21,16 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private float VolumeLitres => GetVolumeLitres(ColumnSize);
         private static float GetVolumeLitres(Vector3 size) => size.x * size.y * size.z * 1000f;
         private const float ArrivalPlane = .55f;
-        private static readonly Vector3 BaffleSize = new Vector3(.025f, .125f, .275f);
-        private static readonly float BaffleOffset = (TankSize.z - BaffleSize.z) * .5f;
+        private static readonly Vector3 BaffleSize = new Vector3(.025f, .25f, .275f);
+        private const float BaffleAngle = 30f;
+        private static readonly Vector3 BaffleHalfSize = BaffleSize * .5f;
+        private static readonly float BaffleSin = Mathf.Sin(BaffleAngle * Mathf.Deg2Rad);
+        private static readonly float BaffleCos = Mathf.Cos(BaffleAngle * Mathf.Deg2Rad);
+        private static readonly float BaffleExtentX = BaffleCos * BaffleHalfSize.x + BaffleSin * BaffleHalfSize.z;
+        private static readonly float BaffleExtentZ = BaffleSin * BaffleHalfSize.x + BaffleCos * BaffleHalfSize.z;
+        private static readonly float BaffleOffset = TankSize.z * .5f - BaffleExtentZ;
+        private static Quaternion BaffleRotation(int index) =>
+            Quaternion.Euler(0, index % 2 == 0 ? BaffleAngle : -BaffleAngle, 0);
         private static readonly Vector3[] BaffleCentres =
         {
             new Vector3(-.125f, BaffleSize.y * .5f, -BaffleOffset),
@@ -72,7 +80,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             Box("Bench", new Vector3(0, -.09f, 0), new Vector3(2.5f, .08f, 1.3f), stone);
             var baffle = MakeMaterial(new Color(.24f, .36f, .39f));
             for (int i = 0; i < BaffleCentres.Length; i++)
-                Box($"Channel baffle {i + 1}", BaffleCentres[i], BaffleSize, baffle);
+                Box($"Channel baffle {i + 1}", BaffleCentres[i], BaffleSize, baffle, BaffleRotation(i));
             for (int sign = -1; sign <= 1; sign += 2)
             {
                 Box("Long glass wall", new Vector3(0, .25f, sign * (TankSize.z * .5f + .004f)),
@@ -92,12 +100,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             return material;
         }
 
-        private void Box(string label, Vector3 position, Vector3 size, Material material)
+        private void Box(string label, Vector3 position, Vector3 size, Material material, Quaternion? rotation = null)
         {
             var panel = GameObject.CreatePrimitive(PrimitiveType.Cube);
             panel.name = label;
             panel.transform.SetParent(transform);
-            panel.transform.position = position;
+            panel.transform.SetPositionAndRotation(position, rotation ?? Quaternion.identity);
             panel.transform.localScale = size;
             var renderer = panel.GetComponent<MeshRenderer>();
             renderer.sharedMaterial = material;
@@ -144,7 +152,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.manualControl = true;
             fluid.gravity = -9.81f;
             for (int i = 0; i < BaffleCentres.Length; i++)
-                fluid.SetStaticBoxBoundary(i, BaffleCentres[i], BaffleSize);
+                fluid.SetStaticBoxBoundary(i, BaffleCentres[i], BaffleSize, BaffleRotation(i));
             fluid.IceCount = BaffleCentres.Length;
             fluid.smoothingRadius = radius;
             fluid.targetDensity = InteriorDensity(spacing, radius);
@@ -296,10 +304,18 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 float worldX = (x + .5f) * spacing - TankSize.x * .5f;
                 float worldZ = (z + .5f) * spacing - TankSize.z * .5f;
-                foreach (Vector3 centre in BaffleCentres)
+                for (int i = 0; i < BaffleCentres.Length; i++)
                 {
-                    if (Mathf.Abs(worldX - centre.x) < BaffleSize.x * .5f &&
-                        Mathf.Abs(worldZ - centre.z) < BaffleSize.z * .5f)
+                    float dx = worldX - BaffleCentres[i].x;
+                    float dz = worldZ - BaffleCentres[i].z;
+                    float halfCell = spacing * .5f;
+                    if (Mathf.Abs(dx) >= BaffleExtentX + halfCell ||
+                        Mathf.Abs(dz) >= BaffleExtentZ + halfCell) continue;
+
+                    float sin = i % 2 == 0 ? BaffleSin : -BaffleSin;
+                    float localPadding = halfCell * (BaffleCos + BaffleSin);
+                    if (Mathf.Abs(BaffleCos * dx - sin * dz) < BaffleHalfSize.x + localPadding &&
+                        Mathf.Abs(sin * dx + BaffleCos * dz) < BaffleHalfSize.z + localPadding)
                         floor[x + width * z] = Mathf.RoundToInt(BaffleSize.y / spacing);
                 }
             }
