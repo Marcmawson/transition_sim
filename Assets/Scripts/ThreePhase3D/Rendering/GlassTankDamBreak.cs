@@ -135,10 +135,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.viscosityStrength = 2e-8f * Mathf.Pow(spacing / .001f, 3);
             fluid.collisionDamping = .05f;
             bool sprayAvailable = sprayShader != null && sprayShader.isSupported && sprayArguments != null;
-            fluid.maxFoamParticleCount = sprayAvailable ? 12000 : 1;
+            fluid.maxFoamParticleCount = sprayAvailable ? 24000 : 1;
             fluid.foamActive = sprayAvailable && sprayEnabled;
             fluid.sprayOnly = sprayAvailable;
-            fluid.trappedAirSpawnRate = fine ? 20f : 45f;
+            fluid.trappedAirSpawnRate = fine ? 40f : 90f;
             fluid.trappedAirVelocityMinMax = new Vector2(.35f, 5f);
             fluid.foamKineticEnergyMinMax = new Vector2(.16f, 2.5f);
             fluid.sprayClassifyMaxNeighbours = 16;
@@ -149,7 +149,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 spray.copyCountToArgsCompute = Instantiate(sprayArguments);
                 spray.autoDraw = true;
                 spray.visibleSpray = true;
-                spray.scale = .32f;
+                spray.scale = .16f;
             }
             fluid.renderToTex3D = fluid.worldSpaceSurface = true;
             fluid.densityTextureRes = fine ? 192 : 128;
