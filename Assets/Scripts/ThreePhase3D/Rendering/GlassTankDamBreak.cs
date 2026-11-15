@@ -19,7 +19,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const float JetSliceDepth = .06f;
         private const float JetSupportHeight = .04f;
         private const int BenchmarkSampleInterval = 20000;
-        private const int BenchmarkMaxStepsPerFrame = 24;
         private const int BenchmarkEndTime = 1800000;
         private bool benchmark;
         private bool benchmarkWallPressure;
@@ -27,7 +26,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private static readonly string[] BenchmarkSpacingLabels = { "20 mm", "15 mm", "7.5 mm" };
         private int benchmarkSpacingIndex;
         private int selectedBenchmarkSpacing = 2;
-        private (bool WallPressure, int SpacingIndex)? pendingBenchmarkRun;
+        private bool benchmarkMeasurementsOnly;
+        private bool selectedMeasurementsOnly;
+        private double benchmarkStartTime;
+        private (bool WallPressure, int SpacingIndex, bool MeasurementsOnly)? pendingBenchmarkRun;
         private float BenchmarkSpacing => BenchmarkSpacings[benchmarkSpacingIndex];
         private int BenchmarkStepMicroseconds => Mathf.RoundToInt(400 * BenchmarkSpacing / BenchmarkSpacings[0]);
         private int benchmarkReadsPending;
@@ -279,16 +281,20 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 spray.visibleSpray = true;
                 spray.scale = .08f;
             }
-            fluid.renderToTex3D = fluid.worldSpaceSurface = true;
+            fluid.worldSpaceSurface = true;
+            fluid.renderToTex3D = !benchmark || !benchmarkMeasurementsOnly;
             fluid.densityTextureRes = fine ? 192 : 128;
 
-            var surface = solverObject.AddComponent<MarchingCubesFluidRenderer>();
-            surface.sim = fluid;
-            surface.drawShader = waterShader;
-            surface.renderArgsCompute = Instantiate(surfaceArguments);
-            surface.worldSpaceSurface = true;
-            surface.col = new Color(1, 1, 1, .12f);
-            surface.isoLevel = fluid.targetDensity * .45f;
+            if (fluid.renderToTex3D)
+            {
+                var surface = solverObject.AddComponent<MarchingCubesFluidRenderer>();
+                surface.sim = fluid;
+                surface.drawShader = waterShader;
+                surface.renderArgsCompute = Instantiate(surfaceArguments);
+                surface.worldSpaceSurface = true;
+                surface.col = new Color(1, 1, 1, .12f);
+                surface.isoLevel = fluid.targetDensity * .45f;
+            }
             solverObject.SetActive(true);
         }
 
@@ -309,26 +315,27 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             if (pendingBenchmarkRun.HasValue && benchmarkReadsPending == 0)
             {
-                (benchmarkWallPressure, benchmarkSpacingIndex) = pendingBenchmarkRun.Value;
+                (benchmarkWallPressure, benchmarkSpacingIndex, benchmarkMeasurementsOnly) = pendingBenchmarkRun.Value;
                 pendingBenchmarkRun = null;
                 PrepareColumn();
                 running = true;
+                benchmarkStartTime = Time.realtimeSinceStartupAsDouble;
                 Debug.Log($"MARIN run started · {BenchmarkSpacing * 1000:0.#} mm particle spacing · {BenchmarkStepMicroseconds / 1000f:0.###} ms max step · GPU wall pressure {(benchmarkWallPressure ? "ON (1)" : "OFF (0)")}", this);
                 return;
             }
 
             if (!running || fluid.positionBuffer == null) return;
             float playbackRate = benchmark ? 1f : .25f;
-            float maxPendingSeconds = benchmark ? BenchmarkSampleInterval / 1000000f : .008f;
+            float maxPendingSeconds = benchmark ? 2 * BenchmarkSampleInterval / 1000000f : .008f;
             pendingSeconds = Mathf.Min(pendingSeconds + Time.unscaledDeltaTime * playbackRate, maxPendingSeconds);
             int stepMicroseconds = benchmark ? BenchmarkStepMicroseconds : ParticleStepMicroseconds[particleStepIndex];
-            int maxSteps = benchmark ? BenchmarkMaxStepsPerFrame : 12;
+            int maxSteps = 12;
             if (benchmark)
             {
                 int remaining = BenchmarkSampleInterval - (int)(elapsedMicroseconds % BenchmarkSampleInterval);
                 // Take a shorter last step when needed to land exactly on the sample time.
                 stepMicroseconds = Mathf.Min(stepMicroseconds, remaining);
-                maxSteps = Mathf.Min(maxSteps, remaining / stepMicroseconds);
+                maxSteps = remaining / stepMicroseconds;
             }
             float stepSeconds = stepMicroseconds / 1000000f;
             int steps = Mathf.Min(maxSteps, Mathf.FloorToInt(pendingSeconds / stepSeconds));
@@ -350,7 +357,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 if (benchmarkSample && SystemInfo.supportsAsyncGPUReadback)
                     SampleBenchmark();
-                if (elapsedMicroseconds >= BenchmarkEndTime) running = false;
+                if (elapsedMicroseconds >= BenchmarkEndTime)
+                {
+                    running = false;
+                    if (!SystemInfo.supportsAsyncGPUReadback) LogBenchmarkCompletion();
+                }
                 return;
             }
             if (adaptivePressure && elapsedMicroseconds % ProjectionIntervalMicroseconds == 0)
@@ -462,6 +473,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (request.hasError)
                 {
                     Debug.LogWarning($"MARIN benchmark readback failed at {seconds:F3} s.", this);
+                    if (seconds >= BenchmarkEndTime / 1000000f) LogBenchmarkCompletion();
                     return;
                 }
                 var gauge = new List<float>();
@@ -487,7 +499,16 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 benchmarkJetPeak = Mathf.Max(benchmarkJetPeak, benchmarkJet);
                 Debug.Log(System.FormattableString.Invariant(
                     $"MARIN,t_s,H2_p95_m,box_zone_p95_m,jet_max_m,jet_supported_m,jet_count,max_step_ms,spacing_mm,wall_pressure: {seconds:F3},{benchmarkH2:F3},{benchmarkSheet:F3},{jetMax:F3},{benchmarkJet:F3},{jet.Count},{maxStepMilliseconds:0.###},{spacingMillimetres:0.#},{wallPressure}"), this);
+                if (seconds >= BenchmarkEndTime / 1000000f) LogBenchmarkCompletion();
             });
+        }
+
+        private void LogBenchmarkCompletion()
+        {
+            double wallSeconds = Time.realtimeSinceStartupAsDouble - benchmarkStartTime;
+            Debug.Log($"MARIN completed in {wallSeconds:F1} wall-clock seconds · " +
+                $"{BenchmarkEndTime / 1000000d / wallSeconds:P1} of real time · " +
+                $"{BenchmarkSpacing * 1000:0.#} mm · {(benchmarkMeasurementsOnly ? "measurements only" : "water rendering on")}", this);
         }
 
         private static float SupportedJetHeight(List<float> sortedHeights)
@@ -553,7 +574,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void QueueBenchmarkRun(bool useWallPressure)
         {
             running = false;
-            pendingBenchmarkRun = (useWallPressure, selectedBenchmarkSpacing);
+            pendingBenchmarkRun = (useWallPressure, selectedBenchmarkSpacing, selectedMeasurementsOnly);
         }
 
         private void OnGUI()
@@ -581,7 +602,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUI.enabled = controlsEnabled && !pendingBenchmarkRun.HasValue;
                 GUILayout.Label("Particle spacing for next run");
                 selectedBenchmarkSpacing = GUILayout.Toolbar(selectedBenchmarkSpacing, BenchmarkSpacingLabels);
+                selectedMeasurementsOnly = GUILayout.Toggle(selectedMeasurementsOnly, "Measurements only · skip water rendering (next run)");
                 GUILayout.Label($"Current spacing {BenchmarkSpacing * 1000:0.#} mm · {fluid.positionBuffer?.count ?? 0:N0} particles");
+                if (benchmarkMeasurementsOnly) GUILayout.Label("Current run: measurements only");
                 if (GUILayout.Button("Start baseline run · wall pressure OFF"))
                     QueueBenchmarkRun(false);
                 if (GUILayout.Button("Start wall-pressure run · ON"))
