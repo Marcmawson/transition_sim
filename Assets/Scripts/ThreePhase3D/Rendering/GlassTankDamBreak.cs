@@ -9,11 +9,28 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 {
     public sealed class GlassTankDamBreak : MonoBehaviour
     {
-        private static readonly Vector3 TankSize = new Vector3(1.2f, .5f, .8f);
+        private static readonly Vector3 CityTankSize = new Vector3(1.2f, .5f, .8f);
+        // Kleefsman et al. (2005), Fig. 17, reflected so the wave moves in +X.
+        private static readonly Vector3 BenchmarkTankSize = new Vector3(3.22f, 1f, 1f);
+        private static readonly Vector3 BenchmarkColumn = new Vector3(1.228f, .55f, 1f);
+        private static readonly Bounds BenchmarkBox =
+            new Bounds(new Vector3(.9465f, .0805f, 0), new Vector3(.161f, .161f, .403f));
+        private const float BenchmarkH2X = .618f;
+        private const int BenchmarkSampleInterval = 20000;
+        private const int BenchmarkEndTime = 1800000;
+        private bool benchmark;
+        private int benchmarkReadsPending;
+        private float benchmarkH2, benchmarkSheet, benchmarkPeak;
+        private Transform tankGeometry;
+        private Material tankStone, tankGlass, benchmarkMaterial;
+        private Material[] cityPalette;
+        private Camera benchmarkCamera;
+        private Vector3 savedCameraPosition;
+        private Vector3 TankSize => benchmark ? BenchmarkTankSize : CityTankSize;
         private const float PressureCellSize = .05f;
         private const int FineParticleDensity = 3375000;
-        private Vector3 ColumnSize => GetColumnSize(doubleVolume);
-        private static Vector3 GetColumnSize(bool doubled) => new Vector3(doubled ? .4f : .2f, .3f, TankSize.z);
+        private Vector3 ColumnSize => benchmark ? BenchmarkColumn : GetColumnSize(doubleVolume);
+        private static Vector3 GetColumnSize(bool doubled) => new Vector3(doubled ? .4f : .2f, .3f, CityTankSize.z);
         private static readonly int[] ParticleStepMicroseconds = { 400, 800, 1000 };
         private static readonly string[] ParticleStepLabels = { "0.4 ms", "0.8 ms", "1.0 ms" };
         private int particleStepIndex;
@@ -71,27 +88,66 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             sunlight.intensity = 1.25f;
             sunlight.shadows = LightShadows.Soft;
 
-            var stone = MakeMaterial(new Color(.36f, .38f, .38f));
-            var glass = MakeMaterial(new Color(.46f, .78f, .85f, .12f));
+            tankStone = MakeMaterial(new Color(.36f, .38f, .38f));
+            benchmarkMaterial = MakeMaterial(new Color(.42f, .48f, .48f));
+            var glass = tankGlass = MakeMaterial(new Color(.46f, .78f, .85f, .12f));
             glass.SetOverrideTag("RenderType", "Transparent");
             glass.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
             glass.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
             glass.SetInt("_ZWrite", 0);
             glass.EnableKeyword("_ALPHABLEND_ON");
             glass.renderQueue = (int)RenderQueue.Transparent;
-            Box("Tank base", new Vector3(0, -.025f, 0), new Vector3(1.25f, .05f, TankSize.z + .05f), stone);
-            Box("Bench", new Vector3(0, -.09f, 0), new Vector3(2.5f, .08f, 1.3f), stone);
-            BuildCity();
-            for (int sign = -1; sign <= 1; sign += 2)
-            {
-                Box("Long glass wall", new Vector3(0, .25f, sign * (TankSize.z * .5f + .004f)),
-                    new Vector3(1.216f, .5f, .008f), glass);
-                Box("End glass wall", new Vector3(sign * .604f, .25f, 0),
-                    new Vector3(.008f, .5f, TankSize.z), glass);
-            }
+            RebuildTank();
             if (SystemInfo.supportsComputeShaders && fluidCompute != null && surfaceArguments != null &&
                 waterShader != null && waterShader.isSupported)
                 PrepareColumn();
+        }
+
+        private void RebuildTank()
+        {
+            if (tankGeometry != null)
+            {
+                tankGeometry.gameObject.SetActive(false);
+                Destroy(tankGeometry.gameObject);
+            }
+            tankGeometry = new GameObject("Tank geometry").transform;
+            tankGeometry.SetParent(transform, false);
+            Vector3 size = TankSize;
+            Box("Tank base", new Vector3(0, -.025f, 0), new Vector3(size.x + .05f, .05f, size.z + .05f), tankStone);
+            Box("Bench", new Vector3(0, -.09f, 0), new Vector3(Mathf.Max(2.5f, size.x + .2f), .08f, 1.3f), tankStone);
+            if (benchmark)
+                Box("MARIN benchmark obstacle", BenchmarkBox.center, BenchmarkBox.size, benchmarkMaterial);
+            else
+                BuildCity();
+            for (int sign = -1; sign <= 1; sign += 2)
+            {
+                Box("Long glass wall", new Vector3(0, size.y * .5f, sign * (size.z * .5f + .004f)),
+                    new Vector3(size.x + .016f, size.y, .008f), tankGlass);
+                Box("End glass wall", new Vector3(sign * (size.x * .5f + .004f), size.y * .5f, 0),
+                    new Vector3(.008f, size.y, size.z), tankGlass);
+            }
+        }
+
+        private void SetBenchmark(bool enabled)
+        {
+            benchmark = enabled;
+            if (enabled)
+            {
+                benchmarkCamera = Camera.main;
+                if (benchmarkCamera != null)
+                {
+                    savedCameraPosition = benchmarkCamera.transform.position;
+                    Vector3 focus = Vector3.up * .35f;
+                    benchmarkCamera.transform.position = focus + (savedCameraPosition - focus) * 2.25f;
+                }
+            }
+            else if (benchmarkCamera != null)
+            {
+                benchmarkCamera.transform.position = savedCameraPosition;
+                benchmarkCamera = null;
+            }
+            RebuildTank();
+            PrepareColumn();
         }
 
         private Material MakeMaterial(Color colour)
@@ -105,7 +161,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             var panel = GameObject.CreatePrimitive(PrimitiveType.Cube);
             panel.name = label;
-            panel.transform.SetParent(transform);
+            panel.transform.SetParent(tankGeometry);
             panel.transform.SetPositionAndRotation(position, rotation ?? Quaternion.identity);
             panel.transform.localScale = size;
             var renderer = panel.GetComponent<MeshRenderer>();
@@ -117,14 +173,16 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void BuildCity()
         {
-            var concrete = MakeMaterial(new Color(.51f, .54f, .53f));
-            var slate = MakeMaterial(new Color(.27f, .39f, .42f));
-            var stone = MakeMaterial(new Color(.39f, .46f, .45f));
-            var palette = new[] { slate, stone, concrete };
+            cityPalette ??= new[]
+            {
+                MakeMaterial(new Color(.27f, .39f, .42f)),
+                MakeMaterial(new Color(.39f, .46f, .45f)),
+                MakeMaterial(new Color(.51f, .54f, .53f))
+            };
             for (int i = 0; i < Buildings.Length; i++)
             {
                 var (bounds, rotation) = Buildings[i];
-                Material material = palette[i % palette.Length];
+                Material material = cityPalette[i % cityPalette.Length];
                 Box($"City building {i + 1}", bounds.center, bounds.size, material, rotation);
             }
         }
@@ -136,6 +194,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             activeSpray = -1;
             pendingSeconds = nextSample = submitMs = 0;
             arrival = retained = -1;
+            benchmarkH2 = benchmarkSheet = benchmarkPeak = 0;
             elapsedMicroseconds = 0;
             pressureSamples = 0;
             if (solverObject != null)
@@ -148,17 +207,20 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             solverObject = new GameObject("GPU tank water");
             solverObject.SetActive(false);
             solverObject.transform.SetParent(transform);
-            solverObject.transform.position = Vector3.up * (TankSize.y * .5f);
-            solverObject.transform.localScale = TankSize;
+            Vector3 solverSize = TankSize;
+            // Keep the solver ceiling above the open rim in the reference experiment.
+            if (benchmark) solverSize.y += .5f;
+            solverObject.transform.position = Vector3.up * (solverSize.y * .5f);
+            solverObject.transform.localScale = solverSize;
             var spawner = solverObject.AddComponent<Spawner3D>();
-            spawner.particleSpawnDensity = fine ? FineParticleDensity : 1000000;
+            spawner.particleSpawnDensity = benchmark ? 125000 : fine ? FineParticleDensity : 1000000;
             Vector3 column = ColumnSize;
             spawner.spawnRegions = new[] { new Spawner3D.SpawnRegion
             {
                 centre = new Vector3((column.x - TankSize.x) * .5f, column.y * .5f, 0),
                 boxSize = column
             }};
-            float spacing = fine ? 1f / 150f : .01f;
+            float spacing = benchmark ? .02f : fine ? 1f / 150f : .01f;
             float radius = 2 * spacing;
             solverCompute = Instantiate(fluidCompute);
             fluid = solverObject.AddComponent<FluidSim>();
@@ -166,19 +228,27 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.spawner = spawner;
             fluid.manualControl = true;
             fluid.gravity = -9.81f;
-            for (int i = 0; i < Buildings.Length; i++)
+            if (benchmark)
             {
-                var (bounds, rotation) = Buildings[i];
-                fluid.SetStaticBoxBoundary(i, bounds.center, bounds.size, rotation);
+                fluid.SetStaticBoxBoundary(0, BenchmarkBox.center, BenchmarkBox.size);
+                fluid.IceCount = 1;
             }
-            fluid.IceCount = Buildings.Length;
+            else
+            {
+                for (int i = 0; i < Buildings.Length; i++)
+                {
+                    var (bounds, rotation) = Buildings[i];
+                    fluid.SetStaticBoxBoundary(i, bounds.center, bounds.size, rotation);
+                }
+                fluid.IceCount = Buildings.Length;
+            }
             fluid.smoothingRadius = radius;
             fluid.targetDensity = InteriorDensity(spacing, radius);
             fluid.pressureMultiplier = 100f;
             fluid.nearPressureMultiplier = 1f;
             fluid.viscosityStrength = 2e-8f * Mathf.Pow(spacing / .001f, 3);
             fluid.collisionDamping = .05f;
-            bool sprayAvailable = sprayShader != null && sprayShader.isSupported && sprayArguments != null;
+            bool sprayAvailable = !benchmark && sprayShader != null && sprayShader.isSupported && sprayArguments != null;
             fluid.maxFoamParticleCount = sprayAvailable ? 48000 : 1;
             fluid.foamActive = sprayAvailable && sprayEnabled;
             fluid.sprayOnly = sprayAvailable;
@@ -225,10 +295,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             if (!running || fluid.positionBuffer == null) return;
             pendingSeconds = Mathf.Min(pendingSeconds + Time.unscaledDeltaTime * .25f, .008f);
-            int stepMicroseconds = ParticleStepMicroseconds[particleStepIndex];
+            int stepMicroseconds = benchmark ? 400 : ParticleStepMicroseconds[particleStepIndex];
             float stepSeconds = stepMicroseconds / 1000000f;
             int steps = Mathf.Min(12, Mathf.FloorToInt(pendingSeconds / stepSeconds));
-            if (adaptivePressure)
+            if (benchmark)
+            {
+                long remaining = BenchmarkSampleInterval - elapsedMicroseconds % BenchmarkSampleInterval;
+                steps = Mathf.Min(steps, (int)(remaining / stepMicroseconds));
+            }
+            else if (adaptivePressure)
             {
                 long untilProjection = ProjectionIntervalMicroseconds - elapsedMicroseconds % ProjectionIntervalMicroseconds;
                 steps = Mathf.Min(steps, (int)(untilProjection / stepMicroseconds));
@@ -240,6 +315,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             submitMs = (float)((Time.realtimeSinceStartupAsDouble - start) * 1000 / steps);
             pendingSeconds -= steps * stepSeconds;
             elapsedMicroseconds += steps * stepMicroseconds;
+            if (benchmark)
+            {
+                if (elapsedMicroseconds % BenchmarkSampleInterval == 0 && SystemInfo.supportsAsyncGPUReadback)
+                    SampleBenchmark();
+                if (elapsedMicroseconds >= BenchmarkEndTime) running = false;
+                return;
+            }
             if (adaptivePressure && elapsedMicroseconds % ProjectionIntervalMicroseconds == 0)
                 ApplyAdaptivePressure();
             if (!sampling && SystemInfo.supportsAsyncGPUReadback && fluid.SimulatedSeconds >= nextSample)
@@ -314,7 +396,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
         }
 
-        private static int[] BuildPressureFloor(int width, int depth, float spacing)
+        private int[] BuildPressureFloor(int width, int depth, float spacing)
         {
             var floor = new int[width * depth];
             for (int z = 0; z < depth; z++)
@@ -332,6 +414,48 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 }
             }
             return floor;
+        }
+
+        private void SampleBenchmark()
+        {
+            int run = generation;
+            float seconds = elapsedMicroseconds / 1000000f;
+            benchmarkReadsPending++;
+            AsyncGPUReadback.Request(fluid.positionBuffer, request =>
+            {
+                if (this == null || run != generation) return;
+                benchmarkReadsPending--;
+                if (request.hasError)
+                {
+                    Debug.LogWarning($"MARIN benchmark readback failed at {seconds:F3} s.", this);
+                    return;
+                }
+                var gauge = new List<float>();
+                var impact = new List<float>();
+                foreach (Vector3 point in request.GetData<Vector3>())
+                {
+                    if (Mathf.Abs(point.x - BenchmarkH2X) <= .04f && Mathf.Abs(point.z) <= .04f)
+                        gauge.Add(point.y);
+                    if (point.x >= BenchmarkBox.min.x - .08f && point.x <= BenchmarkBox.max.x + .04f &&
+                        Mathf.Abs(point.z) <= BenchmarkBox.extents.z)
+                        impact.Add(point.y);
+                }
+
+                benchmarkH2 = SurfacePercentile(gauge);
+                benchmarkSheet = SurfacePercentile(impact);
+                benchmarkPeak = Mathf.Max(benchmarkPeak, benchmarkSheet);
+                Debug.Log(FormattableBenchmark(seconds, benchmarkH2, benchmarkSheet), this);
+            });
+        }
+
+        private static string FormattableBenchmark(float seconds, float gauge, float sheet) =>
+            System.FormattableString.Invariant($"MARIN,t_s,H2_p95_m,box_zone_p95_m: {seconds:F3},{gauge:F3},{sheet:F3}");
+
+        private static float SurfacePercentile(List<float> heights)
+        {
+            if (heights.Count == 0) return 0;
+            heights.Sort();
+            return heights[Mathf.CeilToInt(heights.Count * .95f) - 1];
         }
 
         private void SampleWater()
@@ -380,6 +504,36 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             GUILayout.BeginArea(new Rect(16, 16, 390, 410), GUI.skin.box);
             GUILayout.Label($"Glass Tank Dam Break · {VolumeLitres:F0} L");
+            if (fluid != null)
+            {
+                bool modeControlEnabled = GUI.enabled;
+                GUI.enabled = modeControlEnabled && benchmarkReadsPending == 0 && !sampling && !samplingSpray;
+                if (GUILayout.Button(benchmark ? "Return to city tank" : "Single-box benchmark"))
+                    SetBenchmark(!benchmark);
+                GUI.enabled = modeControlEnabled;
+            }
+            if (benchmark)
+            {
+                GUILayout.Label("MARIN single-box benchmark · GPU liquid · step 0.4 ms");
+                GUILayout.Label("Bulk-water sheet only · 20 ms samples in Console");
+                GUILayout.Label($"Time {elapsedMicroseconds / 1000000f:F3} s / 1.800 s");
+                GUILayout.Label($"H2 {benchmarkH2:F3} m · box zone {benchmarkSheet:F3} m · peak {benchmarkPeak:F3} m (p95)");
+                if (!SystemInfo.supportsAsyncGPUReadback) GUILayout.Label("GPU readback unavailable.");
+                if (fluid.positionBuffer != null)
+                {
+                    if (elapsedMicroseconds < BenchmarkEndTime && GUILayout.Button(running ? "Pause" : "Release / resume"))
+                    {
+                        running = !running;
+                        pendingSeconds = 0;
+                    }
+                    bool resetEnabled = GUI.enabled;
+                    GUI.enabled = resetEnabled && benchmarkReadsPending == 0;
+                    if (GUILayout.Button("Reset benchmark")) PrepareColumn();
+                    GUI.enabled = resetEnabled;
+                }
+                GUILayout.EndArea();
+                return;
+            }
             if (fluid == null)
             {
                 GUILayout.Label("GPU water assets or compute support unavailable.");
