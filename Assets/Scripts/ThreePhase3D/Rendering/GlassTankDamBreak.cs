@@ -88,10 +88,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const int ProfileMeasuredSteps = 64;
         private const int ProfileBatchSteps = 4;
         private bool profileRunning, profileWallPressure, profileAtImpact;
-        private int profileSpacing, profileWarmup, profileWarmupTarget, profileSubmitted, profileDrainFrames;
+        private int profileSpacing, profileWarmup, profileWarmupTarget, profileSubmitted, profileBatchFrame;
+        private double profileBatchDeadline, profileCpuSeconds;
         private Recorder[] profileRecorders;
-        private long[] profileCpuNanoseconds, profileGpuNanoseconds;
-        private int[] profileCpuSamples, profileGpuSamples;
+        private long[] profileGpuNanoseconds;
+        private int[] profileGpuSamples;
         private string[] profileResults;
 
         [SerializeField] private ComputeShader fluidCompute;
@@ -436,7 +437,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             benchmarkSpacingIndex = profileSpacing;
             benchmarkWallPressure = profileWallPressure;
             PrepareColumn();
-            profileWarmup = profileSubmitted = profileDrainFrames = 0;
+            profileWarmup = profileSubmitted = 0;
+            profileCpuSeconds = 0;
             profileWarmupTarget = profileAtImpact ? Mathf.RoundToInt(560000f / BenchmarkStepMicroseconds) : ProfileWarmupSteps;
             profileResults = null;
             profileRunning = true;
@@ -459,53 +461,73 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 profileRecorders = fluid.StartStageProfiling();
                 int count = profileRecorders.Length;
-                profileCpuNanoseconds = new long[count];
                 profileGpuNanoseconds = new long[count];
-                profileCpuSamples = new int[count];
                 profileGpuSamples = new int[count];
             }
 
-            for (int i = 0; i < profileRecorders.Length; i++)
+            if (profileSubmitted > 0)
             {
-                Recorder recorder = profileRecorders[i];
-                profileCpuNanoseconds[i] += recorder.elapsedNanoseconds;
-                profileGpuNanoseconds[i] += recorder.gpuElapsedNanoseconds;
-                profileCpuSamples[i] += recorder.sampleBlockCount;
-                profileGpuSamples[i] += recorder.gpuSampleBlockCount;
+                // Unity publishes GPU recorder data several frames after submission.
+                // Keep only one measured batch in flight so it can be counted once.
+                if (Time.frameCount - profileBatchFrame < 3) return;
+                bool batchComplete = true;
+                for (int i = 0; i < profileRecorders.Length; i++)
+                {
+                    Recorder recorder = profileRecorders[i];
+                    if (profileGpuSamples[i] < profileSubmitted &&
+                        recorder.gpuSampleBlockCount == ProfileBatchSteps &&
+                        recorder.gpuElapsedNanoseconds > 0)
+                    {
+                        profileGpuNanoseconds[i] += recorder.gpuElapsedNanoseconds;
+                        profileGpuSamples[i] += ProfileBatchSteps;
+                    }
+                    batchComplete &= profileGpuSamples[i] == profileSubmitted;
+                }
+
+                if (!batchComplete)
+                {
+                    if (Time.realtimeSinceStartupAsDouble < profileBatchDeadline) return;
+                    FinishPerformanceRun(stepSeconds, complete: false);
+                    return;
+                }
             }
 
-            if (profileSubmitted < ProfileMeasuredSteps)
+            if (profileSubmitted == ProfileMeasuredSteps)
             {
-                fluid.AdvanceManually(stepSeconds, ProfileBatchSteps, updateSurface: false);
-                profileSubmitted += ProfileBatchSteps;
+                FinishPerformanceRun(stepSeconds, complete: true);
                 return;
             }
 
-            // The Unity GPU recorder delivers results several frames after submission.
-            if (++profileDrainFrames < 60 &&
-                (System.Array.Exists(profileGpuSamples, count => count < ProfileMeasuredSteps) ||
-                 System.Array.Exists(profileCpuSamples, count => count < ProfileMeasuredSteps)))
-                return;
-
-            profileResults = new string[profileRecorders.Length];
-            for (int i = 0; i < profileResults.Length; i++)
-            {
-                string cpu = FormatStageTime(profileCpuNanoseconds[i], profileCpuSamples[i]);
-                string gpu = FormatStageTime(profileGpuNanoseconds[i], profileGpuSamples[i]);
-                profileResults[i] = $"{FluidSim.StageProfileLabels[i]} · GPU {gpu} · CPU {cpu}";
-            }
-            Debug.Log($"MARIN solver performance · {SystemInfo.graphicsDeviceName} · {SystemInfo.graphicsDeviceType} · " +
-                $"{fluid.positionBuffer.count:N0} particles · {BenchmarkSpacing * 1000:0.#} mm · " +
-                $"{BenchmarkStepMicroseconds / 1000f:0.###} ms step · sampled from {profileWarmup * stepSeconds:F4} s · box wall pressure {(benchmarkWallPressure ? "ON" : "OFF")}\n" +
-                string.Join("\n", profileResults), this);
-            StopPerformanceRecorders();
-            profileRunning = false;
+            profileBatchFrame = Time.frameCount;
+            long start = System.Diagnostics.Stopwatch.GetTimestamp();
+            fluid.AdvanceManually(stepSeconds, ProfileBatchSteps, updateSurface: false);
+            profileCpuSeconds += (System.Diagnostics.Stopwatch.GetTimestamp() - start) /
+                (double)System.Diagnostics.Stopwatch.Frequency;
+            profileSubmitted += ProfileBatchSteps;
+            profileBatchDeadline = Time.realtimeSinceStartupAsDouble + 15;
         }
 
-        private static string FormatStageTime(long nanoseconds, int samples)
+        private void FinishPerformanceRun(float stepSeconds, bool complete)
         {
-            if (samples == 0 || nanoseconds <= 0) return "unavailable";
-            return $"{nanoseconds / (samples * 1000000d):F3} ms/step ({samples}/{ProfileMeasuredSteps})";
+            profileResults = new string[profileRecorders.Length + 1];
+            for (int i = 0; i < profileRecorders.Length; i++)
+            {
+                int samples = profileGpuSamples[i];
+                string gpu = samples == ProfileMeasuredSteps
+                    ? $"{profileGpuNanoseconds[i] / (samples * 1000000d):F3} ms/step ({samples}/{ProfileMeasuredSteps})"
+                    : $"incomplete ({samples}/{ProfileMeasuredSteps})";
+                profileResults[i] = $"{FluidSim.StageProfileLabels[i]} · GPU {gpu}";
+            }
+            profileResults[profileResults.Length - 1] =
+                $"CPU total submission · {profileCpuSeconds * 1000 / profileSubmitted:F3} ms/step ({profileSubmitted} submitted)";
+            string report = $"MARIN solver performance · {SystemInfo.graphicsDeviceName} · {SystemInfo.graphicsDeviceType} · " +
+                $"{fluid.positionBuffer.count:N0} particles · {BenchmarkSpacing * 1000:0.#} mm · " +
+                $"{BenchmarkStepMicroseconds / 1000f:0.###} ms step · sampled from {profileWarmup * stepSeconds:F4} s · box wall pressure {(benchmarkWallPressure ? "ON" : "OFF")}\n" +
+                string.Join("\n", profileResults);
+            if (complete) Debug.Log(report, this);
+            else Debug.LogWarning(report, this);
+            StopPerformanceRecorders();
+            profileRunning = false;
         }
 
         private void StopPerformanceRecorders()
@@ -521,7 +543,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             GUILayout.BeginArea(new Rect(16, 16, 570, 410), GUI.skin.box);
             GUILayout.Label("MARIN Solver Performance");
             GUILayout.Label($"{SystemInfo.graphicsDeviceName} · {SystemInfo.graphicsDeviceType}");
-            GUILayout.Label("64 measured solver steps · GPU and CPU timing");
+            GUILayout.Label("64 measured steps · GPU stage timings and CPU submission");
             bool enabled = GUI.enabled;
             GUI.enabled = enabled && !profileRunning;
             GUILayout.Label("Particle spacing (mm)");
