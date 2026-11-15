@@ -693,17 +693,21 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
                 pressureForce += weight * FloorPressureForce(pos, neighbourPos,
                     float2(densityNeighbour, nearDensityNeighbour), pressure, nearPressure, neighbourPressure);
 
-            // ---- White Particle 'Trapped Air' Calculation ----
-            float3 relativeVelocity = velocity - Velocities[neighbourIndex];
-            float relativeVelocityMagnitude = length(relativeVelocity);
-            float3 relativeVelocityDir = relativeVelocity / max(0.000001, relativeVelocityMagnitude);
-            // 0 if moving in opposite directions; up to 2 if moving directly toward one another
-            float convergeWeight = 1 - dot(relativeVelocityDir, -dirToNeighbour);
-            // 1 when distance between particles is 0, down to 0 when distance reaches the smoothing radius
-            float influence = 1 - min(1, dstToNeighbour / smoothingRadius);
-            // Sum up weighted velocity diff between current particle and each of its surrounding neighbours
-            weightedVelocityDifference += relativeVelocityMagnitude * convergeWeight * influence;
-            if (sprayOnly) surfaceOffset -= dirToNeighbour * influence;
+            [branch]
+            if (diffuseActive)
+            {
+                // ---- White Particle 'Trapped Air' Calculation ----
+                float3 relativeVelocity = velocity - Velocities[neighbourIndex];
+                float relativeVelocityMagnitude = length(relativeVelocity);
+                float3 relativeVelocityDir = relativeVelocity / max(0.000001, relativeVelocityMagnitude);
+                // 0 if moving in opposite directions; up to 2 if moving directly toward one another
+                float convergeWeight = 1 - dot(relativeVelocityDir, -dirToNeighbour);
+                // 1 when distance between particles is 0, down to 0 when distance reaches the smoothing radius
+                float influence = 1 - min(1, dstToNeighbour / smoothingRadius);
+                // Sum up weighted velocity diff between current particle and each of its surrounding neighbours
+                weightedVelocityDifference += relativeVelocityMagnitude * convergeWeight * influence;
+                if (sprayOnly) surfaceOffset -= dirToNeighbour * influence;
+            }
         }
     }
 
