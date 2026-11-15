@@ -477,12 +477,12 @@ float BoxPlaneDistance(float4 plane, float3 position)
 }
 
 // Reject cells whose closest point lies outside the particle's support sphere.
-bool IntersectsSupportCell(float3 gridPosition, int3 cell, float3 padding)
+bool IntersectsSupportCell(float3 gridPosition, int3 cell, float3 padding, float supportSquared)
 {
     float3 minimum = (float3)cell;
     float3 gap = max(minimum - gridPosition, gridPosition - (minimum + 1));
     gap = max(0, gap - padding);
-    return dot(gap, gap) <= 1;
+    return dot(gap, gap) <= supportSquared;
 }
 
 float2 CalculateDensitiesAtPoint(float3 pos, bool includeBoxPressure)
@@ -502,7 +502,7 @@ float2 CalculateDensitiesAtPoint(float3 pos, bool includeBoxPressure)
     for (int i = 0; i < 27; i++)
     {
         int3 cell = originCell + offsets3D[i];
-        if (!IntersectsSupportCell(gridPosition, cell, cellPadding)) continue;
+        if (!IntersectsSupportCell(gridPosition, cell, cellPadding, 1)) continue;
         uint hash = HashCell3D(cell);
         uint key = KeyFromHash(hash, numParticles);
         uint currIndex = SpatialOffsets[key];
@@ -628,6 +628,17 @@ bool NextMixedNeighbour(inout MixedNeighbourQuery query, out uint index, out flo
                     SetMixedQueryLevel(query, 1);
                     continue;
                 }
+            }
+        }
+        if (query.selfLevel == 1 && query.level == 0)
+        {
+            float3 gridPosition = query.position / query.cellWidth;
+            float3 padding = 1e-6 * max(abs(gridPosition), 1);
+            // Coarse support spans two fine cell widths.
+            if (!IntersectsSupportCell(gridPosition, query.cell, padding, 4))
+            {
+                query.cursor = numParticles;
+                continue;
             }
         }
         query.key = MixedCellKey(query.cell, query.level);
@@ -867,7 +878,7 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
     for (int i = 0; i < 27; i++)
     {
         int3 cell = originCell + offsets3D[i];
-        if (!IntersectsSupportCell(gridPosition, cell, cellPadding)) continue;
+        if (!IntersectsSupportCell(gridPosition, cell, cellPadding, 1)) continue;
         uint hash = HashCell3D(cell);
         uint key = KeyFromHash(hash, numParticles);
         uint currIndex = SpatialOffsets[key];
@@ -1042,7 +1053,7 @@ void CalculateViscosity(uint3 id : SV_DispatchThreadID)
     for (int i = 0; i < 27; i++)
     {
         int3 cell = originCell + offsets3D[i];
-        if (!IntersectsSupportCell(gridPosition, cell, cellPadding)) continue;
+        if (!IntersectsSupportCell(gridPosition, cell, cellPadding, 1)) continue;
         uint hash = HashCell3D(cell);
         uint key = KeyFromHash(hash, numParticles);
         uint currIndex = SpatialOffsets[key];
