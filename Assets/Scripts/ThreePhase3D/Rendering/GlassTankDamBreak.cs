@@ -33,9 +33,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             Quaternion.Euler(0, index % 2 == 0 ? BaffleAngle : -BaffleAngle, 0);
         private static readonly Vector3[] BaffleCentres =
         {
-            new Vector3(-.125f, BaffleSize.y * .5f, -BaffleOffset),
-            new Vector3(.125f, BaffleSize.y * .5f, BaffleOffset),
-            new Vector3(.375f, BaffleSize.y * .5f, -BaffleOffset)
+            new Vector3(-.110f, BaffleSize.y * .5f, -BaffleOffset),
+            new Vector3(.005f, BaffleSize.y * .5f, BaffleOffset),
+            new Vector3(.120f, BaffleSize.y * .5f, -BaffleOffset),
+            new Vector3(.235f, BaffleSize.y * .5f, BaffleOffset),
+            new Vector3(.350f, BaffleSize.y * .5f, -BaffleOffset),
+            new Vector3(.465f, BaffleSize.y * .5f, BaffleOffset)
         };
 
         [SerializeField] private ComputeShader fluidCompute;
