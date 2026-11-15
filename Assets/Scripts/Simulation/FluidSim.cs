@@ -2,6 +2,7 @@ using System;
 using UnityEngine;
 using Seb.GPUSorting;
 using Unity.Mathematics;
+using UnityEngine.Profiling;
 using System.Collections.Generic;
 using Seb.Helpers;
 using static Seb.Helpers.ComputeHelper;
@@ -538,12 +539,39 @@ namespace Seb.Fluid.Simulation
 			Dispatch(compute, DensityMap.width, DensityMap.height, DensityMap.volumeDepth, renderKernel);
 		}
 
+		internal static readonly string[] StageProfileLabels =
+		{
+			"MARIN.Predict", "MARIN.HashAndSort", "MARIN.Reorder", "MARIN.Density",
+			"MARIN.Pressure", "MARIN.Viscosity", "MARIN.Integrate"
+		};
+		private CustomSampler[] stageSamplers;
+
+		internal Recorder[] StartStageProfiling()
+		{
+			stageSamplers = new CustomSampler[StageProfileLabels.Length];
+			var recorders = new Recorder[stageSamplers.Length];
+			for (int i = 0; i < stageSamplers.Length; i++)
+			{
+				stageSamplers[i] = CustomSampler.Create(StageProfileLabels[i], true);
+				recorders[i] = stageSamplers[i].GetRecorder();
+				recorders[i].enabled = true;
+			}
+			return recorders;
+		}
+
+		internal void StopStageProfiling() => stageSamplers = null;
+
 		void RunSimulationStep()
 		{
+			stageSamplers?[0].Begin();
 			Dispatch(compute, positionBuffer.count, kernelIndex: activeExternalForcesKernel);
+			stageSamplers?[0].End();
+			stageSamplers?[1].Begin();
 
 			Dispatch(compute, positionBuffer.count, kernelIndex: spatialHashKernel);
 			spatialHash.Run();
+			stageSamplers?[1].End();
+			stageSamplers?[2].Begin();
 			
 			if (trackLiquidMass)
 			{
@@ -552,6 +580,7 @@ namespace Seb.Fluid.Simulation
 			}
 			Dispatch(compute, positionBuffer.count, kernelIndex: activeReorderKernel);
 			Dispatch(compute, positionBuffer.count, kernelIndex: activeCopyBackKernel);
+			stageSamplers?[2].End();
 			if (commitHeatKernel != 0)
 			{
 				Dispatch(compute, positionBuffer.count, kernelIndex: sumThermalKernel);
@@ -559,15 +588,23 @@ namespace Seb.Fluid.Simulation
 				Dispatch(compute, positionBuffer.count, kernelIndex: commitHeatKernel);
 			}
 
+			stageSamplers?[3].Begin();
 			Dispatch(compute, positionBuffer.count, kernelIndex: densityKernel);
+			stageSamplers?[3].End();
+			stageSamplers?[4].Begin();
 			Dispatch(compute, positionBuffer.count, kernelIndex: activePressureKernel);
+			stageSamplers?[4].End();
+			stageSamplers?[5].Begin();
 			if (viscosityStrength != 0 || approachOnlyDamping)
 			{
 				Dispatch(compute, positionBuffer.count, kernelIndex: viscosityKernel);
 				if (approachOnlyDamping)
 					Dispatch(compute, positionBuffer.count, kernelIndex: commitDampedVelocitiesKernel);
 			}
+			stageSamplers?[5].End();
+			stageSamplers?[6].Begin();
 			Dispatch(compute, positionBuffer.count, kernelIndex: updatePositionsKernel);
+			stageSamplers?[6].End();
 		}
 
 		void UpdateSmoothingConstants()
