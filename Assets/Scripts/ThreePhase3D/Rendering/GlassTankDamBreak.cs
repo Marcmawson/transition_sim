@@ -21,6 +21,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         [SerializeField] private ComputeShader fluidCompute;
         [SerializeField] private ComputeShader surfaceArguments;
         [SerializeField] private Shader waterShader;
+        [SerializeField] private Shader sprayShader;
+        [SerializeField] private ComputeShader sprayArguments;
+        private bool sprayEnabled = true;
 
         private readonly List<Material> materials = new List<Material>();
         private GameObject solverObject;
@@ -128,7 +131,23 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.nearPressureMultiplier = 1f;
             fluid.viscosityStrength = 2e-8f * Mathf.Pow(spacing / .001f, 3);
             fluid.collisionDamping = .05f;
-            fluid.maxFoamParticleCount = 1;
+            bool sprayAvailable = sprayShader != null && sprayShader.isSupported && sprayArguments != null;
+            fluid.maxFoamParticleCount = sprayAvailable ? 12000 : 1;
+            fluid.foamActive = sprayAvailable && sprayEnabled;
+            fluid.sprayOnly = sprayAvailable;
+            fluid.trappedAirSpawnRate = fine ? 5f : 12f;
+            fluid.trappedAirVelocityMinMax = new Vector2(1f, 9f);
+            fluid.foamKineticEnergyMinMax = new Vector2(.36f, 5f);
+            fluid.sprayClassifyMaxNeighbours = 10;
+            if (sprayAvailable)
+            {
+                var spray = solverObject.AddComponent<FoamRenderTest>();
+                spray.shaderBillboard = sprayShader;
+                spray.copyCountToArgsCompute = Instantiate(sprayArguments);
+                spray.autoDraw = true;
+                spray.visibleSpray = true;
+                spray.scale = .11f;
+            }
             fluid.renderToTex3D = fluid.worldSpaceSurface = true;
             fluid.densityTextureRes = fine ? 192 : 128;
 
@@ -276,7 +295,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void OnGUI()
         {
-            GUILayout.BeginArea(new Rect(16, 16, 390, 380), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(16, 16, 390, 410), GUI.skin.box);
             GUILayout.Label($"Glass Tank Dam Break · {VolumeLitres:F0} L");
             if (fluid == null)
             {
@@ -296,6 +315,16 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 bool reset = GUILayout.Button("Reset column");
                 GUILayout.Label("GPU particle timestep · changing it resets the column");
                 int selectedStep = GUILayout.Toolbar(particleStepIndex, ParticleStepLabels);
+                if (fluid.sprayOnly)
+                {
+                    bool selectedSpray = GUILayout.Toggle(sprayEnabled, "Fine spray");
+                    if (selectedSpray != sprayEnabled)
+                    {
+                        sprayEnabled = selectedSpray;
+                        fluid.foamActive = selectedSpray;
+                        fluid.foamCountBuffer.SetData(new uint[2]);
+                    }
+                }
                 adaptivePressure = GUILayout.Toggle(adaptivePressure, "Adaptive pressure (experimental CPU/GPU)");
                 bool selectedDouble = GUILayout.Toggle(doubleVolume, "Double water volume (48 L)");
                 int fineCount = selectedDouble ? 162000 : 81000;

@@ -10,6 +10,7 @@ namespace Seb.Fluid.Rendering
 		public float scale;
 		public float debugParam;
 		public bool autoDraw;
+		public bool visibleSpray;
 
 		[Header("References")]
 		public Shader shaderBillboard;
@@ -23,13 +24,25 @@ namespace Seb.Fluid.Rendering
 
 		void Awake()
 		{
-			sim = FindObjectOfType<FluidSim>();
-			sim.SimulationInitCompleted += Init;
+			sim = GetComponent<FluidSim>();
+			if (sim == null) sim = FindObjectOfType<FluidSim>();
+			if (sim != null) sim.SimulationInitCompleted += Init;
 		}
 
 		void Init(FluidSim sim)
 		{
-			mat = new Material(shaderBillboard);
+			if (shaderBillboard == null || copyCountToArgsCompute == null) return;
+			if (mat != null) Destroy(mat);
+			if (mesh != null) Destroy(mesh);
+			mat = new Material(shaderBillboard) { enableInstancing = true };
+			if (visibleSpray)
+			{
+				mat.SetFloat("_VisibleSpray", 1);
+				mat.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
+				mat.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
+				mat.SetInt("_ZWrite", 0);
+				mat.renderQueue = (int)RenderQueue.Transparent - 25;
+			}
 			mesh = QuadGenerator.GenerateQuadMesh();
 			bounds = new Bounds(Vector3.zero, Vector3.one * 1000);
 
@@ -41,7 +54,7 @@ namespace Seb.Fluid.Rendering
 
 		void LateUpdate()
 		{
-			if (sim.foamActive)
+			if (sim != null && sim.foamActive && mat != null)
 			{
 				mat.SetFloat("debugParam", debugParam);
 				mat.SetInt("bubbleClassifyMinNeighbours", sim.bubbleClassifyMinNeighbours);
@@ -65,7 +78,11 @@ namespace Seb.Fluid.Rendering
 
 		private void OnDestroy()
 		{
+			if (sim != null) sim.SimulationInitCompleted -= Init;
 			ComputeHelper.Release(argsBuffer);
+			if (mat != null) Destroy(mat);
+			if (mesh != null) Destroy(mesh);
+			if (visibleSpray && copyCountToArgsCompute != null) Destroy(copyCountToArgsCompute);
 		}
 	}
 }

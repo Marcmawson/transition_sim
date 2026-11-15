@@ -28,6 +28,7 @@ namespace Seb.Fluid.Simulation
 		[Range(0, 1)] public float collisionDamping = 0.95f;
 
 		[Header("Foam Settings")] public bool foamActive;
+		public bool sprayOnly;
 		public int maxFoamParticleCount = 1000;
 		public float trappedAirSpawnRate = 70;
 		public float spawnRateFadeInTime = 0.5f;
@@ -590,6 +591,8 @@ namespace Seb.Fluid.Simulation
 			}
 			compute.SetFloat("beakerRimY", beakerRimY);
 			compute.SetFloat("whiteParticleDeltaTime", frameDeltaTime);
+			compute.SetBool("diffuseActive", foamActive);
+			compute.SetBool("sprayOnly", foamActive && sprayOnly);
 			compute.SetFloat("simTime", (float)simTimer);
 			compute.SetFloat("gravity", gravity);
 			compute.SetFloat("BeakerFloorPressure", beakerFloorPressure ? 1f : 0f);

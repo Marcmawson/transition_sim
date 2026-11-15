@@ -267,6 +267,8 @@ MonoBehaviour:
   fluidCompute: {fileID: 7200000, guid: 9443696acfd0ebe4fb503b56d952256c, type: 3}
   surfaceArguments: {fileID: 7200000, guid: 4cfa81b3afd387a48959c41b5ef371b0, type: 3}
   waterShader: {fileID: 4800000, guid: 7e91d02de256491986dbc6cd241213cb, type: 3}
+  sprayShader: {fileID: 4800000, guid: 4a0c3a32a60599c4198fe00e79a88932, type: 3}
+  sprayArguments: {fileID: 7200000, guid: 315c9eb00260d8743b3ffa9803eadaf3, type: 3}
 --- !u!1660057539 &9223372036854775807
 SceneRoots:
   m_ObjectHideFlags: 0

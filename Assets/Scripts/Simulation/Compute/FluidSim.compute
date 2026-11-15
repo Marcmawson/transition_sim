@@ -102,6 +102,7 @@ const float whiteParticleDeltaTime;
 const float3 trappedAirParams;
 const float2 kineticEnergyParams;
 const float bubbleBuoyancy;
+bool diffuseActive, sprayOnly;
 const int bubbleClassifyMinNeighbours;
 const int sprayClassifyMaxNeighbours;
 const float bubbleScale;
@@ -572,6 +573,7 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
 
     // Foam variables
     float weightedVelocityDifference = 0;
+    float3 surfaceOffset = 0;
 
 
     // Neighbour search
@@ -633,6 +635,7 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
             float influence = 1 - min(1, dstToNeighbour / smoothingRadius);
             // Sum up weighted velocity diff between current particle and each of its surrounding neighbours
             weightedVelocityDifference += relativeVelocityMagnitude * convergeWeight * influence;
+            if (sprayOnly) surfaceOffset -= dirToNeighbour * influence;
         }
     }
 
@@ -648,12 +651,22 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
 
 
     // ---- Handle spawning of white particles from the current fluid particle ----
+    if (!diffuseActive) return;
     uint rngState = dot(asuint(float4(pos, simTime)), uint4(19349669, 83492837, 73856131, 4785773));
     if (id.x == 0) WhiteParticleCounters[1] = 0; // Reset survivor counter
 
     float trappedAirFactor = trappedAirParams[0] * Remap01(weightedVelocityDifference, trappedAirParams[1], trappedAirParams[2]);
     float kineticEnergyFactor = Remap01(dot(velocity, velocity), kineticEnergyParams[0], kineticEnergyParams[1]);
-    float particleSpawnFactor = trappedAirFactor * kineticEnergyFactor * deltaTime;
+    float crestFactor = 0;
+    float3 outward = 0;
+    if (sprayOnly)
+    {
+        if (neighbourCount > 24) return;
+        outward = surfaceOffset / max(length(surfaceOffset), 1e-6);
+        float crest = Remap01(dot(velocityNew, outward), .25, 1.5);
+        crestFactor = trappedAirParams[0] * crest;
+    }
+    float particleSpawnFactor = (trappedAirFactor + crestFactor) * kineticEnergyFactor * deltaTime;
 
     // Determine number of white particles to spawn. For example if the spawn factor is 3.7
     // then we will spawn at least 3 particles, with a 70% chance of spawning a 4th particle
@@ -669,12 +682,14 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
     {
         uint particleIndex;
         InterlockedAdd(WhiteParticleCounters[0], (uint)particleSpawnCount, particleIndex);
-        particleSpawnCount = min(particleSpawnCount, MaxWhiteParticleCount - particleIndex - 1);
+        if (particleIndex >= MaxWhiteParticleCount) return;
+        particleSpawnCount = (int)min((uint)particleSpawnCount, MaxWhiteParticleCount - particleIndex);
 
-        float3 cylinderBase = pos;
-        float3 cylinderTop = pos + velocityNew * deltaTime; // height of cylinder determined by fluid velocity
-        float3 cylinderAxisA = CalculateOrthonormal(velocityNew); // arbitrary direction along base of cylinder
-        float3 cylinderAxisB = normalize(cross(cylinderAxisA, velocityNew));
+        float3 cylinderBase = pos + outward * (.35 * smoothingRadius);
+        float3 cylinderTop = cylinderBase + velocityNew * deltaTime; // height of cylinder determined by fluid velocity
+        float3 launchAxis = length(velocityNew) > 1e-6 ? normalize(velocityNew) : float3(0,1,0);
+        float3 cylinderAxisA = CalculateOrthonormal(launchAxis); // arbitrary direction along base of cylinder
+        float3 cylinderAxisB = normalize(cross(cylinderAxisA, launchAxis));
         float cylinderRadius = smoothingRadius;
         float clusterMin, clusterMax;
         for (int spawnIndex = 0; spawnIndex < particleSpawnCount; spawnIndex++)
@@ -686,12 +701,13 @@ void CalculatePressureForce(uint3 id : SV_DispatchThreadID)
 
             float dissolveTimeMin = 5;
             float dissolveTimeMax = 15;
-            float lifetime = lerp(dissolveTimeMin, dissolveTimeMax, RandomValue(rngState));
+            float lifetime = sprayOnly ? lerp(.25, .9, RandomValue(rngState)) :
+                lerp(dissolveTimeMin, dissolveTimeMax, RandomValue(rngState));
 
             // Spawn new particle
             WhiteParticle whiteParticle;
             whiteParticle.position = spawnPos;
-            whiteParticle.velocity = velocityNew + baseOffset;
+            whiteParticle.velocity = sprayOnly ? velocityNew : velocityNew + baseOffset;
             whiteParticle.remainingLifetime = lifetime;
             whiteParticle.scale = (bubbleScale + 1) / 2;
             WhiteParticles[particleIndex + spawnIndex] = whiteParticle;
@@ -869,6 +885,11 @@ void UpdateWhiteParticles(uint3 id : SV_DispatchThreadID)
 
     // -- Classify --
     bool isSpray = neighbourCount <= sprayClassifyMaxNeighbours;
+    if (sprayOnly)
+    {
+        if (!isSpray) return;
+        particle.remainingLifetime -= deltaTime;
+    }
     bool isBubble = neighbourCount >= bubbleClassifyMinNeighbours;
     bool isFoam = !(isSpray || isBubble);
 
@@ -894,7 +915,7 @@ void UpdateWhiteParticles(uint3 id : SV_DispatchThreadID)
     {
         const float dragMultiplier = 0.04;
         float sqrSpeed = dot(particle.velocity, particle.velocity);
-        float3 drag = -normalize(particle.velocity) * sqrSpeed * dragMultiplier;
+        float3 drag = -particle.velocity * sqrt(sqrSpeed) * dragMultiplier;
         particle.velocity += (float3(0, gravity, 0) + drag) * deltaTime;
     }
 
