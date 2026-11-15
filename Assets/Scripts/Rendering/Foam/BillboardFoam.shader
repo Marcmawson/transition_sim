@@ -32,11 +32,11 @@ Shader "Fluid/BillboardFoam"
                 float3 velocity;
                 float lifetime;
                 float scale;
-            float _VisibleSpray;
             };
 
             StructuredBuffer<FoamParticle> Particles;
             float scale;
+            float _VisibleSpray;
             float debugParam;
             int bubbleClassifyThreshold;
             int sprayClassifyThreshold;
@@ -68,7 +68,7 @@ Shader "Fluid/BillboardFoam"
 
                 // Quad face camera
                 float3 worldCentre = particle.position;
-                float3 vertOffset = v.vertex * vertScale;
+                float2 vertOffset = v.vertex.xy * vertScale;
                 float3 camUp = unity_CameraToWorld._m01_m11_m21;
                 float3 camRight = unity_CameraToWorld._m00_m10_m20;
                 float3 vertPosWorld = worldCentre + camRight * vertOffset.x + camUp * vertOffset.y;
