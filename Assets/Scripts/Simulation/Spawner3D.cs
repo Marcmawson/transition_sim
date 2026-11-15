@@ -155,6 +155,7 @@ namespace Seb.Fluid.Simulation
 			public Vector3 centre;
 			public float size;
 			public Vector3 boxSize;
+			public int boxParticleDensityOverride;
 			public bool HasBox => boxSize.x > 0 && boxSize.y > 0 && boxSize.z > 0;
 			public float cylinderRadius, cylinderHeight;
 			public Color debugDisplayCol;
@@ -164,7 +165,7 @@ namespace Seb.Fluid.Simulation
 
 			public Vector3Int BoxParticleCount(int particleDensity)
 			{
-				float countPerMetre = Mathf.Pow(particleDensity, 1f / 3f);
+				float countPerMetre = Mathf.Pow(boxParticleDensityOverride > 0 ? boxParticleDensityOverride : particleDensity, 1f / 3f);
 				return new Vector3Int(Mathf.Max(1, Mathf.RoundToInt(boxSize.x * countPerMetre)),
 					Mathf.Max(1, Mathf.RoundToInt(boxSize.y * countPerMetre)),
 					Mathf.Max(1, Mathf.RoundToInt(boxSize.z * countPerMetre)));
