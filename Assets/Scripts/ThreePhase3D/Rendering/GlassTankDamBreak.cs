@@ -22,6 +22,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const int BenchmarkEndTime = 1800000;
         private bool benchmark;
         private bool benchmarkWallPressure;
+        private bool? pendingWallPressureRun;
         private int benchmarkReadsPending;
         private float benchmarkH2, benchmarkSheet, benchmarkPeak, benchmarkJet, benchmarkJetPeak;
         private Transform tankGeometry;
@@ -297,6 +298,16 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void Update()
         {
+            if (pendingWallPressureRun.HasValue && benchmarkReadsPending == 0)
+            {
+                benchmarkWallPressure = pendingWallPressureRun.Value;
+                pendingWallPressureRun = null;
+                PrepareColumn();
+                running = true;
+                Debug.Log($"MARIN run started · GPU wall pressure {(benchmarkWallPressure ? "ON (1)" : "OFF (0)")}", this);
+                return;
+            }
+
             if (!running || fluid.positionBuffer == null) return;
             pendingSeconds = Mathf.Min(pendingSeconds + Time.unscaledDeltaTime * .25f, .008f);
             int stepMicroseconds = benchmark ? 400 : ParticleStepMicroseconds[particleStepIndex];
@@ -424,6 +435,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         {
             int run = generation;
             float seconds = elapsedMicroseconds / 1000000f;
+            int wallPressure = benchmarkWallPressure ? 1 : 0;
             benchmarkReadsPending++;
             AsyncGPUReadback.Request(fluid.positionBuffer, request =>
             {
@@ -456,7 +468,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 benchmarkJet = SupportedJetHeight(jet);
                 benchmarkJetPeak = Mathf.Max(benchmarkJetPeak, benchmarkJet);
                 Debug.Log(System.FormattableString.Invariant(
-                    $"MARIN,t_s,H2_p95_m,box_zone_p95_m,jet_max_m,jet_supported_m,jet_count,wall_pressure: {seconds:F3},{benchmarkH2:F3},{benchmarkSheet:F3},{jetMax:F3},{benchmarkJet:F3},{jet.Count},{(benchmarkWallPressure ? 1 : 0)}"), this);
+                    $"MARIN,t_s,H2_p95_m,box_zone_p95_m,jet_max_m,jet_supported_m,jet_count,wall_pressure: {seconds:F3},{benchmarkH2:F3},{benchmarkSheet:F3},{jetMax:F3},{benchmarkJet:F3},{jet.Count},{wallPressure}"), this);
             });
         }
 
@@ -520,6 +532,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             });
         }
 
+        private void QueueBenchmarkRun(bool useWallPressure)
+        {
+            running = false;
+            pendingWallPressureRun = useWallPressure;
+        }
+
         private void OnGUI()
         {
             GUILayout.BeginArea(new Rect(16, 16, 390, 410), GUI.skin.box);
@@ -527,7 +545,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (fluid != null)
             {
                 bool modeControlEnabled = GUI.enabled;
-                GUI.enabled = modeControlEnabled && benchmarkReadsPending == 0 && !sampling && !samplingSpray;
+                GUI.enabled = modeControlEnabled && !pendingWallPressureRun.HasValue && benchmarkReadsPending == 0 && !sampling && !samplingSpray;
                 if (GUILayout.Button(benchmark ? "Return to city tank" : "Single-box benchmark"))
                     SetBenchmark(!benchmark);
                 GUI.enabled = modeControlEnabled;
@@ -540,23 +558,20 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.Label($"H2 {benchmarkH2:F3} m · box zone {benchmarkSheet:F3} m · peak {benchmarkPeak:F3} m (p95)");
                 GUILayout.Label($"Upstream jet {benchmarkJet:F3} m · peak {benchmarkJetPeak:F3} m (supported)");
                 if (!SystemInfo.supportsAsyncGPUReadback) GUILayout.Label("GPU readback unavailable.");
-                if (fluid.positionBuffer != null)
+                GUILayout.Label($"GPU wall pressure: {(benchmarkWallPressure ? "ON (1)" : "OFF (0)")}");
+                bool controlsEnabled = GUI.enabled;
+                GUI.enabled = controlsEnabled && !pendingWallPressureRun.HasValue;
+                if (GUILayout.Button("Start baseline run · wall pressure OFF"))
+                    QueueBenchmarkRun(false);
+                if (GUILayout.Button("Start wall-pressure run · ON"))
+                    QueueBenchmarkRun(true);
+                if (fluid.positionBuffer != null && (running || elapsedMicroseconds > 0) &&
+                    elapsedMicroseconds < BenchmarkEndTime && GUILayout.Button(running ? "Pause" : "Resume"))
                 {
-                    if (elapsedMicroseconds < BenchmarkEndTime && GUILayout.Button(running ? "Pause" : "Release / resume"))
-                    {
-                        running = !running;
-                        pendingSeconds = 0;
-                    }
-                    bool resetEnabled = GUI.enabled;
-                    GUI.enabled = resetEnabled && benchmarkReadsPending == 0;
-                    bool selectedWallPressure = GUILayout.Toggle(benchmarkWallPressure, "GPU wall-pressure support (resets run)");
-                    if (GUILayout.Button("Reset benchmark") || selectedWallPressure != benchmarkWallPressure)
-                    {
-                        benchmarkWallPressure = selectedWallPressure;
-                        PrepareColumn();
-                    }
-                    GUI.enabled = resetEnabled;
+                    running = !running;
+                    pendingSeconds = 0;
                 }
+                GUI.enabled = controlsEnabled;
                 GUILayout.EndArea();
                 return;
             }
