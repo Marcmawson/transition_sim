@@ -39,12 +39,16 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private static readonly string[] BenchmarkSpacingLabels = { "20", "17.5", "15", "12.5", "10", "7.5", "5" };
         private int benchmarkSpacingIndex;
         private int selectedBenchmarkSpacing = 5;
+        private static readonly int[] FineBenchmarkSteps = { 100, 150, 200 };
+        private static readonly string[] FineBenchmarkStepLabels = { "0.100", "0.150", "0.200" };
+        private int selectedFineBenchmarkStep, benchmarkStepOverride;
         private bool benchmarkMeasurementsOnly;
         private bool selectedMeasurementsOnly;
         private double benchmarkStartTime;
-        private (bool WallPressure, int SpacingIndex, bool MeasurementsOnly, bool Mixed)? pendingBenchmarkRun;
+        private (bool WallPressure, int SpacingIndex, bool MeasurementsOnly, bool Mixed, int StepOverride)? pendingBenchmarkRun;
         private float BenchmarkSpacing => BenchmarkSpacings[benchmarkSpacingIndex];
-        private int BenchmarkStepMicroseconds => Mathf.RoundToInt(400 * BenchmarkSpacing / BenchmarkSpacings[0]);
+        private int BenchmarkStepMicroseconds => benchmarkStepOverride > 0 ? benchmarkStepOverride :
+            Mathf.RoundToInt(400 * BenchmarkSpacing / BenchmarkSpacings[0]);
         private int benchmarkReadsPending;
         private float benchmarkSampledSeconds;
         private float benchmarkH2, benchmarkSheet, benchmarkPeak, benchmarkJet, benchmarkJetPeak;
@@ -398,7 +402,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 #endif
             if (pendingBenchmarkRun.HasValue && benchmarkReadsPending == 0)
             {
-                (benchmarkWallPressure, benchmarkSpacingIndex, benchmarkMeasurementsOnly, benchmarkMixed) = pendingBenchmarkRun.Value;
+                (benchmarkWallPressure, benchmarkSpacingIndex, benchmarkMeasurementsOnly, benchmarkMixed, benchmarkStepOverride) = pendingBenchmarkRun.Value;
                 pendingBenchmarkRun = null;
                 PrepareColumn();
                 running = true;
@@ -762,6 +766,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 benchmarkSpacingIndex = BenchmarkSpacings.Length - 1;
                 benchmarkMeasurementsOnly = false;
                 benchmarkMixed = false;
+                benchmarkStepOverride = 0;
                 PrepareColumn();
                 offlineFrames = 0;
                 offlineCapture = true;
@@ -852,9 +857,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void QueueBenchmarkRun(bool useWallPressure)
         {
             running = false;
-            pendingBenchmarkRun = (useWallPressure, useWallPressure || !selectedBenchmarkMixed
-                ? selectedBenchmarkSpacing : BenchmarkSpacings.Length - 1,
-                selectedMeasurementsOnly, !useWallPressure && selectedBenchmarkMixed);
+            bool mixed = !useWallPressure && selectedBenchmarkMixed;
+            int finest = BenchmarkSpacings.Length - 1;
+            int spacing = mixed ? finest : selectedBenchmarkSpacing;
+            int step = spacing == finest ? FineBenchmarkSteps[selectedFineBenchmarkStep] : 0;
+            pendingBenchmarkRun = (useWallPressure, spacing, selectedMeasurementsOnly, mixed, step);
         }
 
         private void OnGUI()
@@ -875,7 +882,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 return;
             }
 #endif
-            GUILayout.BeginArea(new Rect(16, 16, 390, 410), GUI.skin.box);
+            GUILayout.BeginArea(new Rect(16, 16, 390, benchmark ? 450 : 410), GUI.skin.box);
             GUILayout.Label($"Glass Tank Dam Break · {VolumeLitres:F0} L");
             if (fluid != null)
             {
@@ -909,6 +916,11 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (benchmarkMeasurementsOnly) GUILayout.Label("Water hidden · timing and jet measurements are active");
                 selectedBenchmarkMixed = GUILayout.Toggle(selectedBenchmarkMixed, "Mixed spacing · 5 mm surface / 10 mm bulk");
                 if (benchmarkMixed) GUILayout.Label("Current run: mixed 5/10 mm");
+                if (selectedBenchmarkMixed || selectedBenchmarkSpacing == BenchmarkSpacings.Length - 1)
+                {
+                    GUILayout.Label("Maximum timestep for next run (ms)");
+                    selectedFineBenchmarkStep = GUILayout.Toolbar(selectedFineBenchmarkStep, FineBenchmarkStepLabels);
+                }
                 if (GUILayout.Button(selectedBenchmarkMixed ? "Start mixed run · wall pressure OFF" : "Start baseline run · wall pressure OFF"))
                     QueueBenchmarkRun(false);
                 GUI.enabled = controlsEnabled && !pendingBenchmarkRun.HasValue && !selectedBenchmarkMixed;
