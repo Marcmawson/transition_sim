@@ -85,7 +85,7 @@ namespace Seb.Fluid.Simulation
 		bool pauseNextFrame;
 		float smoothRadiusOld;
 		public const int MaxIceBodies = 4;
-		private const int MaxBoxBoundaries = 6;
+		private const int MaxBoxBoundaries = 12;
 		public int IceCount { get; set; }
 		readonly Vector4[] iceHalfExtents = new Vector4[MaxBoxBoundaries];
 		readonly Matrix4x4[] iceWorldToLocal = new Matrix4x4[MaxBoxBoundaries];
