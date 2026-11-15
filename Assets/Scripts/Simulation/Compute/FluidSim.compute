@@ -285,6 +285,12 @@ void ExternalForces(uint3 id : SV_DispatchThreadID) { ApplyExternalForces(id); }
 void ExternalForcesWithHeat(uint3 id : SV_DispatchThreadID) { ApplyExternalForces(id); }
 
 RWStructuredBuffer<float> LiquidFraction;
+float MixedGridCellScale;
+
+float MixedCellWidth(uint level)
+{
+    return smoothingRadius * (level + 1) * max(1, MixedGridCellScale);
+}
 
 uint MixedLevel(uint index)
 {
@@ -309,7 +315,7 @@ void UpdateSpatialHash(uint3 id : SV_DispatchThreadID)
     uint index = id.x;
 #ifdef MIXED_RESOLUTION
     uint level = MixedLevel(index);
-    int3 cell = GetCell3D(PredictedPositions[index], smoothingRadius * (level + 1));
+    int3 cell = GetCell3D(PredictedPositions[index], MixedCellWidth(level));
     SpatialKeys[index] = MixedCellKey(cell, level);
 #else
     int3 cell = GetCell3D(PredictedPositions[index], smoothingRadius);
@@ -572,7 +578,7 @@ struct MixedNeighbourQuery
 void SetMixedQueryLevel(inout MixedNeighbourQuery query, uint level)
 {
     query.level = level;
-    query.cellWidth = smoothingRadius * (level + 1);
+    query.cellWidth = MixedCellWidth(level);
     float support = smoothingRadius * (max(query.selfLevel, level) + 1);
     query.reachSquared = support * support;
     query.firstCell = GetCell3D(query.position - support, query.cellWidth);
