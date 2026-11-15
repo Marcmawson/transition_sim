@@ -17,8 +17,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private long elapsedMicroseconds;
         private float VolumeLitres => doubleVolume ? 48f : 24f;
         private const float ArrivalPlane = .55f;
-        private const float BlockSide = .3f;
-        private static readonly Vector3 BlockCentre = new Vector3(.35f, BlockSide * .5f, 0);
+        private const float BlockSide = .15f;
+        private static readonly Vector3 BlockCentre = new Vector3(.325f, BlockSide * .5f, .025f);
         private Texture2D checkerTexture;
 
         [SerializeField] private ComputeShader fluidCompute;
