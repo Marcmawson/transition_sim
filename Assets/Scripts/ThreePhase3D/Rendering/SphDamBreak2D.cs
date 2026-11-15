@@ -22,6 +22,15 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const float SplitSpeed = 400f;
         private const float MergeSpeed = 650f;
         private const float MergeRadius = 7.5f;
+        private const float SurfaceProbeDistance = 1.5f * CoarseSpacing;
+        private const float SurfaceProbeRadius = .8f * CoarseSpacing;
+        private const float Diagonal = .70710678f;
+        private static readonly Vector2[] SurfaceDirections =
+        {
+            new Vector2(1, 0), new Vector2(Diagonal, Diagonal), new Vector2(0, 1),
+            new Vector2(-Diagonal, Diagonal), new Vector2(-1, 0), new Vector2(-Diagonal, -Diagonal),
+            new Vector2(0, -1), new Vector2(Diagonal, -Diagonal)
+        };
         private const float Gravity = 9810f;
         private const float SoundSpeed = 2500f;
         private const float ViscosityRate = 3f;
@@ -36,6 +45,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private readonly ParticleGrid fineGrid;
         private readonly ParticleGrid coarseGrid;
         private readonly bool[] refined;
+        private readonly bool[] surfaceFamilies;
         private readonly List<int> activeParticles;
 
         internal int FineCount { get; private set; }
@@ -54,6 +64,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             int coarseCount = (int)(InitialWidth / CoarseSpacing) * (int)(InitialDepth / CoarseSpacing);
             int capacity = coarseCount * ChildrenPerCoarseParticle;
             refined = new bool[coarseCount];
+            surfaceFamilies = new bool[coarseCount];
             activeParticles = new List<int>(capacity);
             positions = new Vector2[capacity];
             velocities = new Vector2[capacity];
@@ -106,19 +117,33 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 (IsFine(index) ? fineGrid : coarseGrid).Insert(index, positions[index]);
         }
 
-        private void AdaptParticleSizes()
+        private bool AdaptParticleSizes()
         {
+            // Classify against one complete snapshot before splitting or merging changes the grid.
+            for (int family = 0; family < refined.Length; family++)
+            {
+                int first = family * ChildrenPerCoarseParticle;
+                surfaceFamilies[family] = false;
+                int count = refined[family] ? ChildrenPerCoarseParticle : 1;
+                for (int i = 0; i < count; i++)
+                {
+                    if (!IsExposed(positions[first + i])) continue;
+                    surfaceFamilies[family] = true;
+                    break;
+                }
+            }
+
             bool changed = false;
             for (int family = 0; family < refined.Length; family++)
             {
                 int first = family * ChildrenPerCoarseParticle;
                 if (refined[family])
                 {
-                    if (!TryMerge(first)) continue;
+                    if (!TryMerge(first, surfaceFamilies[family])) continue;
                     refined[family] = false;
                     changed = true;
                 }
-                else if (velocities[first].sqrMagnitude < SplitSpeed * SplitSpeed)
+                else if (surfaceFamilies[family] && velocities[first].sqrMagnitude < SplitSpeed * SplitSpeed)
                 {
                     Split(first);
                     refined[family] = true;
@@ -126,6 +151,24 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 }
             }
             if (changed) RebuildActiveParticles();
+            return changed;
+        }
+
+        private bool IsExposed(Vector2 position)
+        {
+            bool firstOpen = false, previousOpen = false;
+            for (int i = 0; i < SurfaceDirections.Length; i++)
+            {
+                Vector2 probe = position + SurfaceDirections[i] * SurfaceProbeDistance;
+                // A probe outside the tank hits a solid boundary.
+                bool open = probe.x > 0 && probe.x < Width && probe.y > 0 && probe.y < Height &&
+                    !fineGrid.HasParticleNear(probe, SurfaceProbeRadius, positions) &&
+                    !coarseGrid.HasParticleNear(probe, SurfaceProbeRadius, positions);
+                if (open && previousOpen) return true;
+                if (i == 0) firstOpen = open;
+                previousOpen = open;
+            }
+            return firstOpen && previousOpen;
         }
 
         private void Split(int first)
@@ -141,19 +184,19 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
         }
 
-        private bool TryMerge(int first)
+        private bool TryMerge(int first, bool requireFast)
         {
             Vector2 centre = Vector2.zero;
             Vector2 velocity = Vector2.zero;
             for (int i = first; i < first + ChildrenPerCoarseParticle; i++)
             {
-                if (velocities[i].sqrMagnitude < MergeSpeed * MergeSpeed) return false;
+                if (requireFast && velocities[i].sqrMagnitude < MergeSpeed * MergeSpeed) return false;
                 centre += positions[i];
                 velocity += velocities[i];
             }
             centre /= ChildrenPerCoarseParticle;
             velocity /= ChildrenPerCoarseParticle;
-            if (velocity.sqrMagnitude < MergeSpeed * MergeSpeed) return false;
+            if (requireFast && velocity.sqrMagnitude < MergeSpeed * MergeSpeed) return false;
 
             float margin = CoarseSpacing * .5f;
             if (centre.x < margin || centre.x > Width - margin ||
@@ -175,8 +218,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 CalculateForces();
                 Integrate();
                 StepCount++;
-                if (StepCount % RefinementIntervalSteps == 0) AdaptParticleSizes();
                 RebuildGrids();
+                if (StepCount % RefinementIntervalSteps == 0 && AdaptParticleSizes())
+                    RebuildGrids();
             }
         }
 
@@ -341,6 +385,19 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     if (j != particle && (positions[j] - position).sqrMagnitude <= reachSquared)
                         hits.Add(j);
                 }
+            }
+
+            internal bool HasParticleNear(Vector2 position, float radius, Vector2[] positions)
+            {
+                int left = ToColumn(position.x - radius);
+                int right = ToColumn(position.x + radius);
+                int top = ToRow(position.y + radius);
+                float squaredRadius = radius * radius;
+                for (int y = ToRow(position.y - radius); y <= top; y++)
+                for (int x = left; x <= right; x++)
+                for (int index = first[x + y * Columns]; index >= 0; index = next[index])
+                    if ((positions[index] - position).sqrMagnitude <= squaredRadius) return true;
+                return false;
             }
 
             private int ToColumn(float x) => Mathf.Clamp(Mathf.FloorToInt(x / cellWidth), 0, Columns - 1);
