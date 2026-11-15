@@ -16,11 +16,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private static readonly Bounds BenchmarkBox =
             new Bounds(new Vector3(.9465f, .0805f, 0), new Vector3(.161f, .161f, .403f));
         private const float BenchmarkH2X = .618f;
+        private const float JetSliceDepth = .06f;
+        private const float JetSupportHeight = .04f;
         private const int BenchmarkSampleInterval = 20000;
         private const int BenchmarkEndTime = 1800000;
         private bool benchmark;
         private int benchmarkReadsPending;
-        private float benchmarkH2, benchmarkSheet, benchmarkPeak;
+        private float benchmarkH2, benchmarkSheet, benchmarkPeak, benchmarkJet, benchmarkJetPeak;
         private Transform tankGeometry;
         private Material tankStone, tankGlass, benchmarkMaterial;
         private Material[] cityPalette;
@@ -194,7 +196,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             activeSpray = -1;
             pendingSeconds = nextSample = submitMs = 0;
             arrival = retained = -1;
-            benchmarkH2 = benchmarkSheet = benchmarkPeak = 0;
+            benchmarkH2 = benchmarkSheet = benchmarkPeak = benchmarkJet = benchmarkJetPeak = 0;
             elapsedMicroseconds = 0;
             pressureSamples = 0;
             if (solverObject != null)
@@ -432,24 +434,40 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 }
                 var gauge = new List<float>();
                 var impact = new List<float>();
+                var jet = new List<float>();
                 foreach (Vector3 point in request.GetData<Vector3>())
                 {
                     if (Mathf.Abs(point.x - BenchmarkH2X) <= .04f && Mathf.Abs(point.z) <= .04f)
                         gauge.Add(point.y);
-                    if (point.x >= BenchmarkBox.min.x - .08f && point.x <= BenchmarkBox.max.x + .04f &&
-                        Mathf.Abs(point.z) <= BenchmarkBox.extents.z)
+                    if (Mathf.Abs(point.z) > BenchmarkBox.extents.z) continue;
+                    if (point.x >= BenchmarkBox.min.x - .08f && point.x <= BenchmarkBox.max.x + .04f)
                         impact.Add(point.y);
+                    if (point.x >= BenchmarkBox.min.x - JetSliceDepth && point.x <= BenchmarkBox.min.x)
+                        jet.Add(point.y);
                 }
 
                 benchmarkH2 = SurfacePercentile(gauge);
                 benchmarkSheet = SurfacePercentile(impact);
                 benchmarkPeak = Mathf.Max(benchmarkPeak, benchmarkSheet);
-                Debug.Log(FormattableBenchmark(seconds, benchmarkH2, benchmarkSheet), this);
+                jet.Sort();
+                float jetMax = jet.Count == 0 ? 0 : jet[jet.Count - 1];
+                benchmarkJet = SupportedJetHeight(jet);
+                benchmarkJetPeak = Mathf.Max(benchmarkJetPeak, benchmarkJet);
+                Debug.Log(System.FormattableString.Invariant(
+                    $"MARIN,t_s,H2_p95_m,box_zone_p95_m,jet_max_m,jet_supported_m,jet_count: {seconds:F3},{benchmarkH2:F3},{benchmarkSheet:F3},{jetMax:F3},{benchmarkJet:F3},{jet.Count}"), this);
             });
         }
 
-        private static string FormattableBenchmark(float seconds, float gauge, float sheet) =>
-            System.FormattableString.Invariant($"MARIN,t_s,H2_p95_m,box_zone_p95_m: {seconds:F3},{gauge:F3},{sheet:F3}");
+        private static float SupportedJetHeight(List<float> sortedHeights)
+        {
+            // Require three particles in a 4 cm vertical band before counting a peak.
+            for (int i = sortedHeights.Count - 1; i >= 2; i--)
+            {
+                if (sortedHeights[i] - sortedHeights[i - 2] <= JetSupportHeight)
+                    return sortedHeights[i];
+            }
+            return 0;
+        }
 
         private static float SurfacePercentile(List<float> heights)
         {
@@ -518,6 +536,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 GUILayout.Label("Bulk-water sheet only · 20 ms samples in Console");
                 GUILayout.Label($"Time {elapsedMicroseconds / 1000000f:F3} s / 1.800 s");
                 GUILayout.Label($"H2 {benchmarkH2:F3} m · box zone {benchmarkSheet:F3} m · peak {benchmarkPeak:F3} m (p95)");
+                GUILayout.Label($"Upstream jet {benchmarkJet:F3} m · peak {benchmarkJetPeak:F3} m (supported)");
                 if (!SystemInfo.supportsAsyncGPUReadback) GUILayout.Label("GPU readback unavailable.");
                 if (fluid.positionBuffer != null)
                 {
