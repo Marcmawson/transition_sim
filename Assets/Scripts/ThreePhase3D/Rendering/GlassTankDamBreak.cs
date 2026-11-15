@@ -21,12 +21,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private float VolumeLitres => GetVolumeLitres(ColumnSize);
         private static float GetVolumeLitres(Vector3 size) => size.x * size.y * size.z * 1000f;
         private const float ArrivalPlane = .55f;
-        private static readonly Vector3 BaffleSize = new Vector3(.05f, .25f, .55f);
+        private static readonly Vector3 BaffleSize = new Vector3(.025f, .125f, .275f);
+        private static readonly float BaffleOffset = (TankSize.z - BaffleSize.z) * .5f;
         private static readonly Vector3[] BaffleCentres =
         {
-            new Vector3(-.125f, BaffleSize.y * .5f, -.125f),
-            new Vector3(.125f, BaffleSize.y * .5f, .125f),
-            new Vector3(.375f, BaffleSize.y * .5f, -.125f)
+            new Vector3(-.125f, BaffleSize.y * .5f, -BaffleOffset),
+            new Vector3(.125f, BaffleSize.y * .5f, BaffleOffset),
+            new Vector3(.375f, BaffleSize.y * .5f, -BaffleOffset)
         };
 
         [SerializeField] private ComputeShader fluidCompute;
