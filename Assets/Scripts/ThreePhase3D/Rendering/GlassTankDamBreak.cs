@@ -99,6 +99,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             glass.SetInt("_ZWrite", 0);
             glass.EnableKeyword("_ALPHABLEND_ON");
             glass.renderQueue = (int)RenderQueue.Transparent;
+            cityPalette = new[]
+            {
+                MakeMaterial(new Color(.27f, .39f, .42f)),
+                MakeMaterial(new Color(.39f, .46f, .45f)),
+                MakeMaterial(new Color(.51f, .54f, .53f))
+            };
             RebuildTank();
             if (SystemInfo.supportsComputeShaders && fluidCompute != null && surfaceArguments != null &&
                 waterShader != null && waterShader.isSupported)
@@ -175,12 +181,6 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void BuildCity()
         {
-            cityPalette ??= new[]
-            {
-                MakeMaterial(new Color(.27f, .39f, .42f)),
-                MakeMaterial(new Color(.39f, .46f, .45f)),
-                MakeMaterial(new Color(.51f, .54f, .53f))
-            };
             for (int i = 0; i < Buildings.Length; i++)
             {
                 var (bounds, rotation) = Buildings[i];
