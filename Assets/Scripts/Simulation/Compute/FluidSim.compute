@@ -125,7 +125,7 @@ float Remap01(float val, float minVal, float maxVal)
 }
 
 // Match FluidSim.MaxIceBodies and the host uniform arrays.
-#define MAX_BOX_BOUNDARIES 6
+#define MAX_BOX_BOUNDARIES 12
 int iceCount;
 float4 iceHalfExtents[MAX_BOX_BOUNDARIES];
 float4x4 iceWorldToLocal[MAX_BOX_BOUNDARIES], iceLocalToWorld[MAX_BOX_BOUNDARIES];
