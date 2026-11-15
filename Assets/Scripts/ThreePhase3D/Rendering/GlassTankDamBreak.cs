@@ -21,6 +21,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const int BenchmarkSampleInterval = 20000;
         private const int BenchmarkEndTime = 1800000;
         private bool benchmark;
+        private bool benchmarkWallPressure;
         private int benchmarkReadsPending;
         private float benchmarkH2, benchmarkSheet, benchmarkPeak, benchmarkJet, benchmarkJetPeak;
         private Transform tankGeometry;
@@ -234,6 +235,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             {
                 fluid.SetStaticBoxBoundary(0, BenchmarkBox.center, BenchmarkBox.size);
                 fluid.IceCount = 1;
+                fluid.boxWallPressure = benchmarkWallPressure;
             }
             else
             {
@@ -454,7 +456,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 benchmarkJet = SupportedJetHeight(jet);
                 benchmarkJetPeak = Mathf.Max(benchmarkJetPeak, benchmarkJet);
                 Debug.Log(System.FormattableString.Invariant(
-                    $"MARIN,t_s,H2_p95_m,box_zone_p95_m,jet_max_m,jet_supported_m,jet_count: {seconds:F3},{benchmarkH2:F3},{benchmarkSheet:F3},{jetMax:F3},{benchmarkJet:F3},{jet.Count}"), this);
+                    $"MARIN,t_s,H2_p95_m,box_zone_p95_m,jet_max_m,jet_supported_m,jet_count,wall_pressure: {seconds:F3},{benchmarkH2:F3},{benchmarkSheet:F3},{jetMax:F3},{benchmarkJet:F3},{jet.Count},{(benchmarkWallPressure ? 1 : 0)}"), this);
             });
         }
 
@@ -547,7 +549,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     }
                     bool resetEnabled = GUI.enabled;
                     GUI.enabled = resetEnabled && benchmarkReadsPending == 0;
-                    if (GUILayout.Button("Reset benchmark")) PrepareColumn();
+                    bool selectedWallPressure = GUILayout.Toggle(benchmarkWallPressure, "GPU wall-pressure support (resets run)");
+                    if (GUILayout.Button("Reset benchmark") || selectedWallPressure != benchmarkWallPressure)
+                    {
+                        benchmarkWallPressure = selectedWallPressure;
+                        PrepareColumn();
+                    }
                     GUI.enabled = resetEnabled;
                 }
                 GUILayout.EndArea();
