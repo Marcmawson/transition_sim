@@ -22,7 +22,12 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private const int BenchmarkEndTime = 1800000;
         private bool benchmark;
         private bool benchmarkWallPressure;
-        private bool? pendingWallPressureRun;
+        private const float StandardBenchmarkSpacing = .02f;
+        private const float FineBenchmarkSpacing = .015f;
+        private bool benchmarkFine;
+        private bool selectedBenchmarkFine;
+        private (bool WallPressure, bool Fine)? pendingBenchmarkRun;
+        private float BenchmarkSpacing => benchmarkFine ? FineBenchmarkSpacing : StandardBenchmarkSpacing;
         private int benchmarkReadsPending;
         private float benchmarkH2, benchmarkSheet, benchmarkPeak, benchmarkJet, benchmarkJetPeak;
         private Transform tankGeometry;
@@ -217,14 +222,16 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             solverObject.transform.position = Vector3.up * (solverSize.y * .5f);
             solverObject.transform.localScale = solverSize;
             var spawner = solverObject.AddComponent<Spawner3D>();
-            spawner.particleSpawnDensity = benchmark ? 125000 : fine ? FineParticleDensity : 1000000;
+            float spacing = benchmark ? BenchmarkSpacing : fine ? 1f / 150f : .01f;
+            spawner.particleSpawnDensity = benchmark
+                ? Mathf.RoundToInt(1f / (spacing * spacing * spacing))
+                : fine ? FineParticleDensity : 1000000;
             Vector3 column = ColumnSize;
             spawner.spawnRegions = new[] { new Spawner3D.SpawnRegion
             {
                 centre = new Vector3((column.x - TankSize.x) * .5f, column.y * .5f, 0),
                 boxSize = column
             }};
-            float spacing = benchmark ? .02f : fine ? 1f / 150f : .01f;
             float radius = 2 * spacing;
             solverCompute = Instantiate(fluidCompute);
             fluid = solverObject.AddComponent<FluidSim>();
@@ -298,13 +305,13 @@ namespace PhysicsSim.ThreePhase3D.Rendering
 
         private void Update()
         {
-            if (pendingWallPressureRun.HasValue && benchmarkReadsPending == 0)
+            if (pendingBenchmarkRun.HasValue && benchmarkReadsPending == 0)
             {
-                benchmarkWallPressure = pendingWallPressureRun.Value;
-                pendingWallPressureRun = null;
+                (benchmarkWallPressure, benchmarkFine) = pendingBenchmarkRun.Value;
+                pendingBenchmarkRun = null;
                 PrepareColumn();
                 running = true;
-                Debug.Log($"MARIN run started · GPU wall pressure {(benchmarkWallPressure ? "ON (1)" : "OFF (0)")}", this);
+                Debug.Log($"MARIN run started · {BenchmarkSpacing * 1000:F0} mm particle spacing · GPU wall pressure {(benchmarkWallPressure ? "ON (1)" : "OFF (0)")}", this);
                 return;
             }
 
@@ -436,6 +443,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             int run = generation;
             float seconds = elapsedMicroseconds / 1000000f;
             int wallPressure = benchmarkWallPressure ? 1 : 0;
+            float spacingMillimetres = BenchmarkSpacing * 1000;
             benchmarkReadsPending++;
             AsyncGPUReadback.Request(fluid.positionBuffer, request =>
             {
@@ -468,7 +476,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 benchmarkJet = SupportedJetHeight(jet);
                 benchmarkJetPeak = Mathf.Max(benchmarkJetPeak, benchmarkJet);
                 Debug.Log(System.FormattableString.Invariant(
-                    $"MARIN,t_s,H2_p95_m,box_zone_p95_m,jet_max_m,jet_supported_m,jet_count,wall_pressure: {seconds:F3},{benchmarkH2:F3},{benchmarkSheet:F3},{jetMax:F3},{benchmarkJet:F3},{jet.Count},{wallPressure}"), this);
+                    $"MARIN,t_s,H2_p95_m,box_zone_p95_m,jet_max_m,jet_supported_m,jet_count,spacing_mm,wall_pressure: {seconds:F3},{benchmarkH2:F3},{benchmarkSheet:F3},{jetMax:F3},{benchmarkJet:F3},{jet.Count},{spacingMillimetres:F0},{wallPressure}"), this);
             });
         }
 
@@ -535,7 +543,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void QueueBenchmarkRun(bool useWallPressure)
         {
             running = false;
-            pendingWallPressureRun = useWallPressure;
+            pendingBenchmarkRun = (useWallPressure, selectedBenchmarkFine);
         }
 
         private void OnGUI()
@@ -545,7 +553,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (fluid != null)
             {
                 bool modeControlEnabled = GUI.enabled;
-                GUI.enabled = modeControlEnabled && !pendingWallPressureRun.HasValue && benchmarkReadsPending == 0 && !sampling && !samplingSpray;
+                GUI.enabled = modeControlEnabled && !pendingBenchmarkRun.HasValue && benchmarkReadsPending == 0 && !sampling && !samplingSpray;
                 if (GUILayout.Button(benchmark ? "Return to city tank" : "Single-box benchmark"))
                     SetBenchmark(!benchmark);
                 GUI.enabled = modeControlEnabled;
@@ -560,7 +568,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 if (!SystemInfo.supportsAsyncGPUReadback) GUILayout.Label("GPU readback unavailable.");
                 GUILayout.Label($"GPU wall pressure: {(benchmarkWallPressure ? "ON (1)" : "OFF (0)")}");
                 bool controlsEnabled = GUI.enabled;
-                GUI.enabled = controlsEnabled && !pendingWallPressureRun.HasValue;
+                GUI.enabled = controlsEnabled && !pendingBenchmarkRun.HasValue;
+                selectedBenchmarkFine = GUILayout.Toggle(selectedBenchmarkFine, "Finer benchmark · 15 mm spacing (next run)");
+                GUILayout.Label($"Current spacing {BenchmarkSpacing * 1000:F0} mm · {fluid.positionBuffer?.count ?? 0:N0} particles");
                 if (GUILayout.Button("Start baseline run · wall pressure OFF"))
                     QueueBenchmarkRun(false);
                 if (GUILayout.Button("Start wall-pressure run · ON"))
