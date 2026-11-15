@@ -17,6 +17,9 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private long elapsedMicroseconds;
         private float VolumeLitres => doubleVolume ? 48f : 24f;
         private const float ArrivalPlane = .55f;
+        private const float BlockSide = .3f;
+        private static readonly Vector3 BlockCentre = new Vector3(.35f, BlockSide * .5f, 0);
+        private Texture2D checkerTexture;
 
         [SerializeField] private ComputeShader fluidCompute;
         [SerializeField] private ComputeShader surfaceArguments;
@@ -58,6 +61,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             glass.renderQueue = (int)RenderQueue.Transparent;
             Box("Tank base", new Vector3(0, -.025f, 0), new Vector3(1.25f, .05f, .45f), stone);
             Box("Bench", new Vector3(0, -.09f, 0), new Vector3(2.5f, .08f, 1.3f), stone);
+            BuildTestBlock();
             for (int sign = -1; sign <= 1; sign += 2)
             {
                 Box("Long glass wall", new Vector3(0, .25f, sign * .204f),
@@ -89,6 +93,25 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             if (material.renderQueue == (int)RenderQueue.Transparent)
                 renderer.shadowCastingMode = ShadowCastingMode.Off;
             Destroy(panel.GetComponent<Collider>());
+        }
+
+        private void BuildTestBlock()
+        {
+            const int squares = 8;
+            checkerTexture = new Texture2D(squares, squares, TextureFormat.RGBA32, false)
+            {
+                name = "Obstacle checkerboard",
+                filterMode = FilterMode.Point,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            for (int y = 0; y < squares; y++)
+            for (int x = 0; x < squares; x++)
+                checkerTexture.SetPixel(x, y, (x + y) % 2 == 0
+                    ? new Color(.92f, .92f, .88f) : new Color(.12f, .14f, .18f));
+            checkerTexture.Apply(false, true);
+            var material = MakeMaterial(Color.white);
+            material.mainTexture = checkerTexture;
+            Box("Checkerboard flow obstacle", BlockCentre, Vector3.one * BlockSide, material);
         }
 
         private void PrepareColumn()
@@ -128,6 +151,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.spawner = spawner;
             fluid.manualControl = true;
             fluid.gravity = -9.81f;
+            fluid.SetStaticBoxBoundary(0, BlockCentre, Vector3.one * BlockSide);
+            fluid.IceCount = 1;
             fluid.smoothingRadius = radius;
             fluid.targetDensity = InteriorDensity(spacing, radius);
             fluid.pressureMultiplier = 100f;
@@ -226,16 +251,17 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             }
 
             var heights = new int[width * depth];
+            int[] raisedFloor = BuildPressureFloor(width, depth, cell);
             int minimum = Mathf.Max(2, Mathf.RoundToInt(points.Length * .00025f));
             for (int z = 0; z < depth; z++)
             for (int x = 0; x < width; x++)
             {
-                int y = 0;
+                int y = raisedFloor[x + width * z];
                 while (y < height - 1 && counts[x + width * (y + height * z)] >= minimum) y++;
                 heights[x + width * z] = y;
             }
 
-            var solver = new TallCellPressureReference(width, height, depth, cell, heights, true, FaceVelocity);
+            var solver = new TallCellPressureReference(width, height, depth, cell, heights, true, FaceVelocity, raisedFloor);
             pressureSamples = solver.PressureSamples;
             if (pressureSamples == 0) return;
             var result = solver.Project();
@@ -257,14 +283,30 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 int upper = x + width * (y + height * z);
                 int lower = upper - (axis == 0 ? 1 : axis == 1 ? width : width * height);
                 int column = x + width * z;
-                bool lowWet = axis == 0 ? y < heights[column - 1] :
-                    axis == 1 ? y - 1 < heights[column] : y < heights[column - width];
-                bool highWet = y < heights[column];
+                int lowColumn = column - (axis == 0 ? 1 : axis == 2 ? width : 0);
+                int lowY = axis == 1 ? y - 1 : y;
+                bool lowWet = lowY >= raisedFloor[lowColumn] && lowY < heights[lowColumn];
+                bool highWet = y >= raisedFloor[column] && y < heights[column];
                 float value = 0;
                 if (lowWet) value += sums[lower][axis] / counts[lower];
                 if (highWet) value += sums[upper][axis] / counts[upper];
                 return lowWet && highWet ? .5 * value : value;
             }
+        }
+
+        private static int[] BuildPressureFloor(int width, int depth, float spacing)
+        {
+            var floor = new int[width * depth];
+            for (int z = 0; z < depth; z++)
+            for (int x = 0; x < width; x++)
+            {
+                float worldX = (x + .5f) * spacing - TankSize.x * .5f;
+                float worldZ = (z + .5f) * spacing - TankSize.z * .5f;
+                if (Mathf.Abs(worldX - BlockCentre.x) < BlockSide * .5f &&
+                    Mathf.Abs(worldZ - BlockCentre.z) < BlockSide * .5f)
+                    floor[x + width * z] = Mathf.RoundToInt(BlockSide / spacing);
+            }
+            return floor;
         }
 
         private void SampleWater()
@@ -371,12 +413,14 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             const double spacing = .05;
             const int width = 24, height = 10, depth = 8;
             var heights = new int[width * depth];
+            int[] raisedFloor = BuildPressureFloor(width, depth, (float)spacing);
+            System.Array.Copy(raisedFloor, heights, heights.Length);
             int wetColumns = Mathf.RoundToInt(ColumnSize.x / (float)spacing);
             for (int z = 0; z < depth; z++)
             for (int x = 0; x < wetColumns; x++) heights[x + width * z] = 6;
 
-            var uniform = new TallCellPressureReference(width, height, depth, spacing, heights, false, SampleVelocity);
-            var adaptive = new TallCellPressureReference(width, height, depth, spacing, heights, true, SampleVelocity);
+            var uniform = new TallCellPressureReference(width, height, depth, spacing, heights, false, SampleVelocity, raisedFloor);
+            var adaptive = new TallCellPressureReference(width, height, depth, spacing, heights, true, SampleVelocity, raisedFloor);
             var baseline = uniform.Project();
             var reduced = adaptive.Project();
             double difference = 0;
@@ -397,6 +441,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void OnDestroy()
         {
             if (solverCompute != null) Destroy(solverCompute);
+            if (checkerTexture != null) Destroy(checkerTexture);
             foreach (var material in materials) Destroy(material);
         }
     }

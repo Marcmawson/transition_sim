@@ -923,7 +923,9 @@ void UpdateWhiteParticles(uint3 id : SV_DispatchThreadID)
 
     float targetScale = isBubble ? bubbleScale : 1;
     particle.scale = lerp(particle.scale, targetScale, deltaTime * bubbleScaleChangeSpeed);
+    float3 previous = particle.position;
     particle.position += particle.velocity * deltaTime;
+    if (sprayOnly) ResolveIce(previous, particle.position, particle.velocity);
 
     const float collisionDampening = 0.1;
     ResolveCollisions(particle.position, particle.velocity, collisionDampening);

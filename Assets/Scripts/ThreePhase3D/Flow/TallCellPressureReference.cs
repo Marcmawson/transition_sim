@@ -19,20 +19,23 @@ namespace PhysicsSim.ThreePhase3D.Flow
         private readonly double spacing;
         private readonly int[] lower, upper;
         private readonly double[] upperWeight;
-        private readonly bool[] wet;
+        private readonly bool[] wet, solid;
+        private readonly int[] floorLayers;
         private readonly List<Face> faces = new List<Face>();
         private int nodes;
 
         public int PressureSamples => nodes;
         public int FineWetCells { get; }
 
-        // heights[x + width*z] gives the count of wet cells from the floor up.
+        // heights[x + width*z] is the upper liquid index (exclusive).
+        // raisedFloor optionally supplies the lower index in columns above solids.
         // Velocity is sampled at the centre of each interior MAC face.
         public TallCellPressureReference(int width, int height, int depth, double spacing,
-            int[] heights, bool adaptive, Func<int, double, double, double, double> velocity)
+            int[] heights, bool adaptive, Func<int, double, double, double, double> velocity, int[] raisedFloor = null)
         {
             if (width <= 0 || height <= 0 || depth <= 0 || !(spacing > 0) ||
-                heights == null || heights.Length != width * depth || velocity == null)
+                heights == null || heights.Length != width * depth || velocity == null ||
+                (raisedFloor != null && raisedFloor.Length != heights.Length))
                 throw new ArgumentException("Invalid pressure-grid inputs.");
             this.width = width;
             this.height = height;
@@ -42,15 +45,19 @@ namespace PhysicsSim.ThreePhase3D.Flow
             upper = new int[lower.Length];
             upperWeight = new double[lower.Length];
             wet = new bool[lower.Length];
+            solid = new bool[lower.Length];
+            floorLayers = raisedFloor ?? new int[heights.Length];
             int cellCount = 0;
             for (int z = 0; z < depth; z++)
             for (int x = 0; x < width; x++)
             {
                 int count = heights[x + width * z];
-                if (count < 0 || count >= height)
+                int bottom = floorLayers[x + width * z];
+                if (bottom < 0 || count < bottom || count >= height)
                     throw new ArgumentException("Each column needs at least one air cell.");
-                for (int y = 0; y < count; y++) wet[Index(x, y, z)] = true;
-                cellCount += count;
+                for (int y = 0; y < bottom; y++) solid[Index(x, y, z)] = true;
+                for (int y = bottom; y < count; y++) wet[Index(x, y, z)] = true;
+                cellCount += count - bottom;
             }
             FineWetCells = cellCount;
 
@@ -80,7 +87,8 @@ namespace PhysicsSim.ThreePhase3D.Flow
             bool merge = adaptive && x + size <= width && z + size <= depth;
             for (int dz = 0; merge && dz < size; dz++)
             for (int dx = 0; merge && dx < size; dx++)
-                merge = heights[x + dx + width * (z + dz)] == layers;
+                merge = heights[x + dx + width * (z + dz)] == layers &&
+                    floorLayers[x + dx + width * (z + dz)] == 0;
             if (size > 1 && (!merge || (layers > 0 && layers <= 4)))
             {
                 int half = size / 2;
@@ -90,7 +98,7 @@ namespace PhysicsSim.ThreePhase3D.Flow
                 BuildTile(x + half, z + half, half, heights, adaptive);
                 return;
             }
-            int tallLayers = adaptive && layers > 4 ? layers - 2 : 0;
+            int tallLayers = adaptive && layers > 4 && floorLayers[x + width * z] == 0 ? layers - 2 : 0;
             if (tallLayers > 0)
             {
                 int bottom = nodes++, top = nodes++;
@@ -107,13 +115,13 @@ namespace PhysicsSim.ThreePhase3D.Flow
             for (int dz = 0; dz < size; dz++)
             for (int dx = 0; dx < size; dx++)
             for (int y = tallLayers; y < layers; y++)
-                lower[Index(x + dx, y, z + dz)] = nodes++;
+                if (wet[Index(x + dx, y, z + dz)]) lower[Index(x + dx, y, z + dz)] = nodes++;
         }
 
         private void AddFace(int a, int b, int axis, double x, double y, double z,
             Func<int, double, double, double, double> velocity)
         {
-            if (!wet[a] && !wet[b]) return;
+            if (solid[a] || solid[b] || (!wet[a] && !wet[b])) return;
             var weights = new Dictionary<int, double>();
             // Air pressure is zero. Use a half-cell distance at the free surface.
             double inverseDistance = (wet[a] && wet[b] ? 1 : 2) / spacing;

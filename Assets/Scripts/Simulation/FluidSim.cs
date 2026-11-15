@@ -95,12 +95,24 @@ namespace Seb.Fluid.Simulation
 
 		public void SetIceBoundary(int index, Rigidbody body, BoxCollider collider)
 		{
-			iceHalfExtents[index] = collider.size * .5f;
-			iceLocalToWorld[index] = Matrix4x4.TRS(body.position + body.rotation * collider.center, body.rotation, Vector3.one);
+			SetBoxBoundary(index, body.position + body.rotation * collider.center, body.rotation,
+				collider.size, body.velocity, body.angularVelocity, body.worldCenterOfMass);
+		}
+
+		public void SetStaticBoxBoundary(int index, Vector3 centre, Vector3 size)
+		{
+			SetBoxBoundary(index, centre, Quaternion.identity, size, Vector3.zero, Vector3.zero, centre);
+		}
+
+		private void SetBoxBoundary(int index, Vector3 centre, Quaternion rotation, Vector3 size,
+			Vector3 velocity, Vector3 angularVelocity, Vector3 massCentre)
+		{
+			iceHalfExtents[index] = size * .5f;
+			iceLocalToWorld[index] = Matrix4x4.TRS(centre, rotation, Vector3.one);
 			iceWorldToLocal[index] = iceLocalToWorld[index].inverse;
-			iceVelocity[index] = body.velocity;
-			iceAngularVelocity[index] = body.angularVelocity;
-			iceMassCentre[index] = body.worldCenterOfMass;
+			iceVelocity[index] = velocity;
+			iceAngularVelocity[index] = angularVelocity;
+			iceMassCentre[index] = massCentre;
 		}
 		double simTimer;
 		bool inSlowMode;
