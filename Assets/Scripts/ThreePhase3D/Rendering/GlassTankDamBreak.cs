@@ -24,6 +24,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         [SerializeField] private Shader sprayShader;
         [SerializeField] private ComputeShader sprayArguments;
         private bool sprayEnabled = true;
+        private bool samplingSpray;
+        private int activeSpray = -1;
 
         private readonly List<Material> materials = new List<Material>();
         private GameObject solverObject;
@@ -92,7 +94,8 @@ namespace PhysicsSim.ThreePhase3D.Rendering
         private void PrepareColumn()
         {
             generation++;
-            running = sampling = false;
+            running = sampling = samplingSpray = false;
+            activeSpray = -1;
             pendingSeconds = nextSample = submitMs = 0;
             arrival = retained = -1;
             elapsedMicroseconds = 0;
@@ -135,10 +138,10 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             fluid.maxFoamParticleCount = sprayAvailable ? 12000 : 1;
             fluid.foamActive = sprayAvailable && sprayEnabled;
             fluid.sprayOnly = sprayAvailable;
-            fluid.trappedAirSpawnRate = fine ? 5f : 12f;
-            fluid.trappedAirVelocityMinMax = new Vector2(1f, 9f);
-            fluid.foamKineticEnergyMinMax = new Vector2(.36f, 5f);
-            fluid.sprayClassifyMaxNeighbours = 10;
+            fluid.trappedAirSpawnRate = fine ? 20f : 45f;
+            fluid.trappedAirVelocityMinMax = new Vector2(.35f, 5f);
+            fluid.foamKineticEnergyMinMax = new Vector2(.16f, 2.5f);
+            fluid.sprayClassifyMaxNeighbours = 16;
             if (sprayAvailable)
             {
                 var spray = solverObject.AddComponent<FoamRenderTest>();
@@ -146,7 +149,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                 spray.copyCountToArgsCompute = Instantiate(sprayArguments);
                 spray.autoDraw = true;
                 spray.visibleSpray = true;
-                spray.scale = .11f;
+                spray.scale = .32f;
             }
             fluid.renderToTex3D = fluid.worldSpaceSurface = true;
             fluid.densityTextureRes = fine ? 192 : 128;
@@ -270,6 +273,7 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             int run = generation;
             float simulatedSeconds = fluid.SimulatedSeconds;
             nextSample = simulatedSeconds + .05f;
+            if (fluid.foamActive && !samplingSpray) SampleSprayCount(run);
             AsyncGPUReadback.Request(fluid.positionBuffer, request =>
             {
                 if (this == null || run != generation) return;
@@ -293,6 +297,18 @@ namespace PhysicsSim.ThreePhase3D.Rendering
             });
         }
 
+        private void SampleSprayCount(int run)
+        {
+            samplingSpray = true;
+            AsyncGPUReadback.Request(fluid.foamCountBuffer, request =>
+            {
+                if (this == null || run != generation) return;
+                samplingSpray = false;
+                if (!request.hasError && sprayEnabled)
+                    activeSpray = (int)request.GetData<uint>()[0];
+            });
+        }
+
         private void OnGUI()
         {
             GUILayout.BeginArea(new Rect(16, 16, 390, 410), GUI.skin.box);
@@ -311,16 +327,18 @@ namespace PhysicsSim.ThreePhase3D.Rendering
                     running = !running;
                     pendingSeconds = 0;
                 }
-                GUI.enabled = previousEnabled && ready && !sampling;
+                GUI.enabled = previousEnabled && ready && !sampling && !samplingSpray;
                 bool reset = GUILayout.Button("Reset column");
                 GUILayout.Label("GPU particle timestep · changing it resets the column");
                 int selectedStep = GUILayout.Toolbar(particleStepIndex, ParticleStepLabels);
                 if (fluid.sprayOnly)
                 {
-                    bool selectedSpray = GUILayout.Toggle(sprayEnabled, "Fine spray");
+                    bool selectedSpray = GUILayout.Toggle(sprayEnabled, activeSpray >= 0 && sprayEnabled
+                        ? $"Fine spray · {activeSpray:N0} active" : "Fine spray");
                     if (selectedSpray != sprayEnabled)
                     {
                         sprayEnabled = selectedSpray;
+                        activeSpray = -1;
                         fluid.foamActive = selectedSpray;
                         fluid.foamCountBuffer.SetData(new uint[2]);
                     }
